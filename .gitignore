@@ -1,0 +1,7 @@
+nb/.ipynb_checkpoints/*
+.ipynb_checkpoints/*
+__pycache__/*
+datagen/__pycache__/*
+models/*
+wandb/*
+nb/wandb/*
