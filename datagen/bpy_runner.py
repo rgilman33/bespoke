@@ -21,11 +21,7 @@ if __name__ == "__main__":
 
         run_root = f"{dataloader_root}/run_{run_counter}"
         os.makedirs(run_root, exist_ok=True)
-        # # Just removing the targets files, as we'll use these to grab for the dataloader. The imgs will just get written over,
-        # # but we'll know that the imgs are fresh bc the imgs keep up w the target files
-        # existing_targets_npy = glob.glob(f"{run_root}/targets_*.npy")
-        # for f in existing_targets_npy:
-        #     os.remove(f)
+
         # Just removing in advance one at a time. Removing the first one before we start
         next_targets_path = f"{run_root}/targets_{SEQ_LEN-1}.npy"
         if os.path.exists(next_targets_path):
@@ -36,7 +32,7 @@ if __name__ == "__main__":
         setup_map()
 
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
-        bpy.data.scenes["Scene"].render.image_settings.quality = random.randint(40, 80) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
+        bpy.data.scenes["Scene"].render.image_settings.quality = random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
         bpy.data.scenes["Scene"].eevee.taa_render_samples = random.randint(2, 5)
  
         bpy.data.scenes["Scene"].render.filepath = f"{run_root}/imgs/" #f"{run_root}/imgs.avi"

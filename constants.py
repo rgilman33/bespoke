@@ -2,12 +2,12 @@ import numpy as np
 
 BESPOKE_ROOT = '/media/beans/ssd/bespoke'
 
-webcam_img_height = 480 #192 # CROP TO 200, 140 off each top and bottom # we'll crop this to 80, 56 off each top and bottom
-webcam_img_width = 640 #256
+webcam_img_height = 480
+webcam_img_width = 640
 IMG_WIDTH = webcam_img_width
 
-BOTTOM_CHOP = 150 #120 #150 
-TOP_CHOP = 150 + 80 #+ 30
+BOTTOM_CHOP = 150
+TOP_CHOP = 150 + 80
 
 IMG_HEIGHT = 100 #
 assert IMG_HEIGHT == (webcam_img_height - TOP_CHOP - BOTTOM_CHOP)
@@ -28,25 +28,6 @@ N_PRED = len(TRAJ_WP_DISTS)
 N_WPS_TO_USE = 22 #15
 traj_wp_dists = TRAJ_WP_DISTS[:N_WPS_TO_USE]
 
-GPS_NAV_WP_DISTS = [32, 36, 40, 44, 48, 52, 56]
-
-info_properties = [
-    'impulse',
-    'wp_angle_neg_50_to_50',
-    'wp_angle_greater_than_50',
-    'wp_angle_less_than_neg_50',
-    'in_intersection',
-    'town',
-    'weather',
-    'is_night',
-    # Properties used in autoscoring
-    'collision',
-    'lane_invasion',
-    'reset_hero',
-    'dist_travelled',
-    'ap_driving'
-]
-
 aux_properties = [
     'left_blinker',
     'right_blinker',
@@ -57,27 +38,22 @@ aux_properties = [
 
 aux_norm_constants = np.array([1., 1., 20., 1., 1.], dtype=np.float16)
 
-target_properties = [f'wp_{d}' for d in TRAJ_WP_DISTS]
-
 STEER_RATIO = 16. # taken from OP, specific for crv-5g. Don't change this willy nilly
-MAX_TIRE_ANGLE_DEG = 70
 
 mps_to_kph = lambda x: (x/1000)*60*60
 kph_to_mps = lambda x: (x*1000)/(60*60)
 
 
-
-# 6.3
+# 6.3, still using 6.7
 min_dist_lookup = [
-    (20,6), #12 mph #TODO play w these values tuning rw 
+    (20,6), #12 mph 
     (30,6.), #18 mph
     (40,7.5), # 24 mph
     (50,9.5), # 30 mph
     (60,12), # 36 mph
     (70,16.5), # 43 mph
-    (80,22), # 50 mph TODO these haven't been tuned, only above
+    (80,22), # 50 mph
 ]
-
 min_dist_bps = [x[0] for x in min_dist_lookup]
 min_dist_vals = [x[1] for x in min_dist_lookup]
 
@@ -94,12 +70,10 @@ max_speed_lookup = [ # estimated from run260, abq.
     (.3, 15),
     (.42, 10),
 ]
-
 max_speed_bps = [x[0] for x in max_speed_lookup]
 max_speed_vals = [kph_to_mps(x[1]) for x in max_speed_lookup]
 
 CRV_WHEELBASE = 2.66 # both OP and internet agree, but i measured mine just now at 2.74... Nope, measured again and it agreed
-MKZ_WHEELBASE = 2.84 # meters. mkz internet says is 2.84
 
 device = 'cuda'
 
@@ -113,11 +87,11 @@ N_RUNNERS = 12
 
 N_TARGETS = N_WPS_TO_USE
 N_AUX = len(aux_properties)
-N_INFO = len(info_properties)
 
 get_node = lambda label, nodes : [n for n in nodes if n.label==label][0]
 
 import glob, os
+
 def get_should_stop():
     return np.load(f"{BLENDER_MEMBANK_ROOT}/should_stop.npy")[0] == 1
 

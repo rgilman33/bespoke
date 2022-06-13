@@ -7,7 +7,6 @@ from imports import *
 
 get_img_container = lambda bs : np.empty((bs, SEQ_LEN, IMG_HEIGHT, IMG_WIDTH, 3), dtype='uint8')
 get_aux_container = lambda bs : np.empty((bs, SEQ_LEN, N_AUX), dtype=np.float32)
-get_info_container = lambda bs : np.empty((bs, SEQ_LEN, N_INFO), dtype=np.float32)
 get_targets_container = lambda bs : np.empty((bs, SEQ_LEN, N_TARGETS), dtype=np.float32)
 
 class BlenderDataloader():
@@ -16,12 +15,10 @@ class BlenderDataloader():
         
         self.img_chunk = get_img_container(bs)
         self.aux_chunk = get_aux_container(bs)
-        self.info_chunk = get_info_container(bs)
         self.targets_chunk = get_targets_container(bs)
 
         self.img_chunk_backup = get_img_container(bs)
         self.aux_chunk_backup = get_aux_container(bs)
-        self.info_chunk_backup = get_info_container(bs)
         self.targets_chunk_backup = get_targets_container(bs)
 
         self.path_stem = path_stem # path stems: trn, val, real_world
@@ -39,18 +36,14 @@ class BlenderDataloader():
         self._refresh_chunk(self.img_chunk_backup, self.aux_chunk_backup, self.targets_chunk_backup)
 
     def _refresh_chunk(self, img_chunk, aux_chunk, targets_chunk):
-        # sets them in place. Takes about 2 sec.
-
-        #all_targets = glob.glob(f"{BLENDER_MEMBANK_ROOT}/**/targets_*.npy", recursive=True) # this takes 500ms
-        # our method below takes 2ms total, and will be fresher for each seq
+        # sets them in place. Takes about 2 sec. Is this still true?
 
         _offset = random.randint(0, 10_000) # so we sample runners evenly
         for b in range(self.bs):
-            
-            #t = random.choice(all_targets)
-            # change this to randint if get bs bigger than n runners. Keeping modulo for now to spread out datagather more.
+
             #TODO keep an eye here. Won't likely run into targets file not exist, but may get the occasion where imgs begin to overwrite.
-            # ie we grab a targets right before it's deleted, and imgs begin to be overwritten before we can grab them all.
+            # ie we grab a targets right before it's deleted, and imgs begin to be overwritten before we can grab them all. Also note this modulo
+            # move is to keep sampling more even
             datagen_id = ("00"+str((b+_offset) % N_RUNNERS))[-2:] 
             ts = glob.glob(f"{BLENDER_MEMBANK_ROOT}/dataloader_{datagen_id}/run_{random.randint(0, RUNS_TO_STORE_PER_PROCESS-1)}/targets_*.npy")
             t = random.choice(ts)
@@ -70,14 +63,14 @@ class BlenderDataloader():
             img_paths = sorted(glob.glob(f"{t_stem}/imgs/*"))[end_ix-SEQ_LEN+1:end_ix+1] # imgs 1 indexed, targets zero indexed
 
             for i, p in enumerate(img_paths):
-                img_chunk[b, i, :,:,:] = cv2.imread(p)[:,:,::-1] #[TOP_CHOP:TOP_CHOP+IMG_HEIGHT, :, :] bgr to rgb
+                img_chunk[b, i, :,:,:] = cv2.imread(p)[:,:,::-1] #bgr to rgb
         
         targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of the hypths that we're misaligned
         aux_chunk[:,:-1,:] = aux_chunk[:,1:,:] #TODO should maybe do this further upstream actually
 
     def queue_up_batch(self):
         bptt = BPTT
-        img_chunk, aux_chunk, targets_chunk, info_chunk = self.img_chunk, self.aux_chunk, self.targets_chunk, self.info_chunk
+        img_chunk, aux_chunk, targets_chunk = self.img_chunk, self.aux_chunk, self.targets_chunk
         _, seq_len, _, _, _ = img_chunk.shape
         ix = self.seq_ix
         is_first_in_seq = (ix==0)
@@ -118,7 +111,6 @@ class BlenderDataloader():
 
             self.img_chunk[:,:,:,:,:] = self.img_chunk_backup[:,:,:,:,:] 
             self.aux_chunk[:,:,:] = self.aux_chunk_backup[:,:,:]
-            self.info_chunk[:,:,:] = self.info_chunk_backup[:,:,:]
             self.targets_chunk[:,:,:] = self.targets_chunk_backup[:,:,:]
 
             threading.Thread(target=self.refresh_backup_chunk).start() 

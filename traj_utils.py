@@ -122,7 +122,7 @@ def get_heading_at_dist_along_traj(traj, dist):
 
 
 # Used for autolong in OP
-# no reason this lookup shouldn't be the same as the other. No need conceptually for separate lookups.
+# no reason this lookup shouldn't be the same as the other. No need conceptually for separate lookups. TODO delete this one?
 max_speed_lookup_rollout = [ # estimated from run260, nabq. 
     (.005, 100), # 62 mph
     (.01, 80), # 50 mph         don't know about this one, research more, this could be dangerous

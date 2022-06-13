@@ -23,7 +23,7 @@ class RealWorldDataloader():
         self.imgs_all_seqs, self.aux_all_seqs, self.targets_all_seqs = [], [], []
 
         for run_path in paths:
-            MAX_LEN = 4000 if '176' in run_path else 7000
+            MAX_LEN = 7000
 
             car_state = np.stack([np.load(f) for f in sorted(glob.glob(f"{run_path}/car_state/*"))[:MAX_LEN]]) # (6469, 4)
             aux = np.stack([np.load(f) for f in sorted(glob.glob(f"{run_path}/aux/*"))[:MAX_LEN]])  # (6469, 4)
@@ -33,7 +33,6 @@ class RealWorldDataloader():
             sl = min([len(car_state), len(aux), len(imgs)])
             car_state = car_state[:sl]; aux = aux[:sl]; imgs = imgs[:sl]
 
-            #targets = (car_state[:,:1] / (STEER_RATIO * MAX_TIRE_ANGLE_DEG) * -1)
             targets = np.radians(car_state[:,:1] / (STEER_RATIO) * -1) # the tire angle in radians directly
 
             print(imgs.shape, aux.shape, targets.shape)
@@ -54,4 +53,4 @@ class RealWorldDataloader():
 
         self.i += 1
 
-        return img, aux, targets, '', #targets_traj, ''
+        return img, aux, targets

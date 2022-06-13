@@ -16,7 +16,7 @@ def rotate_around_origin(x, y, angle):
 
     return xx, yy
 
-def temporal_consistency_loss(model_out, speeds_mps_all, tire_angles_rad_all, wheelbase=MKZ_WHEELBASE):
+def temporal_consistency_loss(model_out, speeds_mps_all, tire_angles_rad_all, wheelbase=CRV_WHEELBASE):
     temporal_error = torch.FloatTensor([0]).to('cuda')
     bs = len(model_out)
     model_out_rad = model_out * TARGET_NORM.to('cuda') # now they're angles in rad
@@ -162,7 +162,7 @@ avg_td_loss = 12
 avg_torque_loss = 170
 avg_te_loss = .02
 
-def run_epoch(dataloader, 
+def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
               model, 
               opt=None, 
               scaler=None, 
@@ -173,7 +173,7 @@ def run_epoch(dataloader,
               updates_per_epoch=5120,
               wandb=None):
     
-    global avg_control_loss, avg_td_loss, avg_torque_loss, avg_te_loss
+    global avg_control_loss, avg_td_loss, avg_torque_loss, avg_te_loss #TODO awkward
 
     model.train(train)
     logger = Logger()
@@ -385,7 +385,7 @@ def _eval_rw(dataloader, model):
         while True:
             chunk = dataloader.get_chunk()
             if not chunk: break
-            img_chunk, aux_chunk, targets_chunk, info_chunk = chunk
+            img_chunk, aux_chunk, targets_chunk = chunk
             bs, seq_len, _, _, _ = img_chunk.shape
             ix = 0
             model.reset_hidden(bs)
@@ -397,14 +397,14 @@ def _eval_rw(dataloader, model):
                 img = img_chunk[:, ix:ix+bptt, :, :, :]
                 aux = aux_chunk[:, ix:ix+bptt, :]
                 targets = targets_chunk[:, ix:ix+bptt, :]
-                img, aux, targets = prep_inputs(img, aux, targets=targets)
+                img, aux, targets = prep_inputs(img, aux, targets=targets) #TODO we need to denorm these before reporting
                 #img = side_crop(img, crop=8)
                 ix += bptt
 
                 with torch.cuda.amp.autocast(): 
                     pred, obsnet_out = model(img, aux)
                 
-                preds_at_wp_ix = gather_preds(pred[0].cpu().numpy(), aux[0,:,2].cpu().numpy()) #TODO this is being warped by the .6 hardcoded kP value
+                preds_at_wp_ix = gather_preds(pred[0].cpu().numpy(), aux[0,:,2].cpu().numpy())
                 targets = targets[0,:,0].cpu().numpy()
                 
                 preds_seq.append(preds_at_wp_ix)
@@ -416,7 +416,7 @@ def _eval_rw(dataloader, model):
             preds_all.append(preds_seq)
             targets_all.append(targets_seq)
 
-    # preds_all *= TARGET_NORM # put into meaningful units, ie radians
+    # preds_all *= TARGET_NORM # put into meaningful units, ie radians TODO
     # targets_all *= TARGET_NORM
 
     return preds_all, targets_all

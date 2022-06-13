@@ -85,26 +85,106 @@ def get_rnn_gradcam(act, grad, img, cutoff=.2):
     return r
 
 
-"""
-### 161d
-nov30. back on RR mostly agent. couple veers left bc agent. 30 mph mostly
+from models import EffNet
+from input_prep import *
 
-### 161b
-nov30 back on PP all human. Gathered specifically for training. 40 - 50 mph
+def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
+    cudnn_was_enabled = torch.backends.cudnn.enabled
+    torch.backends.cudnn.enabled=False # otherwise can't do backward through RNN w cudnn
 
-### 161e
-nov30. human back on RR gravel.
+    m = EffNet(model_arch="efficientnet_b3", is_for_viz=True).to(device)
+    m.load_state_dict(torch.load(f"/media/beans/ssd/bespoke/models/m_{model_stem}.torch"))
+    m.eval()
+    bs = 1
+    m.reset_hidden(bs)
+    m.convert_backbone_to_sequential() # required for the viz version of the model
 
-### 172
-back from PO all the way. Mostly garbage agent
+    rnn_activations, rnn_grads, cnn_activations, cnn_grads, preds, obsnet_outs = [], [], [], [], [], []
+    chunk_len, ix = 24, 0
 
-### 176
-An on and off cloudy ish day. Halfway through put on polarizing filter. All human
-176b cam a santa ana
-176c mineral de luz
-176e and 176f out and back towards la concepcion
-176g paved lined GTO to DH out a bit and back
+    while ix < len(img):
+        aux_ = pad(aux[ix:ix+chunk_len]) # current speed is important!!!
+        img_ = pad(img[ix:ix+chunk_len])
+        ix += chunk_len
+        img_, aux_ = prep_inputs(img_, aux_)
+        #img_ = side_crop(img_, crop=8)
 
-### 178a, 178b, 179a
-agent run w 2_23 model. Same course as 176. 
-"""
+        with torch.cuda.amp.autocast():
+            m.zero_grad()
+            pred, obsnet_out = m(img_, aux_) 
+            preds.append(pred[0,:,:].detach().cpu().numpy())
+            obsnet_outs.append(obsnet_out[0,:,:].detach().cpu().numpy())
+            
+            if do_gradcam:
+                cnn_activations.append(m.activations.mean(1, keepdim=True).numpy()) # (24, 1, 13, 80), mean of channels
+                rnn_activations.append(m.rnn_activations[0].numpy()) #torch.Size([24, 512]), 
+                
+                pred[:,:,GRADCAM_WP_IX].sum().backward() # gradients w respect to lateral preds
+                #obsnet_out[:,:,0].sum().backward() # gradients w respect to undertainty preds
+                
+                cnn_grads.append(m.gradients.mean(1, keepdim=True).numpy())
+                rnn_grads.append(m.rnn_gradients[0].numpy()) #torch.Size([24, 512])
+                
+            del pred
+            
+    preds = np.concatenate(preds)
+    obsnet_outs = np.concatenate(obsnet_outs)
+
+    if do_gradcam:
+        cnn_activations, cnn_grads = np.concatenate(cnn_activations, axis=0), np.concatenate(cnn_grads, axis=0)
+        rnn_activations, rnn_grads = np.concatenate(rnn_activations, axis=0), np.concatenate(rnn_grads, axis=0)
+        
+    seqlen, n_acts = rnn_activations.shape
+    rnn_activations = rnn_activations.reshape(seqlen, 32, 16)
+    rnn_grads = rnn_grads.reshape(seqlen, 32, 16)
+
+    torch.backends.cudnn.enabled = cudnn_was_enabled
+
+    return preds, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
+
+
+
+def make_vid(model_stem, run_id, preds_all, img, 
+             cnn_grads, cnn_activations, rnn_grads, rnn_activations,
+            temporal_error):
+    
+    height, width, channels = img[0].shape
+    w2, h2 = width//2, height//2
+    height*=2 # stacking two
+    width += 50 # for rnn gradcam
+    fps = 20
+    cutoff = 2.4e-6 # adjust this manually when necessary
+    MAX_CLIP_TE_VIZ = .2 # viz will be white at this point
+    video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{run_id}_m_{model_stem}_gradcam.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
+
+    for i in range(len(img)-1):
+
+        # Gradcam
+        g = cnn_grads[i][0].astype(np.float32)
+        s = cnn_activations[i][0].astype(np.float32)
+        r = combine_img_cam(s*g, img[i], cutoff=cutoff) # this could also be on the processed img
+
+        # wps
+        r = draw_wps(r, preds_all[i])
+
+        # Guidelines
+        r[:,w2-1:w2+1,:] -= 20 # darker line vertical center
+        r[h2-1:h2+1:,:,:] -= 20 # darker line horizontal center
+
+        # RNN actgrad
+        r = get_rnn_gradcam(rnn_activations[i], rnn_grads[i], r)
+
+        # agent driving (enabled) or human
+        te = np.clip(temporal_error[i] / MAX_CLIP_TE_VIZ, 0, 1.0)
+        r[:25, :130, :] = 0
+        r[:20, :100, :] = 255*te
+
+        r = np.clip(np.flip(r,-1), 0, 255)
+
+        img_ = np.flip(get_rnn_gradcam(rnn_activations[i], rnn_grads[i], img[i]), -1)
+
+        r = np.concatenate([r, img_], axis=0)
+
+        video.write(r)
+
+    video.release()

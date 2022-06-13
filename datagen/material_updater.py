@@ -3,8 +3,8 @@ import numpy as np
 from constants import *
 
 STATIC_ROOT = "/media/beans/ssd/static"
-TEXTURES_ROOT = f"{STATIC_ROOT}/textures" #"/dev/shm/textures"
-HDRIS_ROOT = f"{STATIC_ROOT}/hdris" #"/dev/shm/hdris"
+TEXTURES_ROOT = f"{STATIC_ROOT}/textures"
+HDRIS_ROOT = f"{STATIC_ROOT}/hdris" 
 MEGASCANS_DOWNLOADED_ROOT = f"{STATIC_ROOT}/Megascans Library/Downloaded" #TODO must update this in bridge app
 
 # Getting nodes and filepaths
@@ -40,7 +40,7 @@ literally_all_normals = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/**/*_2K_Normal.j
 
 img_textures = glob.glob(f"{TEXTURES_ROOT}/*.jpg") 
 #literally_all_albedos += img_textures
-literally_all_albedos = img_textures
+literally_all_albedos = img_textures #TODO this name is lying
 
 rd_surface_keywords = ["gravel", "rock", "concrete", "soil", "mud", "asphalt", "sand", "road"]
 
@@ -50,17 +50,13 @@ print(f"{len(all_albedos)} total surfaces. {len(rd_surfaces)} appropriate for rd
 
 make_turnoff_nodes = bpy.data.node_groups['MakeTurnoff2'].nodes
 
-
+plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
 
 def randomize_appearance(rd_is_lined=True, lane_width=None):
     print("Randomizing appearance")
     """ 
     Doesn't change value of underlying targets. Superficial changing of materials, distractors, etc
     """
-
-    ##########################################################################
-    # Set random values
-    ##########################################################################
 
     ######################
     # Background
@@ -87,10 +83,10 @@ def randomize_appearance(rd_is_lined=True, lane_width=None):
     get_node("shoulder_img_normal", dirt_gravel_nodes).image.filepath = shoulder_img_albedo.replace("Albedo", "Normal")
     get_node("rd_img_normal", dirt_gravel_nodes).image.filepath = rd_img_albedo.replace("Albedo", "Normal") #random.choice(all_normals)
 
-    get_node("rd_falloff_distance", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(0, .5)
-    get_node("rd_width_add", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.2, .7) if rd_is_lined else .5 # constant width for graveldirt rds
+    get_node("rd_falloff_distance", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0.01, .5) if rd_is_lined else random.uniform(.01, np.interp(lane_width, [1.5, 3.0], [.5, 1.]))
+    get_node("rd_width_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.2, .7) if rd_is_lined else .5 # constant width for graveldirt rds
     get_node("shoulder_width", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(2.8, 6)
-    get_node("shoulder_falloff_distance", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(0, 2)
+    get_node("shoulder_falloff_distance", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(0.001, 2)
 
     get_node("rd_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, .4)
     get_node("shoulder_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 5)
@@ -183,7 +179,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None):
     get_node("yellow_line_thickness", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.03, .1)
     get_node("yellow_line_hue", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.45, .60)
     get_node("yellow_line_sat", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.5, 2)
-    get_node("yellow_line_brightness", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.5, 2.0) #TODO increase this to 3
+    get_node("yellow_line_brightness", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.5, 3.0)
     
     yellow_line_noise_mult_large_max = 4 if is_only_yellow_lined else 20
     get_node("yellow_line_noise_mult_small", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(2, 40)
@@ -238,7 +234,6 @@ def randomize_appearance(rd_is_lined=True, lane_width=None):
         if "grass_mesh" in o.name:
             bpy.data.objects.remove(o, do_unlink=True)
 
-    plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
     grass_root = random.choice(plants_folders)
     grass_opacity_img = glob.glob(f"{grass_root}/Textures/Atlas/*_2K_Opacity.jpg")[0]
 
@@ -306,15 +301,11 @@ def setup_map():
     get_node("npc_is_counterclockwise", npc_nodes).outputs["Value"].default_value = ego_is_counterclockwise*-1+1
 
     get_node("distance_along_loop", make_vehicle_nodes).outputs["Value"].default_value = 0
-    #get_node("speed_mult", make_vehicle_nodes).outputs["Value"].default_value = random.uniform(.8, 1.2)
-    #get_node("lateral_kP", make_vehicle_nodes).outputs["Value"].default_value = random.uniform(.7, .9)
-    #get_node("long_kP", make_vehicle_nodes).outputs["Value"].default_value = random.uniform(.6, .8)
 
-    # A bit awkward have to set rd width twice, don't know how to pass values btwn geo nodes like we can to materials. 
-    # The materials all descend from master_in, ideally that'd be the only place we set this
-    lane_width = random.uniform(2.75, 3.9) if rd_is_lined else random.uniform(1.6, 3.3) #TODO 1.5 may be a bit narrow actually
+    lane_width = random.uniform(2.75, 3.9) if rd_is_lined else random.uniform(1.6, 3.3)
     get_node("lane_width_master_in", main_map_nodes).outputs["Value"].default_value = lane_width
-    vehicle_perpendicular_shift = (lane_width * .54) if rd_is_lined else (lane_width - 1.5)
+    # at lane width of 1.5, drive in middle of rd, at width 4.0 drive 2.4m in
+    vehicle_perpendicular_shift = (lane_width * .54) if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
     get_node("vehicle_perpendicular_shift", get_postion_along_loop_nodes).outputs["Value"].default_value = vehicle_perpendicular_shift
 
     buildings_group_center_modulo = random.uniform(.05, .2)
@@ -334,7 +325,7 @@ def setup_map():
     randomize_appearance(rd_is_lined=rd_is_lined, lane_width=lane_width)
 
     # No NPCs when too narrow
-    if lane_width < 2.5:
+    if lane_width < 3.1:
         bpy.data.objects["Cylinder"].hide_render = True
     else:
         bpy.data.objects["Cylinder"].hide_render = False

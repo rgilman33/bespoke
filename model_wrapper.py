@@ -12,6 +12,8 @@ class ModelWrapper():
         self.model.reset_hidden(1)
 
         self.llc = LaggedLateralCalculator(wheelbase=wheelbase)
+
+        self.target_norm = TARGET_NORM.to(device).to(torch.float32)
         print(f"Initializing model w {model_dict['stem']}")
 
 
@@ -20,7 +22,7 @@ class ModelWrapper():
             with torch.no_grad():
                 model_out, obsnet_out = self.model(image_pytorch, aux_pytorch)
 
-        model_out = model_out * TARGET_NORM.to(device) # back into radians
+        model_out = model_out.to(torch.float32) * self.target_norm # back into radians, full precision
         model_out = model_out[0][0].cpu().detach().numpy()
 
         return self.llc.step(model_out, current_speed, current_tire_angle) #TODO refactor this to just be outside of wrapper?

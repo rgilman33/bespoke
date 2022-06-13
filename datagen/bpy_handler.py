@@ -1,7 +1,5 @@
 import numpy as np
-import random, sys
-import os
-import sys, bpy, time, glob
+import os, random, sys, bpy, time, glob
 
 sys.path.append("/media/beans/ssd/bespoke")
 from constants import *
@@ -56,7 +54,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None):
     reset_dagger_params()
     shift_x, shift_y = 0, 0
 
-    def frame_change_post(scene, dg):
+    def frame_change_post(scene, dg): #TODO move the vehicle movement things BEFORE the data saving so we don't have to do the staggering in the dataloader. Actually i dunno...
         global current_speed_mps, counter, targets_container, overall_frame_counter
         global shift_x, shift_y
         global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
