@@ -21,7 +21,7 @@ def reset_drive_style():
     speed_limit = random.uniform(12, 36) # mps. This is low 20s mph to 80mph. TODO We're still not getting above 80 kph, 50mph, prob bc of curvature limits
     lateral_kP = random.uniform(.7, .9)
     long_kP = random.uniform(.02, .05)
-    curve_speed_mult = random.uniform(.7, 1.2)
+    curve_speed_mult = random.uniform(.85, 1.35)
     turn_slowdown_sec_before = random.uniform(.25, .75)
 
 def set_frame_change_post_handler(bpy, save_data=False, run_root=None):

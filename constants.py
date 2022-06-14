@@ -61,7 +61,7 @@ min_dist_vals = [x[1] for x in min_dist_lookup]
 # NOTE tuned recently. This is the one to use
 max_speed_lookup = [ # estimated from run260, abq. 
     (.005, 100),
-    (.01, 80), # don't know about this one, research more, this could be dangerous
+    (.01, 80),
     (.0175, 60),
     (.035, 50),
     (.065, 40),

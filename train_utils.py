@@ -346,7 +346,7 @@ def gather_ixs(preds, speeds_kph):
             ixs[b,s,0] = int(round(wp_ix))
     return ixs
 
-MAX_ACCEPTABLE_TORQUE = 7000
+MAX_ACCEPTABLE_TORQUE = 12_000
 MAX_ACCEPTABLE_TORQUE_DELTA = 1000 #700
 rad_to_deg = lambda x: x*57.2958
 
