@@ -60,7 +60,7 @@ class LaggedLateralCalculator():
         vehicle_turn_rate = current_tire_angle * (current_speed/WHEELBASE) # rad/sec
         future_vehicle_heading = vehicle_turn_rate * LAG_S # radians
         # the vehicle won't be as turned as the tires, proportional to wheelbase
-        # future_vehicle_heading = get_heading_at_dist_along_traj(model_out, dist_car_travelled_during_lag)
+        # future_vehicle_heading = get_heading_at_dist_along_traj(model_out, dist_car_travelled_during_lag) #TODO test this again, might be better
 
         # # Most of the following is approximate. Wrongness gets wronger the steeper the angle.
         # avg_vehicle_heading_during_turn = future_vehicle_heading / 2.

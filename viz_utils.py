@@ -88,7 +88,7 @@ def get_rnn_gradcam(act, grad, img, cutoff=.2):
 from models import EffNet
 from input_prep import *
 
-def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
+def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10, _side_crop=0):
     cudnn_was_enabled = torch.backends.cudnn.enabled
     torch.backends.cudnn.enabled=False # otherwise can't do backward through RNN w cudnn
 
@@ -107,7 +107,8 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         img_ = pad(img[ix:ix+chunk_len])
         ix += chunk_len
         img_, aux_ = prep_inputs(img_, aux_)
-        #img_ = side_crop(img_, crop=8)
+        if _side_crop>0:
+            img_ = side_crop(img_, crop=_side_crop)
 
         with torch.cuda.amp.autocast():
             m.zero_grad()

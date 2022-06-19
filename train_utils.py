@@ -249,18 +249,20 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
 
         #print(avg_control_loss, avg_td_loss, avg_torque_loss, avg_te_loss)
 
+        TD_LOSS_WEIGHT = 0 # .03
+        TORQUE_LOSS_WEIGHT = 0 # .03
         # weight our loss items according to running avgs
         loss = control_loss + te*(.03*avg_control_loss/avg_te_loss) + \
-                            torque_loss*(.03*avg_control_loss/avg_torque_loss) + \
-                            torque_delta_loss*(.03*avg_control_loss/avg_td_loss)
+                            torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
+                            torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
 
         logger.log({f"{dataloader.path_stem}_control_loss": control_loss.item(),
                     f"consistency losses/{dataloader.path_stem}_steer_cost":steer_cost.item(),
                     f"consistency losses/{dataloader.path_stem}_te_loss":te.item(),
-                    # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
-                    # f"aux losses/{dataloader.path_stem}_pitch_loss":pitch_loss.item(),
-                    f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_loss":1 if has_torque_loss else 0,
-                    f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_delta_loss":1 if has_torque_delta_loss else 0,
+                    # # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
+                    # # f"aux losses/{dataloader.path_stem}_pitch_loss":pitch_loss.item(),
+                    # f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_loss":1 if has_torque_loss else 0,
+                    # f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_delta_loss":1 if has_torque_delta_loss else 0,
                    })
 
         if has_torque_loss:
@@ -346,8 +348,8 @@ def gather_ixs(preds, speeds_kph):
             ixs[b,s,0] = int(round(wp_ix))
     return ixs
 
-MAX_ACCEPTABLE_TORQUE = 12_000
-MAX_ACCEPTABLE_TORQUE_DELTA = 1000 #700
+MAX_ACCEPTABLE_TORQUE = 6000
+MAX_ACCEPTABLE_TORQUE_DELTA = 400 #700
 rad_to_deg = lambda x: x*57.2958
 
 def get_torque(pred, aux):

@@ -16,18 +16,26 @@ def reset_dagger_params():
 
 def reset_drive_style():
     global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
+    global is_highway
 
-    wp_m_offset = random.uniform(-3, -1)
-    speed_limit = random.uniform(12, 36) # mps. This is low 20s mph to 80mph. TODO We're still not getting above 80 kph, 50mph, prob bc of curvature limits
+    wp_m_offset = -8 # telling to always be right on top of traj #random.uniform(-2, 0)
+    if is_highway:
+        speed_limit = random.uniform(14, 28) if random.random() < .7 else random.uniform(24, 30)
+    else:
+        speed_limit = random.uniform(8, 22) # mps
+
     lateral_kP = random.uniform(.7, .9)
     long_kP = random.uniform(.02, .05)
-    curve_speed_mult = random.uniform(.85, 1.35)
+    curve_speed_mult = random.uniform(.85, 1.1)
     turn_slowdown_sec_before = random.uniform(.25, .75)
 
-def set_frame_change_post_handler(bpy, save_data=False, run_root=None):
+is_highway = False
+def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highway=False):
     global current_speed_mps, counter, targets_container, overall_frame_counter
     global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult 
     global current_tire_angle
+    global is_highway
+    is_highway = _is_highway
 
     current_tire_angle = 0
 
@@ -43,7 +51,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None):
     counter = 0
     overall_frame_counter = 0
 
-    current_speed_mps = speed_limit / 2 # starting a bit slower in case right in curve
+    current_speed_mps = speed_limit / 2 # starting a bit slower in case in curve
 
     # dagger
     global DAGGER_MAX_X, DAGGER_MAX_Y, DAGGER_DURATION, DAGGER_FREQ
@@ -60,10 +68,11 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None):
         global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
         global current_tire_angle
 
-        cube = bpy.data.objects["Cube"].evaluated_get(dg) 
+        cube = bpy.data.objects["Cube"].evaluated_get(dg) #; print("TEST 2", [a for a in cube.data.attributes])
         frame_ix = scene.frame_current
         cam_loc = cube.data.attributes["cam_loc"].data[0].vector 
         cam_heading = cube.data.attributes["cam_heading"].data[0].vector #pitch, roll, yaw(heading). Roll always flat. in flat town pitch always flat. yaw==heading.
+        cam_normal = cube.data.attributes["cam_normal"].data[0].vector
 
         traj = []
         for i in range(N_WPS_TO_USE):
@@ -115,9 +124,9 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None):
         ###################
         # updating vehicle location
 
-        # speed limit and turn agg
-        if frame_ix % DRIVE_STYLE_CHANGE_IX:
-            reset_drive_style()
+        # # speed limit and turn agg
+        # if frame_ix % DRIVE_STYLE_CHANGE_IX:
+        #     reset_drive_style()
 
         # # DAGGER
         # global DAGGER_MAX_X, DAGGER_MAX_Y, DAGGER_DURATION, DAGGER_FREQ
@@ -177,8 +186,11 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None):
         #     delta_y = np.sin(_vehicle_heading)*r
         #     delta_x = r - (np.cos(_vehicle_heading)*r)
 
-        get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[0] + delta_x
-        get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[1] + delta_y
+        dagger_offset = 0 #2 if frame_ix%200==0 else 0
+        get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[0] + delta_x + cam_normal[0]*dagger_offset
+        get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[1] + delta_y + cam_normal[1]*dagger_offset
+
+        # get_node("normal_shift", make_vehicle_nodes).outputs["Value"].default_value = normal_shift
 
         # This isn't exact, bc we're taking the angle slightly ahead of actual steer angle, and our lookup is for actual angles
         # right way to do this would be to estimate, in one second what turn angle will i have to implement

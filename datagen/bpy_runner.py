@@ -27,9 +27,9 @@ if __name__ == "__main__":
         if os.path.exists(next_targets_path):
             os.remove(next_targets_path)
 
-        set_frame_change_post_handler(bpy, save_data=True, run_root=run_root)
+        is_highway = setup_map() #TODO can return more here
 
-        setup_map()
+        set_frame_change_post_handler(bpy, save_data=True, run_root=run_root, _is_highway=is_highway)
 
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
         bpy.data.scenes["Scene"].render.image_settings.quality = random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
