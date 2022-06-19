@@ -18,9 +18,9 @@ def reset_drive_style():
     global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
     global is_highway
 
-    wp_m_offset = -8 # telling to always be right on top of traj #random.uniform(-2, 0)
+    wp_m_offset = -8 # telling to always be right on top of traj
     if is_highway:
-        speed_limit = random.uniform(14, 28) if random.random() < .7 else random.uniform(24, 30)
+        speed_limit = random.uniform(15, 18) if random.random()<.05 else random.uniform(25, 29) if random.random()<.05 else random.uniform(18, 25)
     else:
         speed_limit = random.uniform(8, 22) # mps
 

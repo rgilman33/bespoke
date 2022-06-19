@@ -463,25 +463,25 @@ def absolute_avg_loss(p,t):
 
 import albumentations as A
 
-BRIGHTNESS_LIMIT = .15
-BLUR_LIMIT = (1,3) #(3,5)
-ISO_NOISE_MAX = .5 #.8
-GAUSS_NOISE_MAX = 250 # 400
-COMPRESSION_QUALITY_MIN = 20 # 15
-GAMMA_MAX = 150
+BRIGHTNESS_LIMIT = .12
+BLUR_LIMIT = (1, 3) #(3,5)
+ISO_NOISE_MAX = .4 #.8
+GAUSS_NOISE_MAX = 200 # 400
+COMPRESSION_QUALITY_MIN = 35 # 15
+GAMMA_MAX = 120
 
 transform = A.Compose([
-    A.Blur(blur_limit=BLUR_LIMIT, p=.25),
-    A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=30),
+    A.Blur(blur_limit=BLUR_LIMIT, p=.2),
+    A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=(-30, 15)),
     A.OneOf([
-        A.GaussNoise(var_limit=GAUSS_NOISE_MAX, p=.25),
-        A.ISONoise(intensity=(.3, ISO_NOISE_MAX), p=.25)
+        A.GaussNoise(var_limit=GAUSS_NOISE_MAX, p=.2),
+        A.ISONoise(intensity=(.2, ISO_NOISE_MAX), p=.2)
     ]),
     A.Cutout(max_h_size=90, max_w_size=60, num_holes=2, p=.1),
     A.OneOf([
-        A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=0, p=.25),
-        A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=1, p=.25),
-        A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=.25)
+        A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=0, p=.2),
+        A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=1, p=.2),
+        A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=.2)
     ]),
     A.RandomBrightnessContrast(brightness_limit=BRIGHTNESS_LIMIT, contrast_limit=.4),
     A.RandomGamma(gamma_limit=(45,GAMMA_MAX), p=.25),
