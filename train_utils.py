@@ -463,16 +463,16 @@ def absolute_avg_loss(p,t):
 
 import albumentations as A
 
-BRIGHTNESS_LIMIT = .12
+BRIGHTNESS_LIMIT = .2
 BLUR_LIMIT = (1, 3) #(3,5)
 ISO_NOISE_MAX = .4 #.8
 GAUSS_NOISE_MAX = 200 # 400
 COMPRESSION_QUALITY_MIN = 35 # 15
-GAMMA_MAX = 120
+GAMMA_MAX = 130
 
 transform = A.Compose([
     A.Blur(blur_limit=BLUR_LIMIT, p=.2),
-    A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=(-30, 15)),
+    A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=(-30, 20)),
     A.OneOf([
         A.GaussNoise(var_limit=GAUSS_NOISE_MAX, p=.2),
         A.ISONoise(intensity=(.2, ISO_NOISE_MAX), p=.2)

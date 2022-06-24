@@ -1,5 +1,6 @@
 from constants import *
 from imports import *
+from train_utils import *
 
 # Camera matrix got from rw calib using the webcam. Notebook on old laptop?
 dist = np.float32([[0,0,0,0,0]])
@@ -88,7 +89,7 @@ def get_rnn_gradcam(act, grad, img, cutoff=.2):
 from models import EffNet
 from input_prep import *
 
-def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10, _side_crop=0):
+def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     cudnn_was_enabled = torch.backends.cudnn.enabled
     torch.backends.cudnn.enabled=False # otherwise can't do backward through RNN w cudnn
 
@@ -107,8 +108,6 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10, _si
         img_ = pad(img[ix:ix+chunk_len])
         ix += chunk_len
         img_, aux_ = prep_inputs(img_, aux_)
-        if _side_crop>0:
-            img_ = side_crop(img_, crop=_side_crop)
 
         with torch.cuda.amp.autocast():
             m.zero_grad()
@@ -139,13 +138,17 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10, _si
     rnn_activations = rnn_activations.reshape(seqlen, 32, 16)
     rnn_grads = rnn_grads.reshape(seqlen, 32, 16)
 
+    # a bit dumb, have to pad before denorming
+    preds = np.expand_dims(preds,0) * TARGET_NORM.cpu().numpy()
+    preds = preds[0] 
+
     torch.backends.cudnn.enabled = cudnn_was_enabled
 
     return preds, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
 
 
 
-def make_vid(model_stem, run_id, preds_all, img, 
+def _make_vid(model_stem, run_id, preds_all, img, 
              cnn_grads, cnn_activations, rnn_grads, rnn_activations,
             temporal_error):
     
@@ -175,10 +178,11 @@ def make_vid(model_stem, run_id, preds_all, img,
         # RNN actgrad
         r = get_rnn_gradcam(rnn_activations[i], rnn_grads[i], r)
 
-        # agent driving (enabled) or human
-        te = np.clip(temporal_error[i] / MAX_CLIP_TE_VIZ, 0, 1.0)
-        r[:25, :130, :] = 0
-        r[:20, :100, :] = 255*te
+        # te
+        if temporal_error is not None:
+            te = np.clip(temporal_error[i] / MAX_CLIP_TE_VIZ, 0, 1.0)
+            r[:25, :130, :] = 0
+            r[:20, :100, :] = 255*te
 
         r = np.clip(np.flip(r,-1), 0, 255)
 
@@ -189,3 +193,18 @@ def make_vid(model_stem, run_id, preds_all, img,
         video.write(r)
 
     video.release()
+
+
+def make_vid(run_id, model_stem, img, aux, tire_angle_rad=None):
+    preds, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = get_viz_rollout(model_stem, img, aux)
+    print(preds.shape, cnn_activations.shape, cnn_grads.shape)
+
+    temporal_error = None
+    if tire_angle_rad is not None:
+        speeds_mps = kph_to_mps(aux[:,2])
+        trajs = torch.FloatTensor(preds[:,:N_WPS_TO_USE]).to('cuda')
+        traj_xs, traj_ys = get_trajs_world_space(trajs, speeds_mps, tire_angle_rad, CRV_WHEELBASE)
+        temporal_error = np.sqrt(get_temporal_error(traj_xs.cpu(), traj_ys.cpu(), speeds_mps))
+
+    _make_vid(model_stem, run_id, preds, img, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
+    print("Made vid!")

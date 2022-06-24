@@ -5,37 +5,36 @@ sys.path.append("/media/beans/ssd/bespoke")
 from constants import *
 from traj_utils import *
 
-def reset_dagger_params():
-    global DAGGER_MAX_X, DAGGER_MAX_Y, DAGGER_DURATION, DAGGER_FREQ
 
-    DAGGER_LIMIT = .3
-    DAGGER_FREQ = random.randint(80, 120) #random.randint(60, 120)
-    DAGGER_DURATION = random.randint(24, 64)
-    DAGGER_MAX_X = random.uniform(-DAGGER_LIMIT, DAGGER_LIMIT)
-    DAGGER_MAX_Y = random.uniform(-DAGGER_LIMIT, DAGGER_LIMIT)
+def linear_to_cos(p):
+    # p is linear from 0 to 1. Outputs smooth values from 0 to 1 to back to zero
+    return (np.cos(p*np.pi*2)*-1 + 1) / 2
+
+def linear_to_sin_decay(p):
+    # p is linear from 0 to 1. Outputs smooth values from 1 to 0
+    return np.sin(p*np.pi+np.pi/2)
 
 def reset_drive_style():
     global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
     global is_highway
 
-    wp_m_offset = -8 # telling to always be right on top of traj
+    wp_m_offset = -30 #-12 # telling to always be right on top of traj, this will always be the closest wp
     if is_highway:
-        speed_limit = random.uniform(15, 18) if random.random()<.05 else random.uniform(25, 29) if random.random()<.05 else random.uniform(18, 25)
+        speed_limit = random.uniform(15, 18) if random.random()<.05 else random.uniform(25, 29) if random.random()<.15 else random.uniform(18, 25)
     else:
         speed_limit = random.uniform(8, 22) # mps
 
-    lateral_kP = random.uniform(.7, .9)
+    lateral_kP = .7 #random.uniform(.7, .9)
     long_kP = random.uniform(.02, .05)
     curve_speed_mult = random.uniform(.85, 1.1)
     turn_slowdown_sec_before = random.uniform(.25, .75)
 
-is_highway = False
-def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highway=False):
+def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highway=False, _is_lined=False):
     global current_speed_mps, counter, targets_container, overall_frame_counter
     global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult 
     global current_tire_angle
-    global is_highway
-    is_highway = _is_highway
+    global is_highway, is_lined
+    is_highway, is_lined = _is_highway, _is_lined
 
     current_tire_angle = 0
 
@@ -45,7 +44,9 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
     get_node("pos_override", make_vehicle_nodes).outputs["Value"].default_value = 0 # We start off placing the car on the curve and aligning it to curve tangent
-
+    
+    # get_node("normal_shift", make_vehicle_nodes).outputs["Value"].default_value = 0
+    
     targets_container = np.zeros((SEQ_LEN, N_WPS_TO_USE), dtype=np.float32)
     aux_container = np.zeros((SEQ_LEN, N_AUX), dtype=np.float32)
     counter = 0
@@ -53,26 +54,31 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
 
     current_speed_mps = speed_limit / 2 # starting a bit slower in case in curve
 
-    # dagger
-    global DAGGER_MAX_X, DAGGER_MAX_Y, DAGGER_DURATION, DAGGER_FREQ
-    global is_doing_dagger, dagger_counter, shift_x, shift_y
+    # is_counterclockwise = int(get_node("is_counterclockwise", make_vehicle_nodes).outputs["Value"].default_value)==1
 
+    # dagger
+    global is_doing_dagger, dagger_counter, shift_x, shift_y, normal_shift, DAGGER_FREQ
     is_doing_dagger = False
     dagger_counter = 0
-    reset_dagger_params()
     shift_x, shift_y = 0, 0
+    NORMAL_SHIFT_MAX = .8
+    normal_shift = NORMAL_SHIFT_MAX if random.random()<.5 else -NORMAL_SHIFT_MAX
+    DAGGER_FREQ = random.randint(400, 1000) #random.randint(200, 400)
 
     def frame_change_post(scene, dg): #TODO move the vehicle movement things BEFORE the data saving so we don't have to do the staggering in the dataloader. Actually i dunno...
         global current_speed_mps, counter, targets_container, overall_frame_counter
         global shift_x, shift_y
         global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
-        global current_tire_angle
+        global current_tire_angle, is_lined
 
         cube = bpy.data.objects["Cube"].evaluated_get(dg) #; print("TEST 2", [a for a in cube.data.attributes])
         frame_ix = scene.frame_current
         cam_loc = cube.data.attributes["cam_loc"].data[0].vector 
         cam_heading = cube.data.attributes["cam_heading"].data[0].vector #pitch, roll, yaw(heading). Roll always flat. in flat town pitch always flat. yaw==heading.
         cam_normal = cube.data.attributes["cam_normal"].data[0].vector
+        
+        # curve_loc_at_ego_dist = cube.data.attributes["curve_loc_at_ego_dist"].data[0].vector 
+        # ego_dist_from_curve = dist(curve_loc_at_ego_dist, cam_loc)
 
         traj = []
         for i in range(N_WPS_TO_USE):
@@ -87,18 +93,37 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
             if i==0:
                 dist_to_closest_wp = dist(cam_loc, wp)
 
-            # # shifted traj for dagger
-            # if abs(shift_x)>0 or abs(shift_y)>0:
-            #     shifted_wp = [wp[0] + shift_x, wp[1] + shift_y]
-            #     angle_to_wp_shifted = get_angle_to(cam_loc[:2], 
-            #                     cam_heading[2]+(np.pi/2), 
-            #                     shifted_wp)
-            #     traj.append(angle_to_wp_shifted)
-            # else:
-            #     traj.append(angle_to_wp)
+            # shifted traj for dagger
+            if abs(shift_x)>0 or abs(shift_y)>0:
+                shifted_wp = [wp[0] + shift_x, wp[1] + shift_y]
+                angle_to_wp_shifted = get_angle_to(cam_loc[:2], 
+                                cam_heading[2]+(np.pi/2), 
+                                shifted_wp)
+                traj.append(angle_to_wp_shifted)
+            else:
+                traj.append(angle_to_wp)
+
             traj.append(angle_to_wp)
 
-        traj = np.array(traj) # This is the possible dagger-shifted traj. Targets are already stored in container, but we don't use them anymore here
+        traj = np.array(traj) # This is the possibly dagger-shifted traj. Targets are already stored in container, but we don't use them anymore here
+
+        sec_to_undagger = 3 # TODO this, and shift, can be variable
+        meters_to_undagger = current_speed_mps * sec_to_undagger
+        if abs(shift_x)>0 or abs(shift_y)>0:
+            for i in range(N_WPS_TO_USE):
+                perc_into_undaggering = (i + MIN_WP_M) / meters_to_undagger
+                #p = np.clip(1-perc_into_undaggering, 0, 1)
+                p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
+
+                wp = cube.data.attributes[f"wp{i}"].data[0].vector 
+                shifted_wp = [wp[0] + shift_x*p, wp[1] + shift_y*p]
+
+                angle_to_wp_shifted = get_angle_to(cam_loc[:2], 
+                                cam_heading[2]+(np.pi/2), 
+                                shifted_wp)
+
+                targets_container[counter, i] = angle_to_wp_shifted
+
 
         ############
         # save data
@@ -124,36 +149,42 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         ###################
         # updating vehicle location
 
-        # # speed limit and turn agg
-        # if frame_ix % DRIVE_STYLE_CHANGE_IX:
-        #     reset_drive_style()
+        # speed limit and turn agg
+        if frame_ix % DRIVE_STYLE_CHANGE_IX:
+            reset_drive_style()
 
-        # # DAGGER
-        # global DAGGER_MAX_X, DAGGER_MAX_Y, DAGGER_DURATION, DAGGER_FREQ
-        # global is_doing_dagger, dagger_counter
+        ########################
+        # DAGGER
+        global shift_x_max, shift_y_max, DAGGER_FREQ, is_doing_dagger, dagger_counter, normal_shift
 
-        # if frame_ix % DAGGER_FREQ == 0:
-        #     is_doing_dagger = True
-        # if is_doing_dagger:
-        #     dagger_counter += 1
-        #     h = DAGGER_DURATION//2
-    
-        #     if dagger_counter <= h:
-        #         r = dagger_counter/h
-        #     else:
-        #         r = 1 - (dagger_counter/h - 1)
+        DAGGER_DURATION = sec_to_undagger*2*20 # frames TODO don't hardcode frames here
 
-        #     shift_x = r * DAGGER_MAX_X
-        #     shift_y = r * DAGGER_MAX_Y
+        shift_x_max = cam_normal[0]*normal_shift
+        shift_y_max = cam_normal[1]*normal_shift
+
+        if frame_ix % DAGGER_FREQ == 0:
+            is_doing_dagger = True
+        if is_doing_dagger:
+            dagger_counter += 1
+            # h = DAGGER_DURATION//2
+            # if dagger_counter <= h:
+            #     r = dagger_counter/h
+            # else:
+            #     r = 1 - (dagger_counter/h - 1)
+            r = linear_to_cos(dagger_counter/DAGGER_DURATION)
             
-        # if dagger_counter == DAGGER_DURATION:
-        #     is_doing_dagger = False
-        #     dagger_counter = 0
-        #     reset_dagger_params()
-        #     shift_x = 0
-        #     shift_y = 0
+            shift_x = r * shift_x_max
+            shift_y = r * shift_y_max
+            
+        if dagger_counter == DAGGER_DURATION:
+            is_doing_dagger = False
+            dagger_counter = 0
+            shift_x = 0
+            shift_y = 0
+            normal_shift = 1 if random.random()<.5 else -1
                 
         ########################
+
         fps = random.gauss(20, 2)
 
         dist_car_travelled = current_speed_mps * (1 / fps)
@@ -174,23 +205,26 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         delta_x = dist_car_travelled*np.cos(angle_to_future_vehicle_loc)
         delta_y = (dist_car_travelled*np.sin(angle_to_future_vehicle_loc))
 
-        # this way is the technically correct one, but keep in mind it's nearly identical to above bc things are nearly linear in these
-        # short time periods TODO doesn't work
-        # _vehicle_heading = cam_heading[2] - vehicle_heading_delta # don't know why sometimes subtract pi/2 or whatever. all janky.
+        get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[0] + delta_x
+        get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[1] + delta_y 
 
-        # if _vehicle_heading==0:
-        #     delta_x = 0
-        #     delta_y = dist_car_travelled
-        # else:
-        #     r = dist_car_travelled / _vehicle_heading
-        #     delta_y = np.sin(_vehicle_heading)*r
-        #     delta_x = r - (np.cos(_vehicle_heading)*r)
+        ####################
+        # should_do_dagger = is_counterclockwise and is_lined and abs(current_tire_angle)<.04
+        # if (frame_ix+1) % DAGGER_FREQ == 0 and should_do_dagger:
+        #     normal_shift = 1 # random.uniform(.25, 1.0)
+        #     seconds_to_undagger = np.interp(normal_shift, [.2, 1.0, 2.0], [1, 4, 7])
 
-        dagger_offset = 0 #2 if frame_ix%200==0 else 0
-        get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[0] + delta_x + cam_normal[0]*dagger_offset
-        get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[1] + delta_y + cam_normal[1]*dagger_offset
+        #     if random.random()<.5: normal_shift*=-1
 
-        # get_node("normal_shift", make_vehicle_nodes).outputs["Value"].default_value = normal_shift
+        #     distance_along_loop = get_node("distance_along_loop", make_vehicle_nodes).outputs["Value"].default_value 
+        #     get_node("normal_shift", make_vehicle_nodes).outputs["Value"].default_value = normal_shift
+        #     get_node("dagger_begin_m", make_vehicle_nodes).outputs["Value"].default_value = distance_along_loop - 2.0
+        #     get_node("dagger_duration_m", make_vehicle_nodes).outputs["Value"].default_value = current_speed_mps * seconds_to_undagger
+
+        #     get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value += cam_normal[0]*normal_shift
+        #     get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value += cam_normal[1]*normal_shift
+        #####################
+
 
         # This isn't exact, bc we're taking the angle slightly ahead of actual steer angle, and our lookup is for actual angles
         # right way to do this would be to estimate, in one second what turn angle will i have to implement

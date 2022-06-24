@@ -184,7 +184,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     # shadows, dapples
     shadow_v = 0.0 if random.random() < .6 else 1.0
     get_node("shadow_v", dirt_gravel_nodes_parent).outputs["Value"].default_value = shadow_v
-    shadow_strength = random.uniform(.2, .9) if rd_is_lined else random.uniform(.05, .5) #if shadow_v==1.0 
+    shadow_strength = random.uniform(.2, .95) if rd_is_lined else random.uniform(.05, .7) #if shadow_v==1.0 
     get_node("shadow_strength", dirt_gravel_nodes_parent).outputs["Value"].default_value = shadow_strength
     get_node("shadow_shape_subtracter", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.03, .08)
     get_node("shadow_noise_scale_small", dirt_gravel_nodes_parent).outputs["Value"].default_value = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95
@@ -353,5 +353,5 @@ def setup_map():
     else:
         bpy.data.objects["Cylinder"].hide_render = False
 
-    return is_highway
+    return is_highway, rd_is_lined
         
