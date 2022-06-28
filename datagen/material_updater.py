@@ -105,6 +105,14 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
 
     get_node("white_line_thickness", white_markings_mask_nodes).outputs["Value"].default_value = random.uniform(.03, .1)
 
+
+    if wide_shoulder_add>3 and random.random()<.2:
+        get_node("outer_white_dist", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(wide_shoulder_add/4, wide_shoulder_add/2)
+        get_node("outer_white_opacity", dirt_gravel_nodes).outputs["Value"].default_value = 1.
+    else:
+        get_node("outer_white_opacity", dirt_gravel_nodes).outputs["Value"].default_value = 0.
+
+
     get_node("yellow_is_single", dirt_gravel_nodes_parent).outputs["Value"].default_value = 1 if random.random() < .3 else 0
     get_node("yellow_is_dashed", dirt_gravel_nodes_parent).outputs["Value"].default_value = 1 if random.random() < .3 else 0
     get_node("yellow_dash_period", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.002, .004)
@@ -291,7 +299,7 @@ def setup_map():
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
     is_highway = rd_is_lined and random.random() < .33 # highways are faster, wider laned, always lined, less curvy
-    wide_shoulder_add = random.uniform(.2, 2.2) if (rd_is_lined and random.random() < .33) else 0 # this will cause to always have white line support
+    wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .33) else 0 # this will cause to always have white line support
 
     lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.75, 3.9) if rd_is_lined else random.uniform(1.6, 3.3)
     get_node("lane_width_master_in", main_map_nodes).outputs["Value"].default_value = lane_width
