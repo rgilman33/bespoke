@@ -3,23 +3,28 @@ import numpy as np
 import math
 
 
-def max_speed_from_steer(steer_angle_perc_max):
-    steer_angle_perc_max = abs(steer_angle_perc_max)
-    max_speed = int(round(np.interp(steer_angle_perc_max, 
-                            max_speed_bps, 
-                            max_speed_vals)))
+
+def wp_ix_from_dist_along_traj(dist_m):
+    # Returns a float where the decimal is the fraction the pt is btwn the two wps
+    if dist_m <= 25:
+        wp_ix = dist_m - MIN_WP_M # at dist of 25.0, will return wp ix 19, which is our last one-meter spaced wp
+    else:
+        n_wps_into_five_m_wps = (dist_m - 25 ) / 5 # Now the decimal is perc out of 5
+        wp_ix = 19 + n_wps_into_five_m_wps
+
+    wp_ix = min(max(0, wp_ix), len(traj_wp_dists)-1) # ix can't be less than our closest wp or more than our farthest wp
+
+    return wp_ix
     
-    return max_speed
+#TODO make sure we're also always capping min max on distance as well, in all parts of codebase
 
 
-def angle_to_wp_from_dist_along_traj(traj, m):
-    wp_ix = m - MIN_WP_M
+def angle_to_wp_from_dist_along_traj(traj, dist_m):
 
-    # float, where frac is the perc in between the two target wps
-    wp_ix = min(max(0, wp_ix), len(traj_wp_dists)-1) #+ 2 # magic number
+    wp_ix = wp_ix_from_dist_along_traj(dist_m)
 
     wp_ix_0, wp_ix_1 = math.floor(wp_ix), math.ceil(wp_ix)
-    perc_along_inbetween = wp_ix - wp_ix_0 # btwn zero and one, wps are one meter apart
+    perc_along_inbetween = wp_ix - wp_ix_0 # btwn zero and one, closer wps this is perc out of one, further it's perc out of five
 
     # weighted avg for wp_dist
     wp_dist = traj_wp_dists[wp_ix_1]*perc_along_inbetween + traj_wp_dists[wp_ix_0]*(1-perc_along_inbetween)
@@ -31,7 +36,7 @@ def angle_to_wp_from_dist_along_traj(traj, m):
 
 
 def get_target_wp(traj, speed_mps, wp_m_offset=None):
-    # negative value brings target wp closer, making turns more centered. Pos makes further, making turns tighter
+    # negative value brings target wp closer along the traj, making turns more centered. Pos makes further, making turns tighter
     if wp_m_offset:
         wp_m = np.interp(mps_to_kph(speed_mps), 
                                 min_dist_bps, 
@@ -91,9 +96,9 @@ def get_vehicle_updated_position(current_speed, traj):
 
 
 def get_wp_xy_from_ix(traj, wp_ix):
-    # wp_ix as int TODO this actually isn't correct, will get worse further along traj you go
+    # wp_ix as int 
     angle_to_wp = traj[wp_ix]
-    dist = wp_ix + MIN_WP_M
+    dist = traj_wp_dists[wp_ix] # TODO this actually isn't correct, will get worse the more the traj bends. 
     wp_x = np.sin(angle_to_wp) * dist
     wp_y = np.cos(angle_to_wp) * dist
     return wp_x, wp_y
@@ -109,8 +114,12 @@ def get_headings_from_traj(traj):
     return headings
 
 
-HEADING_BPS = [0] + [wp_dist+.5 for wp_dist in traj_wp_dists][:-1]
+# These are the dists at all the midway pts btwn our wps, plus a zero in the beginning
+# they're staggered by .5 m for closer wps, then 2.5m for farther ones
+HEADING_BPS = [0] + [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 23.5, 24.5, 27.5] 
+HEADING_BPS += [32.5, 37.5, 42.5, 47.5, 52.5, 57.5, 62.5, 67.5, 72.5] # last heading is the one btwn our second to last and our last wp
 
+# TODO we should just use np.interp like below for our manual interps above
 def get_heading_at_dist_along_traj(traj, dist):
     heading_values = get_headings_from_traj(traj)
     heading = np.interp(dist, HEADING_BPS, heading_values)
@@ -118,29 +127,43 @@ def get_heading_at_dist_along_traj(traj, dist):
     return heading
 
 
-
-
-
-# Used for autolong in OP
-# no reason this lookup shouldn't be the same as the other. No need conceptually for separate lookups. TODO delete this one?
-max_speed_lookup_rollout = [ # estimated from run260, nabq. 
-    (.005, 100), # 62 mph
-    (.01, 80), # 50 mph         don't know about this one, research more, this could be dangerous
-    (.0175, 60), # 37 mph
-    (.035, 50), # 31 mph
-    (.065, 40), # 25 mph
-    (.12, 30), # 18 mph
-    (.23, 20), # 12 mph
-    (.3, 15),
-    (.42, 10), # 6 mph
+mph_to_mps = lambda x : x*.44704
+# estimated from mostly-agent run on vv, sabq, pow, 214. This one appears more permissive than the one below? NOTE these are in mph whereas below and elsewhere they're kph
+max_speed_lookup_rollout = [
+    (.157, 16.6),
+    (.11, 20),
+    (.071, 25.5),
+    (.052, 28.7),
+    (.037, 34.1),
+    (.027, 39.3),
+    (.021, 44.7),
+    (.018, 50), # this is a guess, TODO update this
+    (.01, 60), #
 ]
+CURVE_SPEED_MULT = .8
+max_speed_bps_rollout = [x[0] for x in max_speed_lookup_rollout][::-1]
+max_speed_vals_rollout = [mph_to_mps(x[1])*CURVE_SPEED_MULT for x in max_speed_lookup_rollout][::-1]
 
-max_speed_bps_rollout = [x[0] for x in max_speed_lookup_rollout]
-max_speed_vals_rollout = [kph_to_mps(x[1]) for x in max_speed_lookup_rollout]
+# # Used for autolong in OP
+# # no reason this lookup shouldn't be the same as the other. No need conceptually for separate lookups. 
+# # TODO delete this one? if we want to make any change for rollout specific, it should probably just be a single mult
+# max_speed_lookup_rollout = [ # estimated from run260, nabq. 
+#     (.005, 100), # 62 mph
+#     (.01, 80), # 50 mph         don't know about this one, research more, this could be dangerous
+#     (.0175, 60), # 37 mph
+#     (.035, 50), # 31 mph
+#     (.065, 40), # 25 mph
+#     (.12, 30), # 18 mph
+#     (.23, 20), # 12 mph
+#     (.3, 15),
+#     (.42, 10), # 6 mph
+# ]
+# max_speed_bps_rollout = [x[0] for x in max_speed_lookup_rollout]
+# max_speed_vals_rollout = [kph_to_mps(x[1]) for x in max_speed_lookup_rollout]
 
-CURVE_PREP_SLOWDOWN_TIME = 2.0 # seconds
+CURVE_PREP_SLOWDOWN_TIME = 3.0 #2.0 # sseconds
 
-#TODO this still isn't principled. Should be getting the angle to target wp from the future location
+#TODO this still isn't principled. Should be getting the angle to target wp from the future location, maybe this is principled actually
 def get_curve_constrained_speed(traj, speed_mps):
     # N seconds from now, what is the speed we'll want to be going based on the turning we'll be doing?
     
@@ -149,7 +172,8 @@ def get_curve_constrained_speed(traj, speed_mps):
     # magic number to convert the heading at that place on the traj into the approximate steer that will be commanded at that point
     # goal is simply to shift the steer curve to the left, ie 'what steer are we going to command in n seconds'?
     # this magic number was eyeballed using the trn data, trying to shift the actual steer forward by n sec
-    future_steer = car_future_heading / 5.5 # 1.5 slowdown time good w 4; 2.0 good w 5.5
+    # future_steer = car_future_heading / 5.5 # 1.5s slowdown time good w magic 4; 2.0s good w magic 5.5
+    future_steer = car_future_heading / 5.5 # 1.5s slowdown time good w magic 4; 2.0s good w magic 5.5
 
     curve_max_speed_kph = np.interp(abs(future_steer), 
                         max_speed_bps_rollout, 

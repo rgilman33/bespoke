@@ -14,9 +14,10 @@ IMG_NORM_STD = .25
 # wps at ix 15 are about three times as big as ix 0. Actually measured the value off a dataloader, it was 2.56
 # verified this for blender dataloader also. It was similar.
 #wp_ix_norm = torch.from_numpy(np.linspace(1, 2.56, num=N_WPS_TO_USE).astype('float16')) # this was when pred 15 wps out
-wp_ix_norm = torch.from_numpy(np.linspace(1, 4.27, num=N_WPS_TO_USE).astype('float16'))
+#wp_ix_norm = torch.from_numpy(np.linspace(1, 4.27, num=N_WPS_TO_USE).astype('float16')) # this was when pred 22 out
+wp_ix_norm = torch.from_numpy(np.linspace(1, 8.0, num=N_WPS_TO_USE).astype('float16'))
 wp_ix_norm = wp_ix_norm.unsqueeze(0).unsqueeze(0)#.to('cuda')
-TARGET_NORM = .035 * wp_ix_norm #.02
+TARGET_NORM = .035 * wp_ix_norm 
 
 
 def norm_img(img):

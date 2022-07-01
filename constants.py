@@ -23,10 +23,12 @@ BPTT = 9 #8 #4 #8
 DATA_CONSUMPTION_RATIO_LIMIT = 3 #1.
 
 MIN_WP_M = 6 #8
-TRAJ_WP_DISTS = list(range(MIN_WP_M,30+MIN_WP_M))
+TRAJ_WP_DISTS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] + [30, 35, 40, 45, 50, 55, 60, 65, 70, 75]
+
 N_PRED = len(TRAJ_WP_DISTS)
-N_WPS_TO_USE = 22 #15
-traj_wp_dists = TRAJ_WP_DISTS[:N_WPS_TO_USE]
+N_WPS_TO_USE = 30 #22 #15
+traj_wp_dists = TRAJ_WP_DISTS[:N_WPS_TO_USE] # Now using all of them
+assert traj_wp_dists == TRAJ_WP_DISTS
 
 aux_properties = [
     'left_blinker',
@@ -58,7 +60,7 @@ min_dist_bps = [x[0] for x in min_dist_lookup]
 min_dist_vals = [x[1] for x in min_dist_lookup]
 
 
-# NOTE tuned recently. This is the one to use
+# NOTE tuned recently. This is the one to use TODO maybe use the other one instead
 max_speed_lookup = [ # estimated from run260, abq. 
     (.005, 100),
     (.01, 80),
@@ -73,7 +75,7 @@ max_speed_lookup = [ # estimated from run260, abq.
 max_speed_bps = [x[0] for x in max_speed_lookup]
 max_speed_vals = [kph_to_mps(x[1]) for x in max_speed_lookup]
 
-CRV_WHEELBASE = 2.66 # both OP and internet agree, but i measured mine just now at 2.74... Nope, measured again and it agreed
+CRV_WHEELBASE = 2.66 # both OP and internet agree
 
 device = 'cuda'
 

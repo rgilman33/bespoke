@@ -110,8 +110,8 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         sec_to_undagger = 3 # TODO this, and shift, can be variable
         meters_to_undagger = current_speed_mps * sec_to_undagger
         if abs(shift_x)>0 or abs(shift_y)>0:
-            for i in range(N_WPS_TO_USE):
-                perc_into_undaggering = (i + MIN_WP_M) / meters_to_undagger
+            for i, wp_dist in enumerate(traj_wp_dists):
+                perc_into_undaggering = wp_dist / meters_to_undagger
                 #p = np.clip(1-perc_into_undaggering, 0, 1)
                 p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
 
@@ -150,8 +150,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         # updating vehicle location
 
         # speed limit and turn agg
-        if frame_ix % DRIVE_STYLE_CHANGE_IX:
-            reset_drive_style()
+        if frame_ix % DRIVE_STYLE_CHANGE_IX: reset_drive_style()
 
         ########################
         # DAGGER
@@ -167,10 +166,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         if is_doing_dagger:
             dagger_counter += 1
             # h = DAGGER_DURATION//2
-            # if dagger_counter <= h:
-            #     r = dagger_counter/h
-            # else:
-            #     r = 1 - (dagger_counter/h - 1)
+            # r = dagger_counter/h if dagger_counter<=h else 1 - (dagger_counter/h - 1)
             r = linear_to_cos(dagger_counter/DAGGER_DURATION)
             
             shift_x = r * shift_x_max
@@ -208,24 +204,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[0] + delta_x
         get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[1] + delta_y 
 
-        ####################
-        # should_do_dagger = is_counterclockwise and is_lined and abs(current_tire_angle)<.04
-        # if (frame_ix+1) % DAGGER_FREQ == 0 and should_do_dagger:
-        #     normal_shift = 1 # random.uniform(.25, 1.0)
-        #     seconds_to_undagger = np.interp(normal_shift, [.2, 1.0, 2.0], [1, 4, 7])
-
-        #     if random.random()<.5: normal_shift*=-1
-
-        #     distance_along_loop = get_node("distance_along_loop", make_vehicle_nodes).outputs["Value"].default_value 
-        #     get_node("normal_shift", make_vehicle_nodes).outputs["Value"].default_value = normal_shift
-        #     get_node("dagger_begin_m", make_vehicle_nodes).outputs["Value"].default_value = distance_along_loop - 2.0
-        #     get_node("dagger_duration_m", make_vehicle_nodes).outputs["Value"].default_value = current_speed_mps * seconds_to_undagger
-
-        #     get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value += cam_normal[0]*normal_shift
-        #     get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value += cam_normal[1]*normal_shift
-        #####################
-
-
+        # TODO use the same apparatus we using in rw rollouts. As rw rollouts get better, can improve this to better match
         # This isn't exact, bc we're taking the angle slightly ahead of actual steer angle, and our lookup is for actual angles
         # right way to do this would be to estimate, in one second what turn angle will i have to implement
         angle_for_curve_limit, _, _ = get_target_wp(traj, current_speed_mps, wp_m_offset=current_speed_mps*turn_slowdown_sec_before) 

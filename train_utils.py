@@ -162,6 +162,10 @@ avg_td_loss = 12
 avg_torque_loss = 170
 avg_te_loss = .02
 
+# we're saying we don't care as much about the further wps, regardless of angle
+# TODO if pred perf at these higher ixs isn't good enough, can up the weights a bit. Starting small bc don't want to mess up our close wp ixs, which are used for lateral
+loss_weights = torch.from_numpy(pad(pad(np.concatenate([np.ones(20), np.linspace(.3, .03, 10)]))).astype(np.float16)).to(device)
+
 def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
               model, 
               opt=None, 
@@ -204,8 +208,10 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         # uncertainty_loss = mse_loss(control_loss_targets_log, obs_net_out[:,:,0])
 
         control_loss_no_reduce = control_loss_no_reduce * to_pred_mask # only asking to pred angles below certain threshold
+        control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
 
         control_loss = control_loss_no_reduce.mean()
+        control_loss *=2 # doubling this to keep it closer to our values before adding in the extra wps, bc i don't want to change the effective lr
 
         with torch.no_grad():
             a,_ = control_loss_no_reduce.max(-1) # collapse the wp traj
@@ -517,3 +523,15 @@ def aug_imgs(img):
 
     return img
 #################################################### 
+
+
+def train_only_parts_of_model(m, part_to_train=""):
+    for n, p in m.named_parameters():
+        if part_to_train in n:
+            p.requires_grad = True
+        else:
+            p.requires_grad = False
+            
+def unfreeze_model(m):
+    for p in m.parameters():
+        p.requires_grad = True

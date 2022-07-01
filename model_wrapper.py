@@ -87,4 +87,6 @@ class LaggedLateralCalculator():
         # subtracting out what vehicle turned
         target_wp_angle_future -= future_vehicle_heading
 
-        return target_wp_angle_future
+        curve_constrained_speed_mps = get_curve_constrained_speed(model_out, current_speed)
+
+        return target_wp_angle_future, curve_constrained_speed_mps
