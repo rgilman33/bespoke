@@ -301,6 +301,8 @@ def setup_map():
     is_highway = rd_is_lined and random.random() < .33 # highways are faster, wider laned, always lined, less curvy
     wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .33) else 0 # this will cause to always have white line support
 
+    is_just_straight = is_highway and random.random()<.01
+
     lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.75, 3.9) if rd_is_lined else random.uniform(1.6, 3.3)
     get_node("lane_width_master_in", main_map_nodes).outputs["Value"].default_value = lane_width
     # at lane width of 1.5, drive in middle of rd, at width 4.0 drive 2.4m in
@@ -316,7 +318,7 @@ def setup_map():
     get_node("loop_noise_scale_1", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.0045, .0055)
     get_node("loop_noise_scale_2", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.01, .015) 
 
-    get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(800, 1200)
+    get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = 100 if is_just_straight else random.uniform(800, 1200)
     is_wide_laned = lane_width > 3.5
     nm1 = 0 if (random.random()<.1 or is_highway) else random.uniform(150, 250) if is_wide_laned else random.uniform(200, 300)
     nm2 = 0 if (random.random()<.3 or is_highway or is_wide_laned) else random.uniform(0, 20) if random.random() < .9 else random.uniform(20, 40)

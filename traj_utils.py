@@ -144,45 +144,23 @@ CURVE_SPEED_MULT = .8
 max_speed_bps_rollout = [x[0] for x in max_speed_lookup_rollout][::-1]
 max_speed_vals_rollout = [mph_to_mps(x[1])*CURVE_SPEED_MULT for x in max_speed_lookup_rollout][::-1]
 
-# # Used for autolong in OP
-# # no reason this lookup shouldn't be the same as the other. No need conceptually for separate lookups. 
-# # TODO delete this one? if we want to make any change for rollout specific, it should probably just be a single mult
-# max_speed_lookup_rollout = [ # estimated from run260, nabq. 
-#     (.005, 100), # 62 mph
-#     (.01, 80), # 50 mph         don't know about this one, research more, this could be dangerous
-#     (.0175, 60), # 37 mph
-#     (.035, 50), # 31 mph
-#     (.065, 40), # 25 mph
-#     (.12, 30), # 18 mph
-#     (.23, 20), # 12 mph
-#     (.3, 15),
-#     (.42, 10), # 6 mph
-# ]
-# max_speed_bps_rollout = [x[0] for x in max_speed_lookup_rollout]
-# max_speed_vals_rollout = [kph_to_mps(x[1]) for x in max_speed_lookup_rollout]
 
-CURVE_PREP_SLOWDOWN_TIME = 3.0 #2.0 # sseconds
-
-#TODO this still isn't principled. Should be getting the angle to target wp from the future location, maybe this is principled actually
-def get_curve_constrained_speed(traj, speed_mps):
+def get_curve_constrained_speed(traj, speed_mps, curve_prep_slowdown_time_sec=3):
     # N seconds from now, what is the speed we'll want to be going based on the turning we'll be doing?
+    # more accurate the smaller the slowdown time, eg projecting four sec into future is harder than one sec
     
-    car_future_heading = get_heading_at_dist_along_traj(traj, speed_mps*CURVE_PREP_SLOWDOWN_TIME)
+    car_future_heading = get_heading_at_dist_along_traj(traj, speed_mps*curve_prep_slowdown_time_sec)
 
     # magic number to convert the heading at that place on the traj into the approximate steer that will be commanded at that point
-    # goal is simply to shift the steer curve to the left, ie 'what steer are we going to command in n seconds'?
-    # this magic number was eyeballed using the trn data, trying to shift the actual steer forward by n sec
-    # future_steer = car_future_heading / 5.5 # 1.5s slowdown time good w magic 4; 2.0s good w magic 5.5
-    future_steer = car_future_heading / 5.5 # 1.5s slowdown time good w magic 4; 2.0s good w magic 5.5
+    # goal is simply to shift the steer curve to the left, ie 'what steer are we going to command in n seconds'? Eyeballed from trn data
+    magic_smallerizer = np.interp(curve_prep_slowdown_time_sec, [1,0, 2.0, 3.0, 4.0], [2.6, 5.5, 8.0, 11])
+    future_steer = car_future_heading / magic_smallerizer
 
     curve_max_speed_kph = np.interp(abs(future_steer), 
                         max_speed_bps_rollout, 
                         max_speed_vals_rollout)
 
     return curve_max_speed_kph
-
-
-
 
 
 def get_angle_to(pos, theta, target):

@@ -94,11 +94,12 @@ class BlenderDataloader():
 
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
 
-        MAX_ANGLE_TO_PRED = .16
+        MAX_ANGLE_TO_PRED = .18 #.16
         to_pred_mask = torch.from_numpy((np.abs(targets) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
         to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
 
-        zero_mask = torch.from_numpy((np.abs(targets) < .24).astype(np.float16)).to(device)
+        ZERO_THRESH = .36 #.24
+        zero_mask = torch.from_numpy((np.abs(targets) < ZERO_THRESH).astype(np.float16)).to(device)
         to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
 
         img = aug_imgs(img) # aug when still as uint8. Ton of time spent here, way inefficient

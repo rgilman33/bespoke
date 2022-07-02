@@ -47,7 +47,7 @@ kph_to_mps = lambda x: (x*1000)/(60*60)
 
 
 # 6.3, still using 6.7
-min_dist_lookup = [
+min_dist_lookup = [ # TODO change this name to be more accurate
     (20,6), #12 mph 
     (30,6.), #18 mph
     (40,7.5), # 24 mph

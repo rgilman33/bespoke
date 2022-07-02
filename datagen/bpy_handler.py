@@ -107,7 +107,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
 
         traj = np.array(traj) # This is the possibly dagger-shifted traj. Targets are already stored in container, but we don't use them anymore here
 
-        sec_to_undagger = 3 # TODO this, and shift, can be variable
+        sec_to_undagger = 3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
         meters_to_undagger = current_speed_mps * sec_to_undagger
         if abs(shift_x)>0 or abs(shift_y)>0:
             for i, wp_dist in enumerate(traj_wp_dists):
