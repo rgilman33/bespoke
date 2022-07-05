@@ -20,7 +20,7 @@ def reset_drive_style():
 
     wp_m_offset = -30 #-12 # telling to always be right on top of traj, this will always be the closest wp
     if is_highway:
-        speed_limit = random.uniform(15, 18) if random.random()<.05 else random.uniform(25, 29) if random.random()<.15 else random.uniform(18, 25)
+        speed_limit = random.uniform(15, 18) if random.random()<.05 else random.uniform(25, 27) if random.random()<.15 else random.uniform(18, 25)
     else:
         speed_limit = random.uniform(8, 22) # mps
 

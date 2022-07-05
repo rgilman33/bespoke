@@ -20,9 +20,9 @@ def xz_from_angles_and_distances(angles, wp_dists):
     wp_zs = np.cos(angles) * wp_dists
     return wp_xs, wp_zs
 
-def draw_wps(image, wp_angles, color=(255,0,0)):
+def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS)[:N_WPS_TO_USE], color=(255,0,0), thickness=1):
     image = copy.deepcopy(image)
-    wp_xs, wp_zs = xz_from_angles_and_distances(wp_angles, np.array(TRAJ_WP_DISTS)[:N_WPS_TO_USE])
+    wp_xs, wp_zs = xz_from_angles_and_distances(wp_angles, wp_dists)
     wp_ys = np.ones_like(wp_xs) * -1.5
     wps_3d = np.array([[x,y,z] for x, y, z in zip(wp_xs, wp_ys, wp_zs)])
     wps_2d, _ = cv2.projectPoints(wps_3d, rvec, tvec, mtx, dist) # these are projected onto the full img of size 480 x 640
@@ -31,7 +31,7 @@ def draw_wps(image, wp_angles, color=(255,0,0)):
 
     for i in range(len(wps_2d)):
         wp = tuple(wps_2d[i][0].astype(int))
-        image = cv2.circle(image, wp, radius=3, color=color, thickness=1)
+        image = cv2.circle(image, wp, radius=3, color=color, thickness=thickness) #-1 fills the circle
     return image
 
 
@@ -148,7 +148,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
 
 
 
-def _make_vid(model_stem, run_id, preds_all, img, 
+def _make_vid(model_stem, run_id, preds_all, img, aux,  
              cnn_grads, cnn_activations, rnn_grads, rnn_activations,
             temporal_error):
     
@@ -169,7 +169,18 @@ def _make_vid(model_stem, run_id, preds_all, img,
         r = combine_img_cam(s*g, img[i], cutoff=cutoff) # this could also be on the processed img
 
         # wps
-        r = draw_wps(r, preds_all[i])
+        traj = preds_all[i]
+        speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
+        r = draw_wps(r, traj)
+
+        target_wp_angle, wp_dist, _ = get_target_wp(traj, speed_mps)
+        r = draw_wps(r, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=(50, 255, 50), thickness=-1)
+
+        close_long_wp_dist, far_long_wp_dist = CURVE_PREP_SLOWDOWN_S_MIN*speed_mps, CURVE_PREP_SLOWDOWN_S_MAX*speed_mps
+        close_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(traj, close_long_wp_dist)
+        far_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(traj, far_long_wp_dist)
+        r = draw_wps(r, np.array([close_long_wp_angle, far_long_wp_angle]), wp_dists=np.array([close_long_wp_dist, far_long_wp_dist]), color=(50, 50, 255), thickness=-1)
+        
 
         # Guidelines
         r[:,w2-1:w2+1,:] -= 20 # darker line vertical center
@@ -206,5 +217,5 @@ def make_vid(run_id, model_stem, img, aux, tire_angle_rad=None):
         traj_xs, traj_ys = get_trajs_world_space(trajs, speeds_mps, tire_angle_rad, CRV_WHEELBASE)
         temporal_error = np.sqrt(get_temporal_error(traj_xs.cpu(), traj_ys.cpu(), speeds_mps))
 
-    _make_vid(model_stem, run_id, preds, img, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
+    _make_vid(model_stem, run_id, preds, img, aux, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
     print("Made vid!")

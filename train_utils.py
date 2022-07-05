@@ -164,7 +164,7 @@ avg_te_loss = .02
 
 # we're saying we don't care as much about the further wps, regardless of angle
 # TODO if pred perf at these higher ixs isn't good enough, can up the weights a bit. Starting small bc don't want to mess up our close wp ixs, which are used for lateral
-loss_weights = torch.from_numpy(pad(pad(np.concatenate([np.ones(20), np.linspace(.5, .05, 10)]))).astype(np.float16)).to(device)
+loss_weights = torch.from_numpy(pad(pad(np.concatenate([np.ones(20), np.linspace(1., .2, 10)]))).astype(np.float16)).to(device)
 
 def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
               model, 

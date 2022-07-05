@@ -23,12 +23,13 @@ BPTT = 9 #8 #4 #8
 DATA_CONSUMPTION_RATIO_LIMIT = 3 #1.
 
 MIN_WP_M = 6 #8
-TRAJ_WP_DISTS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] + [30, 35, 40, 45, 50, 55, 60, 65, 70, 75]
+TRAJ_WP_DISTS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] + [35, 45, 55, 65, 75, 85, 95, 105, 115, 125]
 
 N_PRED = len(TRAJ_WP_DISTS)
 N_WPS_TO_USE = 30 #22 #15
 traj_wp_dists = TRAJ_WP_DISTS[:N_WPS_TO_USE] # Now using all of them
 assert traj_wp_dists == TRAJ_WP_DISTS
+assert MIN_WP_M==TRAJ_WP_DISTS[0]
 
 aux_properties = [
     'left_blinker',
@@ -75,7 +76,7 @@ max_speed_lookup = [ # estimated from run260, abq.
 max_speed_bps = [x[0] for x in max_speed_lookup]
 max_speed_vals = [kph_to_mps(x[1]) for x in max_speed_lookup]
 
-CRV_WHEELBASE = 2.66 # both OP and internet agree
+CRV_WHEELBASE = 2.66 # both OP and internet agree, rw measurement confirms
 
 device = 'cuda'
 
@@ -115,3 +116,9 @@ def clear_obs_per_sec():
     paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/**/obs_per_sec.npy", recursive=True)
     for p in paths:
         os.remove(p)
+
+
+
+
+# These are used in rw rollout to get avg, to smooth out long
+CURVE_PREP_SLOWDOWN_S_MIN, CURVE_PREP_SLOWDOWN_S_MAX = 5., 5. #2.5, 3.5 TODO this will go away. Seconds will depend on velocity delta to be covered

@@ -38,6 +38,7 @@ class LaggedLateralCalculator():
         self.vehicle_heading = 0 # rad
         self.vehicle_location_x = 0
         self.vehicle_location_y = 0
+        self.curve_speeds_hist = [] # TODO prob make this a queue or whatever
 
 
     def step(self, model_out, current_speed, current_tire_angle):
@@ -56,10 +57,9 @@ class LaggedLateralCalculator():
         wp_x = np.sin(target_wp_angle) * wp_dist #TODO is this correct? why is x w sin? ok checked, this looks correct
         wp_y = np.cos(target_wp_angle) * wp_dist
 
-
-        vehicle_turn_rate = current_tire_angle * (current_speed/WHEELBASE) # rad/sec
-        future_vehicle_heading = vehicle_turn_rate * LAG_S # radians
-        # the vehicle won't be as turned as the tires, proportional to wheelbase
+        curvature = current_tire_angle/WHEELBASE # rad/m #TODO WARNING made this change and haven't tested yet, just eyeball checked
+        vehicle_turn_rate_sec = curvature * current_speed # rad/sec
+        future_vehicle_heading = vehicle_turn_rate_sec * LAG_S # radians, w respect to original ego heading
         # future_vehicle_heading = get_heading_at_dist_along_traj(model_out, dist_car_travelled_during_lag) #TODO test this again, might be better
 
         # # Most of the following is approximate. Wrongness gets wronger the steeper the angle.
@@ -88,7 +88,11 @@ class LaggedLateralCalculator():
         target_wp_angle_future -= future_vehicle_heading
 
         # curve_constrained_speed_mps = get_curve_constrained_speed(model_out, current_speed)
-        secs_to_sample = np.linspace(2.6, 3.2, 8) # sampling multiple to smooth it out, prevent jerk in longitudinal #TODO tune this prob
-        curve_constrained_speed_mps = sum([get_curve_constrained_speed(model_out, current_speed, curve_prep_slowdown_time_sec=s) for s in secs_to_sample]) / len(secs_to_sample)
+        # secs_to_sample = np.linspace(CURVE_PREP_SLOWDOWN_S_MIN, CURVE_PREP_SLOWDOWN_S_MAX, 8) # sampling multiple to smooth it out, prevent jerk in longitudinal #TODO tune this prob
+        # curve_constrained_speed_mps = sum([get_curve_constrained_speed(model_out, current_speed, curve_prep_slowdown_time_sec=s) for s in secs_to_sample]) / len(secs_to_sample)
+        curve_constrained_speed_mps = get_curve_constrained_speed(model_out, current_speed, curve_prep_slowdown_time_sec=CURVE_PREP_SLOWDOWN_S_MAX)
+        self.curve_speeds_hist.append(curve_constrained_speed_mps)
+        CURVE_SPEEDS_N_AVG = 32
+        curve_constrained_speed_mps = sum(self.curve_speeds_hist[-CURVE_SPEEDS_N_AVG:])/CURVE_SPEEDS_N_AVG
         
         return target_wp_angle_future, curve_constrained_speed_mps

@@ -3,7 +3,7 @@ from imports import *
 
 def norm_aux(aux):
     aux = aux / torch.from_numpy(aux_norm_constants).to('cuda')
-    aux = aux.clip(-8,8)
+    aux = aux.clip(-8,8) # TODO pay attn to this, we clipping anything important? 
     return aux
 
 pad = lambda x: np.expand_dims(x,0)
@@ -11,13 +11,12 @@ pad = lambda x: np.expand_dims(x,0)
 IMG_NORM_MEAN = .5
 IMG_NORM_STD = .25
 
-# wps at ix 15 are about three times as big as ix 0. Actually measured the value off a dataloader, it was 2.56
-# verified this for blender dataloader also. It was similar.
-#wp_ix_norm = torch.from_numpy(np.linspace(1, 2.56, num=N_WPS_TO_USE).astype('float16')) # this was when pred 15 wps out
 #wp_ix_norm = torch.from_numpy(np.linspace(1, 4.27, num=N_WPS_TO_USE).astype('float16')) # this was when pred 22 out
-wp_ix_norm = torch.from_numpy(np.linspace(1, 8.0, num=N_WPS_TO_USE).astype('float16'))
+wp_ix_norm = torch.from_numpy(np.linspace(1, 11.4, num=N_WPS_TO_USE).astype('float16')) 
 wp_ix_norm = wp_ix_norm.unsqueeze(0).unsqueeze(0)#.to('cuda')
-TARGET_NORM = .035 * wp_ix_norm 
+# TARGET_NORM = .035 * wp_ix_norm 
+TARGET_NORM = .015 * wp_ix_norm 
+
 
 
 def norm_img(img):
@@ -56,45 +55,6 @@ def prep_inputs(image, aux, targets=None, is_single_obs=False):
 
     return (image, aux)
 
-# ###############################################
-# from torchvision import transforms
-
-# # all take in torch.float16 already totally prepped for pytorch, returns the same
-
-# def bwify(imgs):
-#     return imgs.mean(2, keepdim=True)
-
-# def norm_seqly(front_container):
-#     """ Normalize by sequence within the batch so all seqs have approximate same brightness. 
-#     Takes in b&w image from 0 to 1. Outputs the same, just scaled and shifted by mean and std.
-#     Want to minimize any differences btwn test and train """
-#     f = front_container.permute(1,0,2,3,4)
-#     means = torch.flatten(f.float(),start_dim=1,end_dim=-1).mean(1)
-#     stds = torch.flatten(f.float(),start_dim=1,end_dim=-1).std(1)
-    
-#     means = means.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-#     stds = stds.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-    
-#     front_container = front_container - means
-#     front_container = front_container / stds
-#     front_container = (front_container + 3.) / 6.
-#     front_container = torch.clamp(front_container, 0., 1.)
-    
-#     return front_container
-
-# def posterize(imgs):
-#     imgs = (imgs*255).type(torch.uint8)
-#     imgs = transforms.functional.posterize(imgs, 5)
-#     imgs = imgs.type(torch.float16)/255.
-#     return imgs
-
-# def simplify_imgs(imgs):
-#     imgs = bwify(imgs)
-#     imgs = norm_seqly(imgs)
-#     imgs = posterize(imgs)
-    
-#     return imgs
-# #####################################################
 
 from skimage.draw import line_aa
 
