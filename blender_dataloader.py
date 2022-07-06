@@ -94,6 +94,15 @@ class BlenderDataloader():
 
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
 
+
+        # mask out wps more than n seconds ahead
+        MAX_PRED_S = 6.0
+        avg_speeds_mps = kph_to_mps(aux[:,:,2:3].mean(axis=1, keepdims=True))
+        max_pred_dists_m = avg_speeds_mps * MAX_PRED_S
+        speed_mask = pad(pad(np.array(TRAJ_WP_DISTS, dtype=np.float16)))
+        speed_mask = (speed_mask <= max_pred_dists_m).astype(np.float16) 
+        # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj. The broadcasting above 'just works' bc thank you np
+
         MAX_ANGLE_TO_PRED = .18 #.16
         to_pred_mask = torch.from_numpy((np.abs(targets) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
         to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
@@ -102,7 +111,9 @@ class BlenderDataloader():
         zero_mask = torch.from_numpy((np.abs(targets) < ZERO_THRESH).astype(np.float16)).to(device)
         to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
 
-        img = aug_imgs(img) # aug when still as uint8. Ton of time spent here, way inefficient
+        to_pred_mask = to_pred_mask * torch.from_numpy(speed_mask).to(device)
+
+        img = aug_imgs(img) # aug when still as uint8. Ton of time spent here, way inefficient. Is that still true now?
         img, aux, targets = prep_inputs(img, aux, targets=targets) # we're actually spending substantial time here.
 
         self.seq_ix += bptt

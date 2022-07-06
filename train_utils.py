@@ -211,7 +211,6 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
 
         control_loss = control_loss_no_reduce.mean()
-        control_loss *=2 # doubling this to keep it closer to our values before adding in the extra wps, bc i don't want to change the effective lr
 
         with torch.no_grad():
             a,_ = control_loss_no_reduce.max(-1) # collapse the wp traj

@@ -148,7 +148,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
 
 
 
-def _make_vid(model_stem, run_id, preds_all, img, aux,  
+def _make_vid(model_stem, run_id, preds_all, img, aux, targets,
              cnn_grads, cnn_activations, rnn_grads, rnn_activations,
             temporal_error):
     
@@ -168,10 +168,14 @@ def _make_vid(model_stem, run_id, preds_all, img, aux,
         s = cnn_activations[i][0].astype(np.float32)
         r = combine_img_cam(s*g, img[i], cutoff=cutoff) # this could also be on the processed img
 
+        if targets is not None:
+            r = draw_wps(r, targets[i], color=(100, 200, 200))
+
         # wps
         traj = preds_all[i]
-        speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
         r = draw_wps(r, traj)
+
+        speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
 
         target_wp_angle, wp_dist, _ = get_target_wp(traj, speed_mps)
         r = draw_wps(r, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=(50, 255, 50), thickness=-1)
@@ -206,7 +210,7 @@ def _make_vid(model_stem, run_id, preds_all, img, aux,
     video.release()
 
 
-def make_vid(run_id, model_stem, img, aux, tire_angle_rad=None):
+def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None):
     preds, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = get_viz_rollout(model_stem, img, aux)
     print(preds.shape, cnn_activations.shape, cnn_grads.shape)
 
@@ -217,5 +221,5 @@ def make_vid(run_id, model_stem, img, aux, tire_angle_rad=None):
         traj_xs, traj_ys = get_trajs_world_space(trajs, speeds_mps, tire_angle_rad, CRV_WHEELBASE)
         temporal_error = np.sqrt(get_temporal_error(traj_xs.cpu(), traj_ys.cpu(), speeds_mps))
 
-    _make_vid(model_stem, run_id, preds, img, aux, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
+    _make_vid(model_stem, run_id, preds, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
     print("Made vid!")
