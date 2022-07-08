@@ -45,16 +45,11 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
 
     get_node("pos_override", make_vehicle_nodes).outputs["Value"].default_value = 0 # We start off placing the car on the curve and aligning it to curve tangent
     
-    # get_node("normal_shift", make_vehicle_nodes).outputs["Value"].default_value = 0
-    
-    targets_container = np.zeros((SEQ_LEN, N_WPS_TO_USE), dtype=np.float32)
+    targets_container = np.zeros((SEQ_LEN, N_WPS*3), dtype=np.float32)
     aux_container = np.zeros((SEQ_LEN, N_AUX), dtype=np.float32)
     counter = 0
     overall_frame_counter = 0
-
     current_speed_mps = speed_limit / 2 # starting a bit slower in case in curve
-
-    # is_counterclockwise = int(get_node("is_counterclockwise", make_vehicle_nodes).outputs["Value"].default_value)==1
 
     # dagger
     global is_doing_dagger, dagger_counter, shift_x, shift_y, normal_shift, DAGGER_FREQ
@@ -76,53 +71,35 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         cam_loc = cube.data.attributes["cam_loc"].data[0].vector 
         cam_heading = cube.data.attributes["cam_heading"].data[0].vector #pitch, roll, yaw(heading). Roll always flat. in flat town pitch always flat. yaw==heading.
         cam_normal = cube.data.attributes["cam_normal"].data[0].vector
-        
-        # curve_loc_at_ego_dist = cube.data.attributes["curve_loc_at_ego_dist"].data[0].vector 
-        # ego_dist_from_curve = dist(curve_loc_at_ego_dist, cam_loc)
+
+        sec_to_undagger = 3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
+        meters_to_undagger = current_speed_mps * sec_to_undagger
 
         traj = []
-        for i in range(N_WPS_TO_USE):
+        for i, wp_dist in enumerate(traj_wp_dists):
             wp = cube.data.attributes[f"wp{i}"].data[0].vector 
-            # radians. Left is negative.
+
+            if i==0: dist_to_closest_wp = dist(cam_loc, wp)
+
+            if abs(shift_x)>0 or abs(shift_y)>0:
+                perc_into_undaggering = wp_dist / meters_to_undagger
+                #p = np.clip(1-perc_into_undaggering, 0, 1)
+                p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
+                wp = [wp[0] + shift_x*p, wp[1] + shift_y*p, wp[2]]
+            
+            #TODO can move all this out of loop for perf sake
             angle_to_wp = get_angle_to(cam_loc[:2], 
                                         cam_heading[2]+(np.pi/2), 
                                         wp[:2])
 
+            wp_dist = dist(wp, cam_loc)
             targets_container[counter, i] = angle_to_wp
+            targets_container[counter, i+N_WPS] = wp_dist
+            targets_container[counter, i+2*N_WPS] = wp[2]-cam_loc[2]
 
-            if i==0:
-                dist_to_closest_wp = dist(cam_loc, wp)
-
-            # shifted traj for dagger
-            if abs(shift_x)>0 or abs(shift_y)>0:
-                shifted_wp = [wp[0] + shift_x, wp[1] + shift_y]
-                angle_to_wp_shifted = get_angle_to(cam_loc[:2], 
-                                cam_heading[2]+(np.pi/2), 
-                                shifted_wp)
-                traj.append(angle_to_wp_shifted)
-            else:
-                traj.append(angle_to_wp)
-
-            traj.append(angle_to_wp)
+            traj.append(angle_to_wp) 
 
         traj = np.array(traj) # This is the possibly dagger-shifted traj. Targets are already stored in container, but we don't use them anymore here
-
-        sec_to_undagger = 3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
-        meters_to_undagger = current_speed_mps * sec_to_undagger
-        if abs(shift_x)>0 or abs(shift_y)>0:
-            for i, wp_dist in enumerate(traj_wp_dists):
-                perc_into_undaggering = wp_dist / meters_to_undagger
-                #p = np.clip(1-perc_into_undaggering, 0, 1)
-                p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
-
-                wp = cube.data.attributes[f"wp{i}"].data[0].vector 
-                shifted_wp = [wp[0] + shift_x*p, wp[1] + shift_y*p]
-
-                angle_to_wp_shifted = get_angle_to(cam_loc[:2], 
-                                cam_heading[2]+(np.pi/2), 
-                                shifted_wp)
-
-                targets_container[counter, i] = angle_to_wp_shifted
 
 
         ############
@@ -146,11 +123,6 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         
         overall_frame_counter += 1
 
-        ###################
-        # updating vehicle location
-
-        # speed limit and turn agg
-        if frame_ix % DRIVE_STYLE_CHANGE_IX: reset_drive_style()
 
         ########################
         # DAGGER
@@ -180,6 +152,10 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
             normal_shift = 1 if random.random()<.5 else -1
                 
         ########################
+        # Moving the car
+
+        # speed limit and turn agg
+        if frame_ix % DRIVE_STYLE_CHANGE_IX: reset_drive_style()
 
         fps = random.gauss(20, 2)
 

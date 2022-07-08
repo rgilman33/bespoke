@@ -24,12 +24,12 @@ DATA_CONSUMPTION_RATIO_LIMIT = 3 #1.
 
 MIN_WP_M = 6 #8
 TRAJ_WP_DISTS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] + [35, 45, 55, 65, 75, 85, 95, 105, 115, 125]
-
-N_PRED = len(TRAJ_WP_DISTS)
-N_WPS_TO_USE = 30 #22 #15
-traj_wp_dists = TRAJ_WP_DISTS[:N_WPS_TO_USE] # Now using all of them
-assert traj_wp_dists == TRAJ_WP_DISTS
 assert MIN_WP_M==TRAJ_WP_DISTS[0]
+N_WPS = len(TRAJ_WP_DISTS)
+
+N_TARGETS = N_WPS*3 # currently is wp_angle, wp_heading, and _
+N_WPS_TO_USE = N_WPS
+traj_wp_dists = TRAJ_WP_DISTS
 
 aux_properties = [
     'left_blinker',
@@ -38,6 +38,7 @@ aux_properties = [
     'speed_as_percent_of_limit',
     'current_tire_angle_rad'
 ]
+N_AUX = len(aux_properties)
 
 aux_norm_constants = np.array([1., 1., 20., 1., 1.], dtype=np.float16)
 
@@ -45,7 +46,8 @@ STEER_RATIO = 16. # taken from OP, specific for crv-5g. Don't change this willy 
 
 mps_to_kph = lambda x: (x/1000)*60*60
 kph_to_mps = lambda x: (x*1000)/(60*60)
-
+mps_to_mph = lambda x: x*2.23694
+mph_to_mps = lambda x : x*.44704
 
 # 6.3, still using 6.7
 min_dist_lookup = [ # TODO change this name to be more accurate
@@ -86,10 +88,6 @@ BLENDER_MEMBANK_ROOT = "/media/beans/ssd/blender_membank"
 EPISODE_LEN = SEQ_LEN * 10
 RUNS_TO_STORE_PER_PROCESS = 30
 N_RUNNERS = 12
-
-
-N_TARGETS = N_WPS_TO_USE
-N_AUX = len(aux_properties)
 
 get_node = lambda label, nodes : [n for n in nodes if n.label==label][0]
 

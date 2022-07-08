@@ -142,7 +142,7 @@ class Logger():
         self.tracker = {}
         return r
 
-def add_trajs_to_img(img, pred, targets):
+def add_trajs_to_img(img, pred, targets, speed_mps=None):
     """ Takes img in as it was directly as fed into model. Preds and targets same, right into or out of the model """
     target_norm = TARGET_NORM[0,0,:].to('cuda') # squeezing what was unsqueezed
     img = torch.clone(img)
@@ -150,8 +150,8 @@ def add_trajs_to_img(img, pred, targets):
     img = (img*255).astype(np.uint8)
     trj = (pred * target_norm).detach().cpu().numpy()
     trj_targets = (targets * target_norm).detach().cpu().numpy()
-    img = draw_wps(img, trj)
-    img = draw_wps(img, trj_targets, color=(100, 200, 200))
+    img = draw_wps(img, trj, speed_mps=speed_mps)
+    img = draw_wps(img, trj_targets, color=(100, 200, 200), speed_mps=speed_mps)
     return img
 
 
@@ -163,8 +163,7 @@ avg_torque_loss = 170
 avg_te_loss = .02
 
 # we're saying we don't care as much about the further wps, regardless of angle
-# TODO if pred perf at these higher ixs isn't good enough, can up the weights a bit. Starting small bc don't want to mess up our close wp ixs, which are used for lateral
-loss_weights = torch.from_numpy(pad(pad(np.concatenate([np.ones(20), np.linspace(1., .2, 10)]))).astype(np.float16)).to(device)
+loss_weights = torch.from_numpy(pad(pad(np.concatenate([np.ones(20), np.linspace(1., .5, 10)]))).astype(np.float16)).to(device)
 
 def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
               model, 
@@ -192,25 +191,26 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         t1 = time.time()
         batch = dataloader.get_batch()
         if not batch: break
-        (img, aux, targets, to_pred_mask, current_tire_angles_rad, current_speeds_mps, pitch, yaw), is_first_in_seq = batch
-        # if len(img) < BPTT and train and backwards: # don't train on the ending tips of seqs
-        #     print("skipping short seq", len(img))
-        #     continue
+        (img, aux, wp_angles, wp_headings, to_pred_mask, current_tire_angles_rad, current_speeds_mps, pitch, yaw), is_first_in_seq = batch
 
         if is_first_in_seq: 
             model.reset_hidden(dataloader.bs) # reset hiddens to zeros
             last_pred, last_aux, last_speeds, last_tire_angles = torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda')
         
         with torch.cuda.amp.autocast(): pred, obs_net_out = model(img, aux)
+        wp_angles_pred, wp_headings_pred, _ = torch.chunk(pred, 3, -1)
         
-        control_loss_no_reduce = mse_loss_no_reduce(targets, pred)
+        control_loss_no_reduce = mse_loss_no_reduce(wp_angles, wp_angles_pred)
         # control_loss_targets_log = control_loss_no_reduce.mean(-1).detach().log() # Pred log loss for each traj (one each obs, not for each wp separately)
         # uncertainty_loss = mse_loss(control_loss_targets_log, obs_net_out[:,:,0])
-
         control_loss_no_reduce = control_loss_no_reduce * to_pred_mask # only asking to pred angles below certain threshold
         control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
-
         control_loss = control_loss_no_reduce.mean()
+
+        headings_loss = mse_loss_no_reduce(wp_headings, wp_headings_pred)
+        headings_loss *= to_pred_mask
+        headings_loss *= loss_weights
+        headings_loss = headings_loss.mean()
 
         with torch.no_grad():
             a,_ = control_loss_no_reduce.max(-1) # collapse the wp traj
@@ -219,12 +219,12 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             bptt_ix_worst = bptt_worst_ixs[ix_worst]
             if control_loss_worst > worst_control_loss_all:
                 worst_control_loss_all_img = add_trajs_to_img(img[ix_worst, bptt_ix_worst, :, :, :], 
-                                                                pred[ix_worst, bptt_ix_worst, :], 
-                                                                targets[ix_worst, bptt_ix_worst, :])
+                                                                wp_angles_pred[ix_worst, bptt_ix_worst, :], 
+                                                                wp_angles[ix_worst, bptt_ix_worst, :]) #TODO add speed_mps to this so it truncates excess traj
 
         # pitch_loss = mse_loss(pitch, obs_net_out[:,:,1])
 
-        pred_including_prev = torch.cat([last_pred, pred], dim=1)
+        pred_including_prev = torch.cat([last_pred, wp_angles_pred], dim=1)
         aux_including_prev = torch.cat([last_aux, aux], dim=1)
         speeds_including_prev = torch.cat([last_speeds, current_speeds_mps], dim=1)
         tire_angles_including_prev = torch.cat([last_tire_angles, current_tire_angles_rad], dim=1)
@@ -242,7 +242,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         # # TODO verify this better. Not totally confident about it. Cat grad tensor and detached?
         te = temporal_consistency_loss(pred_including_prev, speeds_including_prev.cpu().numpy(), tire_angles_including_prev.cpu().numpy())
 
-        last_pred, last_aux, last_speeds, last_tire_angles = pred.detach()[:,-1:, :], aux.detach()[:,-1:,:], current_speeds_mps[:,-1:], current_tire_angles_rad[:,-1:]
+        last_pred, last_aux, last_speeds, last_tire_angles = wp_angles_pred.detach()[:,-1:, :], aux.detach()[:,-1:,:], current_speeds_mps[:,-1:], current_tire_angles_rad[:,-1:]
 
         # keep our running avgs up to date
         avg_control_loss = avg_control_loss*LOSS_EPS + control_loss.item()*(1-LOSS_EPS)
@@ -257,11 +257,12 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         TD_LOSS_WEIGHT = 0 # .03
         TORQUE_LOSS_WEIGHT = 0 # .03
         # weight our loss items according to running avgs
-        loss = control_loss + te*(.03*avg_control_loss/avg_te_loss) + \
+        loss = control_loss + headings_loss + te*(.03*avg_control_loss/avg_te_loss) + \
                             torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
                             torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
 
         logger.log({f"{dataloader.path_stem}_control_loss": control_loss.item(),
+                    f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
                     f"consistency losses/{dataloader.path_stem}_steer_cost":steer_cost.item(),
                     f"consistency losses/{dataloader.path_stem}_te_loss":te.item(),
                     # # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
@@ -300,9 +301,9 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             worst_control_loss_all = -np.inf
             if log_wandb: 
                 # random imgs to log
-                random_img_0 = add_trajs_to_img(img[0, 3, :,:,:], pred[0, 3, :], targets[0, 3, :])
-                random_img_1 = add_trajs_to_img(img[1, -1, :,:,:], pred[1, -1, :], targets[1, -1, :])
-                random_img_2 = add_trajs_to_img(img[-1, 0, :,:,:], pred[-1, 0, :], targets[-1, 0, :])
+                random_img_0 = add_trajs_to_img(img[0, 3, :,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :])
+                random_img_1 = add_trajs_to_img(img[1, -1, :,:,:], wp_angles_pred[1, -1, :], wp_angles[1, -1, :])
+                random_img_2 = add_trajs_to_img(img[-1, 0, :,:,:], wp_angles_pred[-1, 0, :], wp_angles[-1, 0, :])
 
                 three_randos = wandb.Image(np.concatenate([random_img_0, random_img_1, random_img_2], axis=0))
 

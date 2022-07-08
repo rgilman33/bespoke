@@ -69,7 +69,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
 
     get_node("hdri_hue", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.45, .55)
     get_node("hdri_sat", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.5, 1.5)
-    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.2, 3)
+    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.3, 2)
 
     ######################
     # Lanelines

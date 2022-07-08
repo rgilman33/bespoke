@@ -4,10 +4,11 @@ from train_utils import aug_imgs
 import threading
 from constants import *
 from imports import *
+from traj_utils import *
 
 get_img_container = lambda bs : np.empty((bs, SEQ_LEN, IMG_HEIGHT, IMG_WIDTH, 3), dtype='uint8')
 get_aux_container = lambda bs : np.empty((bs, SEQ_LEN, N_AUX), dtype=np.float32)
-get_targets_container = lambda bs : np.empty((bs, SEQ_LEN, N_TARGETS), dtype=np.float32)
+get_targets_container = lambda bs : np.empty((bs, SEQ_LEN, N_WPS*3), dtype=np.float32)
 
 class BlenderDataloader():
 
@@ -93,7 +94,9 @@ class BlenderDataloader():
         yaw = torch.FloatTensor(yaw).to('cuda')
 
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
+        wp_angles, wp_dists, _ = np.split(targets, 3, axis=2)
 
+        wp_headings = get_headings_from_traj_batch(wp_angles, wp_dists)
 
         # mask out wps more than n seconds ahead
         MAX_PRED_S = 6.0
@@ -104,17 +107,17 @@ class BlenderDataloader():
         # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj. The broadcasting above 'just works' bc thank you np
 
         MAX_ANGLE_TO_PRED = .18 #.16
-        to_pred_mask = torch.from_numpy((np.abs(targets) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
+        to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
         to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
 
         ZERO_THRESH = .36 #.24
-        zero_mask = torch.from_numpy((np.abs(targets) < ZERO_THRESH).astype(np.float16)).to(device)
+        zero_mask = torch.from_numpy((np.abs(wp_angles) < ZERO_THRESH).astype(np.float16)).to(device)
         to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
 
         to_pred_mask = to_pred_mask * torch.from_numpy(speed_mask).to(device)
 
         img = aug_imgs(img) # aug when still as uint8. Ton of time spent here, way inefficient. Is that still true now?
-        img, aux, targets = prep_inputs(img, aux, targets=targets) # we're actually spending substantial time here.
+        img, aux, wp_angles, wp_headings = prep_inputs(img, aux, targets=(wp_angles, wp_headings)) # we're actually spending substantial time here.
 
         self.seq_ix += bptt
 
@@ -130,7 +133,8 @@ class BlenderDataloader():
 
         self.queued_batches.append(((img, 
                                     aux, 
-                                    targets,
+                                    wp_angles,
+                                    wp_headings,
                                     to_pred_mask,
                                     current_tire_angles_rad, # Extras
                                     current_speeds_mps, 

@@ -97,27 +97,8 @@ def get_vehicle_updated_position(current_speed, traj):
     return vehicle_x_delta, vehicle_y_delta, vehicle_heading_delta
 
 
-def get_wp_xy_from_ix(traj, wp_ix):
-    # wp_ix as int 
-    angle_to_wp = traj[wp_ix]
-    dist = traj_wp_dists[wp_ix] # TODO this actually isn't correct, will get worse the more the traj bends. 
-    wp_x = np.sin(angle_to_wp) * dist
-    wp_y = np.cos(angle_to_wp) * dist
-    return wp_x, wp_y
-
-
-def get_headings_from_traj(traj):
-    headings = [0]
-    for i in range(len(traj)-1):
-        this_wp_x, this_wp_y = get_wp_xy_from_ix(traj, i)
-        next_wp_x, next_wp_y = get_wp_xy_from_ix(traj, i+1)
-        heading = np.arcsin((next_wp_x - this_wp_x)/(next_wp_y - this_wp_y))
-        headings.append(heading)
-    return headings
-
-
 # These are the dists at all the midway pts btwn our wps, plus a zero in the beginning
-# they're staggered by .5 m for closer wps, then 5m for farther ones
+# they're staggered by .5m for closer wps, then 5m for farther ones
 WP_HALFWAYS = [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 23.5, 24.5, 30.0] 
 WP_HALFWAYS += [40, 50, 60, 70, 80, 90, 100, 110, 120] # last heading is the one btwn our second to last and our last wp
 # halfways are the halfway pt on each segment, there is one less than the number of wps
@@ -126,61 +107,31 @@ HEADING_BPS = [0] + WP_HALFWAYS
 
 SEGMENT_DISTS = np.array(TRAJ_WP_DISTS[1:]) - np.array(TRAJ_WP_DISTS[:-1]) # 19 ones then 10 tens. There is one fewer segment than there are wps
 
-# TODO we should just use np.interp like below for our manual interps above
-def get_heading_at_dist_along_traj(traj, dist):
-    heading_values = get_headings_from_traj(traj)
-    heading = np.interp(dist, HEADING_BPS, heading_values)
+# def get_headings_from_traj(wp_angles, wp_dists):
+#     wp_xs = np.sin(wp_angles) * wp_dists
+#     wp_ys = np.cos(wp_angles) * wp_dists
+
+#     # these headings are at half-wp marks
+#     xd_over_yd = (wp_xs[1:] - wp_xs[:-1])/(wp_ys[1:] - wp_ys[:-1])
+#     #TODO fix this to be able to go beyond 45 deg on either side
+#     headings = np.arcsin(np.clip(xd_over_yd, -1.0, 1.0)) # can't have arcsine outside range -1 to 1. This was only happening at end of traj, sometimes. So prob we're not even looking at this part of traj, but be aware of this
+#     # cat a zero on the front bc we know the heading is zero at vehicle (by definition)
+#     headings = np.concatenate([np.array([0], dtype=np.float16), headings])
     
-    return heading
-
-
-mph_to_mps = lambda x : x*.44704
-
-
-# max_speed_lookup_rollout = [
-#     (.157, 11),
-#     (.11, 16),
-#     (.071, 20.5),
-#     (.052, 26.7),
-#     (.037, 34.1),
-#     (.027, 39.3),
-#     (.021, 44.7),
-#     (.018, 50), # this is a guess, TODO update this
-#     (.01, 66), #
-# ]
-# CURVE_SPEED_MULT = 1.
-# max_speed_bps_rollout = [x[0] for x in max_speed_lookup_rollout][::-1]
-# max_speed_vals_rollout = [mph_to_mps(x[1])*CURVE_SPEED_MULT for x in max_speed_lookup_rollout][::-1]
-
-# # estimates future steer using angle to future wp TODO this is going away in favor of more principled version
-# def get_curve_constrained_speed(traj, speed_mps, curve_prep_slowdown_time_sec=4):
-#     # N seconds from now, what is the speed we'll want to be going based on the turning we'll be doing?
-#     # more accurate the smaller the slowdown time, eg projecting four sec into future is harder than one sec
+#     # interp back to our original wp dists so they're nice and aligned w our other data
+#     headings = np.interp(TRAJ_WP_DISTS, HEADING_BPS, headings)
     
-#     angle_to_far_wp, _, _ = angle_to_wp_from_dist_along_traj(traj, speed_mps*curve_prep_slowdown_time_sec)
+#     return headings
 
-#     # magic number to convert the heading at that place on the traj into the approximate steer that will be commanded at that point
-#     # goal is simply to shift the steer curve to the left, ie 'what steer are we going to command in n seconds'? Eyeballed from trn data
-#     magic_smallerizer = np.interp(curve_prep_slowdown_time_sec, [3.0, 4.0, 5.0], [3.7, 4.5, 5.3])
-#     future_steer = angle_to_far_wp / magic_smallerizer
-
-#     curve_max_speed_kph = np.interp(abs(future_steer), 
-#                         max_speed_bps_rollout, 
-#                         max_speed_vals_rollout)
-
-#     return curve_max_speed_kph
-
-
-
-
-def get_headings_from_traj(traj):
-    wp_xs = np.sin(traj) * TRAJ_WP_DISTS #TODO this is wrong, especially now that our traj is so long!
-    wp_ys = np.cos(traj) * TRAJ_WP_DISTS
+def get_headings_from_traj(wp_angles, wp_dists):
+    #NOTE this should always be done in full float precision
+    wp_xs = np.sin(wp_angles) * wp_dists
+    wp_ys = np.cos(wp_angles) * wp_dists
 
     # these headings are at half-wp marks
     xd_over_yd = (wp_xs[1:] - wp_xs[:-1])/(wp_ys[1:] - wp_ys[:-1])
-    headings = np.arcsin(np.clip(xd_over_yd, -1.0, 1.0)) # can't have arcsine outside range -1 to 1. This was only happening at end of traj, sometimes. So prob we're not even looking at this part of traj, but be aware of this
-    # cat a zero on the front bc we know the heading is zero at vehicle (by definition)
+    headings = np.arctan(xd_over_yd) 
+    # cat a zero on the front bc we know the heading is zero at vehicle, by definition
     headings = np.concatenate([np.array([0], dtype=np.float16), headings])
     
     # interp back to our original wp dists so they're nice and aligned w our other data
@@ -188,10 +139,21 @@ def get_headings_from_traj(traj):
     
     return headings
 
+
+def get_headings_from_traj_batch(wp_angles, wp_dists):
+    bs, seq_len, _ = wp_angles.shape
+    # TODO this should be vectorized. Just using this for convenience right now
+    wp_headings = np.empty_like(wp_angles)
+    for b in range(bs):
+        for s in range(seq_len):
+            wp_headings[b,s,:] = get_headings_from_traj(wp_angles[b,s,:], wp_dists[b,s,:])
+    return wp_headings
+
+
 def get_curvatures_from_headings(headings):
     
     # these will be at the half-wp marks
-    curvatures = abs(headings[1:] - headings[:-1]) / SEGMENT_DISTS
+    curvatures = abs(headings[1:] - headings[:-1]) / SEGMENT_DISTS # rad / m
     
     # we're extrapolating for both the first and last wp, that's fine
     curvatures = np.interp(TRAJ_WP_DISTS, WP_HALFWAYS, curvatures)
@@ -200,37 +162,40 @@ def get_curvatures_from_headings(headings):
 
 
 def tire_angles_to_max_speeds(tire_angles):
-    magic = 5.0 # even the official formula has a magic number. We're just taking this from our own runs. 
+    magic = 3.7 #5.0 # even the official formula has a magic number. We're just taking this from our own runs. #TODO need to update this again now that we're predding real headings
     max_speeds = np.sqrt(1/(tire_angles+.0001)) * magic # units is mph bc that's how we eyeballed it
     max_speeds = mph_to_mps(max_speeds)
     return max_speeds
 
+def max_ix_from_speed(speed_mps):
+    long_consideration_max_m = CURVE_PREP_SLOWDOWN_S_MAX * speed_mps # we currently support up to 5s out
+    long_consideration_max_ix = math.ceil(wp_ix_from_dist_along_traj(long_consideration_max_m))
+    return long_consideration_max_ix
 
-ACCEL = 2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
-def get_curve_constrained_speed(traj, current_speed_mps):
+ACCEL = 1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
+def get_curve_constrained_speed(headings, current_speed_mps):
     # given a traj, what is the max speed we can be going right now to ensure we're able to hit all the upcoming wps at a speed appropriate for each one?
     # and given a maximum allowed deceleration. This speed may be higher than the speed limit, it is simply the speed based on upcoming curvature, so
     # in theory a perfectly straight rd could have limit of infinity
     # current_speed_mps is only used to truncate the results bc we don't need to support beyond 5s
+    if current_speed_mps < 5: return 30
 
-    headings = get_headings_from_traj(traj)
     curvatures = get_curvatures_from_headings(headings)
     tire_angles = curvatures * CRV_WHEELBASE
     max_speeds_at_each_wp = tire_angles_to_max_speeds(tire_angles)
     # For each wp, there is a max speed we can be going now to make sure we're going the proper speed when we hit that wp
     current_max_speed_w_respect_to_each_wp = np.sqrt(np.array(TRAJ_WP_DISTS) * ACCEL) + max_speeds_at_each_wp # adds elementwise
 
-    long_consideration_max_m = CURVE_PREP_SLOWDOWN_S_MAX * current_speed_mps # we currently support up to 5s out
-    long_consideration_max_ix = math.ceil(wp_ix_from_dist_along_traj(long_consideration_max_m))
+    long_consideration_max_ix = max_ix_from_speed(current_speed_mps)
     curve_constrained_speed = current_max_speed_w_respect_to_each_wp[:long_consideration_max_ix].min()
 
     return curve_constrained_speed
-    
 
 
 
 def get_angle_to(pos, theta, target):
-    pos = np.array(pos); target = np.array(target)
+    theta = float(theta)
+    pos = np.array(pos, dtype=np.float32); target = np.array(target, dtype=np.float32)
     R = np.array([
         [np.cos(theta), -np.sin(theta)],
         [np.sin(theta),  np.cos(theta)],
@@ -243,6 +208,6 @@ def get_angle_to(pos, theta, target):
     return angle
 
 def dist(a, b):
-    x = a[0] - b[0]
-    y = a[1] - b[1]
+    x = float(a[0]) - float(b[0])
+    y = float(a[1]) - float(b[1])
     return (x**2 + y**2)**(1/2)

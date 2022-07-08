@@ -4,11 +4,14 @@ import numpy as np
 import importlib
 
 sys.path.append("/media/beans/ssd/bespoke/datagen")
+sys.path.append("/media/beans/ssd/bespoke")
 
+import constants
 import material_updater
 import bpy_handler
 import traj_utils
 
+importlib.reload(constants)
 importlib.reload(traj_utils)
 importlib.reload(material_updater)
 importlib.reload(bpy_handler)

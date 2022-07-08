@@ -14,6 +14,8 @@ class ModelWrapper():
         self.llc = LaggedLateralCalculator(wheelbase=wheelbase)
 
         self.target_norm = TARGET_NORM.to(device).to(torch.float32)
+        self.target_norm_headings = TARGET_NORM_HEADINGS.to(device).to(torch.float32)
+
         print(f"Initializing model w {model_dict['stem']}")
 
 
@@ -22,10 +24,13 @@ class ModelWrapper():
             with torch.no_grad():
                 model_out, obsnet_out = self.model(image_pytorch, aux_pytorch)
 
-        model_out = model_out.to(torch.float32) * self.target_norm # back into radians, full precision
-        model_out = model_out[0][0].cpu().detach().numpy()
+        wp_angles, wp_headings, _ = torch.chunk(model_out.to(torch.float32), 3, -1)
+        wp_angles *= self.target_norm # back into radians, full precision
+        wp_headings *= self.target_norm_headings
+        wp_angles = wp_angles[0][0].cpu().detach().numpy()
+        wp_headings = wp_headings[0][0].cpu().detach().numpy()
 
-        return self.llc.step(model_out, current_speed, current_tire_angle) #TODO refactor this to just be outside of wrapper?
+        return self.llc.step(wp_angles, wp_headings, current_speed, current_tire_angle)
 
 
 class LaggedLateralCalculator():
@@ -41,20 +46,19 @@ class LaggedLateralCalculator():
         self.curve_speeds_hist = [] # TODO prob make this a queue or whatever
 
 
-    def step(self, model_out, current_speed, current_tire_angle):
+    def step(self, wp_angles, wp_headings, current_speed, current_tire_angle):
         # speed mps, tire_angle rad
 
-        LAG_S = .3 #.15 # should this be .15? or even .2? was .1
+        LAG_S = .3 
         WHEELBASE = self.wheelbase 
 
         dist_car_travelled_during_lag = current_speed * LAG_S
 
         # local space, used for directing the car
         # everything in the frame of reference of the car at t0, the origin
-        WP_ADJUSTMENT = 0 #-2 works well for the 3.21avg model. All carla trained of that gen, prob
-        # changing adjustment to 0 bc we updated the lookup table itself
-        target_wp_angle, wp_dist, _ = get_target_wp(model_out, current_speed, wp_m_offset=dist_car_travelled_during_lag+WP_ADJUSTMENT) # comes out as float, frac is the amount btwn the two wps
-        wp_x = np.sin(target_wp_angle) * wp_dist #TODO is this correct? why is x w sin? ok checked, this looks correct
+        WP_ADJUSTMENT = 0
+        target_wp_angle, wp_dist, _ = get_target_wp(wp_angles, current_speed, wp_m_offset=dist_car_travelled_during_lag+WP_ADJUSTMENT) # comes out as float, frac is the amount btwn the two wps
+        wp_x = np.sin(target_wp_angle) * wp_dist
         wp_y = np.cos(target_wp_angle) * wp_dist
 
         curvature = current_tire_angle/WHEELBASE # rad/m #TODO WARNING made this change and haven't tested yet, just eyeball checked
@@ -87,12 +91,9 @@ class LaggedLateralCalculator():
         # subtracting out what vehicle turned
         target_wp_angle_future -= future_vehicle_heading
 
-        # curve_constrained_speed_mps = get_curve_constrained_speed(model_out, current_speed)
-        # secs_to_sample = np.linspace(CURVE_PREP_SLOWDOWN_S_MIN, CURVE_PREP_SLOWDOWN_S_MAX, 8) # sampling multiple to smooth it out, prevent jerk in longitudinal #TODO tune this prob
-        # curve_constrained_speed_mps = sum([get_curve_constrained_speed(model_out, current_speed, curve_prep_slowdown_time_sec=s) for s in secs_to_sample]) / len(secs_to_sample)
-        curve_constrained_speed_mps = get_curve_constrained_speed(model_out, current_speed, curve_prep_slowdown_time_sec=CURVE_PREP_SLOWDOWN_S_MAX)
+        curve_constrained_speed_mps = get_curve_constrained_speed(wp_headings, current_speed)
         self.curve_speeds_hist.append(curve_constrained_speed_mps)
-        CURVE_SPEEDS_N_AVG = 32
+        CURVE_SPEEDS_N_AVG = 6
         curve_constrained_speed_mps = sum(self.curve_speeds_hist[-CURVE_SPEEDS_N_AVG:])/CURVE_SPEEDS_N_AVG
         
         return target_wp_angle_future, curve_constrained_speed_mps

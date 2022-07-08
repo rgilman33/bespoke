@@ -27,7 +27,7 @@ class EffNet(nn.Module):
         self.use_rnn = True
         
         self.rnn = nn.GRU(self.inner_dim, self.inner_dim, 1, batch_first=True)
-        self.fcs_2 = nn.Sequential(nn.Linear(self.inner_dim, 256), act, drop, nn.Linear(256, N_PRED))
+        self.fcs_2 = nn.Sequential(nn.Linear(self.inner_dim, 512), act, drop, nn.Linear(512, N_TARGETS))
 
         self.obsnet = ObserverNet()
 
@@ -107,5 +107,4 @@ class EffNet(nn.Module):
 
         obsnet_out = self.obsnet(x if self.is_for_viz else x.detach())
         x = self.fcs_2(x)
-        x = x[:,:,:N_WPS_TO_USE]
         return x, obsnet_out

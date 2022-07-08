@@ -12,11 +12,15 @@ IMG_NORM_MEAN = .5
 IMG_NORM_STD = .25
 
 #wp_ix_norm = torch.from_numpy(np.linspace(1, 4.27, num=N_WPS_TO_USE).astype('float16')) # this was when pred 22 out
-wp_ix_norm = torch.from_numpy(np.linspace(1, 11.4, num=N_WPS_TO_USE).astype('float16')) 
+wp_ix_norm = torch.from_numpy(np.linspace(1, 5.5, num=N_WPS).astype('float32')) 
 wp_ix_norm = wp_ix_norm.unsqueeze(0).unsqueeze(0)#.to('cuda')
 # TARGET_NORM = .035 * wp_ix_norm 
 TARGET_NORM = .015 * wp_ix_norm 
 
+wp_ix_norm_headings = torch.from_numpy(np.linspace(1, 5.5, num=N_WPS).astype('float32')) 
+wp_ix_norm_headings = wp_ix_norm_headings.unsqueeze(0).unsqueeze(0)#.to('cuda')
+# TARGET_NORM = .035 * wp_ix_norm 
+TARGET_NORM_HEADINGS = .025 * wp_ix_norm_headings 
 
 
 def norm_img(img):
@@ -30,8 +34,6 @@ def prep_inputs(image, aux, targets=None, is_single_obs=False):
 
     image = image.astype(np.float16)
     aux = aux.astype(np.float16)
-
-    #assert image.max() > 1 # make sure these haven't already been normalized
 
     if is_single_obs:
         image = pad(pad(image))
@@ -48,10 +50,16 @@ def prep_inputs(image, aux, targets=None, is_single_obs=False):
     image = norm_img(image)
 
     if targets is not None:
-        targets = torch.from_numpy(targets.astype(np.float16)).to('cuda')
-        targets = targets[:,:,:N_WPS_TO_USE]
-        targets = targets / TARGET_NORM.to('cuda') # RR maxes out at around 5%, so we'll make that one
-        return (image, aux, targets)
+        wp_angles, wp_headings = targets #TODO norm and return headings
+        wp_angles = torch.from_numpy(wp_angles).to('cuda')
+        wp_angles = wp_angles / TARGET_NORM.to('cuda')
+        wp_angles = wp_angles.half()
+
+        wp_headings = torch.from_numpy(wp_headings).to('cuda')
+        wp_headings = wp_headings / TARGET_NORM_HEADINGS.to('cuda')
+        wp_headings = wp_headings.half()
+
+        return (image, aux, wp_angles, wp_headings)
 
     return (image, aux)
 

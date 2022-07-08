@@ -1,6 +1,7 @@
 from constants import *
 from imports import *
 from train_utils import *
+from traj_utils import *
 
 # Camera matrix got from rw calib using the webcam. Notebook on old laptop?
 dist = np.float32([[0,0,0,0,0]])
@@ -20,8 +21,14 @@ def xz_from_angles_and_distances(angles, wp_dists):
     wp_zs = np.cos(angles) * wp_dists
     return wp_xs, wp_zs
 
-def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS)[:N_WPS_TO_USE], color=(255,0,0), thickness=1):
+def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0), thickness=1, speed_mps=None):
     image = copy.deepcopy(image)
+
+    if speed_mps is not None:
+        max_ix = max_ix_from_speed(speed_mps) + 1 # TODO want this +1?
+        wp_angles = wp_angles[:max_ix]
+        wp_dists = wp_dists[:max_ix]
+
     wp_xs, wp_zs = xz_from_angles_and_distances(wp_angles, wp_dists)
     wp_ys = np.ones_like(wp_xs) * -1.5
     wps_3d = np.array([[x,y,z] for x, y, z in zip(wp_xs, wp_ys, wp_zs)])
@@ -100,7 +107,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     m.reset_hidden(bs)
     m.convert_backbone_to_sequential() # required for the viz version of the model
 
-    rnn_activations, rnn_grads, cnn_activations, cnn_grads, preds, obsnet_outs = [], [], [], [], [], []
+    rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, obsnet_outs = [], [], [], [], [], [], []
     chunk_len, ix = 24, 0
 
     while ix < len(img):
@@ -112,22 +119,25 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         with torch.cuda.amp.autocast():
             m.zero_grad()
             pred, obsnet_out = m(img_, aux_) 
-            preds.append(pred[0,:,:].detach().cpu().numpy())
+            wp_angles, wp_headings, _ = torch.chunk(pred, 3, -1)
+            wp_angles_all.append(wp_angles[0,:,:].detach().cpu().numpy())
+            wp_headings_all.append(wp_headings[0,:,:].detach().cpu().numpy())
             obsnet_outs.append(obsnet_out[0,:,:].detach().cpu().numpy())
             
             if do_gradcam:
                 cnn_activations.append(m.activations.mean(1, keepdim=True).numpy()) # (24, 1, 13, 80), mean of channels
                 rnn_activations.append(m.rnn_activations[0].numpy()) #torch.Size([24, 512]), 
                 
-                pred[:,:,GRADCAM_WP_IX].sum().backward() # gradients w respect to lateral preds
+                wp_angles[:,:,GRADCAM_WP_IX].sum().backward() # gradients w respect to lateral preds
                 #obsnet_out[:,:,0].sum().backward() # gradients w respect to undertainty preds
                 
                 cnn_grads.append(m.gradients.mean(1, keepdim=True).numpy())
                 rnn_grads.append(m.rnn_gradients[0].numpy()) #torch.Size([24, 512])
                 
-            del pred
+            del wp_angles
             
-    preds = np.concatenate(preds)
+    wp_angles_all = np.concatenate(wp_angles_all)
+    wp_headings_all = np.concatenate(wp_headings_all)
     obsnet_outs = np.concatenate(obsnet_outs)
 
     if do_gradcam:
@@ -139,16 +149,19 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     rnn_grads = rnn_grads.reshape(seqlen, 32, 16)
 
     # a bit dumb, have to pad before denorming
-    preds = np.expand_dims(preds,0) * TARGET_NORM.cpu().numpy()
-    preds = preds[0] 
+    wp_angles_all = np.expand_dims(wp_angles_all,0) * TARGET_NORM.cpu().numpy()
+    wp_angles_all = wp_angles_all[0] 
+
+    wp_headings_all = np.expand_dims(wp_headings_all,0) * TARGET_NORM_HEADINGS.cpu().numpy()
+    wp_headings_all = wp_headings_all[0] 
 
     torch.backends.cudnn.enabled = cudnn_was_enabled
 
-    return preds, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
+    return wp_angles_all, wp_headings_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
 
 
 
-def _make_vid(model_stem, run_id, preds_all, img, aux, targets,
+def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, img, aux, wp_angles_targets,
              cnn_grads, cnn_activations, rnn_grads, rnn_activations,
             temporal_error):
     
@@ -168,14 +181,14 @@ def _make_vid(model_stem, run_id, preds_all, img, aux, targets,
         s = cnn_activations[i][0].astype(np.float32)
         r = combine_img_cam(s*g, img[i], cutoff=cutoff) # this could also be on the processed img
 
-        if targets is not None:
-            r = draw_wps(r, targets[i], color=(100, 200, 200))
+        speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this max() necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
+
+        if wp_angles_targets is not None:
+            r = draw_wps(r, wp_angles_targets[i], color=(100, 200, 200), thickness=-1, speed_mps=speed_mps)
 
         # wps
-        traj = preds_all[i]
-        r = draw_wps(r, traj)
-
-        speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
+        traj = wp_angles_pred[i]
+        r = draw_wps(r, traj, speed_mps=speed_mps)
 
         target_wp_angle, wp_dist, _ = get_target_wp(traj, speed_mps)
         r = draw_wps(r, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=(50, 255, 50), thickness=-1)
@@ -185,6 +198,12 @@ def _make_vid(model_stem, run_id, preds_all, img, aux, targets,
         far_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(traj, far_long_wp_dist)
         r = draw_wps(r, np.array([close_long_wp_angle, far_long_wp_angle]), wp_dists=np.array([close_long_wp_dist, far_long_wp_dist]), color=(50, 50, 255), thickness=-1)
         
+        # info
+        r[:50, :120, :] = 0
+        headings = wp_headings_pred[i]
+        curve_limited_speed = get_curve_constrained_speed(headings, speed_mps)
+        r = cv2.putText(r, f"cls (mph): {round(mps_to_mph(curve_limited_speed))}", (0, 15), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1)
+        r = cv2.putText(r, f"s (mph): {round(mps_to_mph(speed_mps))}", (0, 30), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1)
 
         # Guidelines
         r[:,w2-1:w2+1,:] -= 20 # darker line vertical center
@@ -211,15 +230,15 @@ def _make_vid(model_stem, run_id, preds_all, img, aux, targets,
 
 
 def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None):
-    preds, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = get_viz_rollout(model_stem, img, aux)
-    print(preds.shape, cnn_activations.shape, cnn_grads.shape)
+    wp_angles_all, wp_headings_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = get_viz_rollout(model_stem, img, aux)
+    print(wp_angles_all.shape, cnn_activations.shape, cnn_grads.shape)
 
     temporal_error = None
     if tire_angle_rad is not None:
         speeds_mps = kph_to_mps(aux[:,2])
-        trajs = torch.FloatTensor(preds[:,:N_WPS_TO_USE]).to('cuda')
+        trajs = torch.FloatTensor(wp_angles_all[:,:N_WPS_TO_USE]).to('cuda')
         traj_xs, traj_ys = get_trajs_world_space(trajs, speeds_mps, tire_angle_rad, CRV_WHEELBASE)
         temporal_error = np.sqrt(get_temporal_error(traj_xs.cpu(), traj_ys.cpu(), speeds_mps))
 
-    _make_vid(model_stem, run_id, preds, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
+    _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
     print("Made vid!")
