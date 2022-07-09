@@ -191,18 +191,16 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         t1 = time.time()
         batch = dataloader.get_batch()
         if not batch: break
-        (img, aux, wp_angles, wp_headings, to_pred_mask, current_tire_angles_rad, current_speeds_mps, pitch, yaw), is_first_in_seq = batch
+        (img, aux, wp_angles, wp_headings, wp_curvatures, to_pred_mask, current_tire_angles_rad, current_speeds_mps, pitch, yaw), is_first_in_seq = batch
 
         if is_first_in_seq: 
             model.reset_hidden(dataloader.bs) # reset hiddens to zeros
             last_pred, last_aux, last_speeds, last_tire_angles = torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda')
         
         with torch.cuda.amp.autocast(): pred, obs_net_out = model(img, aux)
-        wp_angles_pred, wp_headings_pred, _ = torch.chunk(pred, 3, -1)
+        wp_angles_pred, wp_headings_pred, wp_curvatures_pred = torch.chunk(pred, 3, -1)
         
         control_loss_no_reduce = mse_loss_no_reduce(wp_angles, wp_angles_pred)
-        # control_loss_targets_log = control_loss_no_reduce.mean(-1).detach().log() # Pred log loss for each traj (one each obs, not for each wp separately)
-        # uncertainty_loss = mse_loss(control_loss_targets_log, obs_net_out[:,:,0])
         control_loss_no_reduce = control_loss_no_reduce * to_pred_mask # only asking to pred angles below certain threshold
         control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
         control_loss = control_loss_no_reduce.mean()
@@ -212,15 +210,22 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         headings_loss *= loss_weights
         headings_loss = headings_loss.mean()
 
+        curvatures_loss = mse_loss_no_reduce(wp_curvatures, wp_curvatures_pred)
+        curvatures_loss *= to_pred_mask
+        curvatures_loss *= loss_weights
+        curvatures_loss = curvatures_loss.mean()
+
         with torch.no_grad():
             a,_ = control_loss_no_reduce.max(-1) # collapse the wp traj
             a, bptt_worst_ixs = a.max(-1) # collapse the bptt traj
             control_loss_worst, ix_worst = a.max(0)
             bptt_ix_worst = bptt_worst_ixs[ix_worst]
             if control_loss_worst > worst_control_loss_all:
+                speed_mps = kph_to_mps(aux[ix_worst, bptt_ix_worst, 2]*20) #TODO sloppy, this hardcoded denorm
                 worst_control_loss_all_img = add_trajs_to_img(img[ix_worst, bptt_ix_worst, :, :, :], 
                                                                 wp_angles_pred[ix_worst, bptt_ix_worst, :], 
-                                                                wp_angles[ix_worst, bptt_ix_worst, :]) #TODO add speed_mps to this so it truncates excess traj
+                                                                wp_angles[ix_worst, bptt_ix_worst, :],
+                                                                speed_mps=speed_mps) #TODO add speed_mps to this so it truncates excess traj
 
         # pitch_loss = mse_loss(pitch, obs_net_out[:,:,1])
 
@@ -256,13 +261,18 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
 
         TD_LOSS_WEIGHT = 0 # .03
         TORQUE_LOSS_WEIGHT = 0 # .03
+
+        headings_loss /= 3
+        curvatures_loss /= 4
         # weight our loss items according to running avgs
-        loss = control_loss + headings_loss + te*(.03*avg_control_loss/avg_te_loss) + \
-                            torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
-                            torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
+        loss = control_loss + headings_loss + curvatures_loss 
+                # te*(.03*avg_control_loss/avg_te_loss) + \
+                #             torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
+                #             torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
 
         logger.log({f"{dataloader.path_stem}_control_loss": control_loss.item(),
                     f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
+                    f"{dataloader.path_stem}_curvatures_loss": curvatures_loss.item(),   
                     f"consistency losses/{dataloader.path_stem}_steer_cost":steer_cost.item(),
                     f"consistency losses/{dataloader.path_stem}_te_loss":te.item(),
                     # # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
@@ -301,9 +311,9 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             worst_control_loss_all = -np.inf
             if log_wandb: 
                 # random imgs to log
-                random_img_0 = add_trajs_to_img(img[0, 3, :,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :])
-                random_img_1 = add_trajs_to_img(img[1, -1, :,:,:], wp_angles_pred[1, -1, :], wp_angles[1, -1, :])
-                random_img_2 = add_trajs_to_img(img[-1, 0, :,:,:], wp_angles_pred[-1, 0, :], wp_angles[-1, 0, :])
+                random_img_0 = add_trajs_to_img(img[0, 3, :,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :], speed_mps=kph_to_mps(aux[0,3,2]*20)) #TODO sloppy hardcoded denorm
+                random_img_1 = add_trajs_to_img(img[1, -1, :,:,:], wp_angles_pred[1, -1, :], wp_angles[1, -1, :], speed_mps=kph_to_mps(aux[1,-1,2]*20))
+                random_img_2 = add_trajs_to_img(img[-1, 0, :,:,:], wp_angles_pred[-1, 0, :], wp_angles[-1, 0, :], speed_mps=kph_to_mps(aux[-1,0,2]*20))
 
                 three_randos = wandb.Image(np.concatenate([random_img_0, random_img_1, random_img_2], axis=0))
 

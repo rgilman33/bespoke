@@ -20,7 +20,9 @@ TARGET_NORM = .015 * wp_ix_norm
 wp_ix_norm_headings = torch.from_numpy(np.linspace(1, 5.5, num=N_WPS).astype('float32')) 
 wp_ix_norm_headings = wp_ix_norm_headings.unsqueeze(0).unsqueeze(0)#.to('cuda')
 # TARGET_NORM = .035 * wp_ix_norm 
-TARGET_NORM_HEADINGS = .025 * wp_ix_norm_headings 
+TARGET_NORM_HEADINGS = .025 * wp_ix_norm_headings
+
+TARGET_NORM_CURVATURES = .015 
 
 
 def norm_img(img):
@@ -50,7 +52,8 @@ def prep_inputs(image, aux, targets=None, is_single_obs=False):
     image = norm_img(image)
 
     if targets is not None:
-        wp_angles, wp_headings = targets #TODO norm and return headings
+        wp_angles, wp_headings, wp_curvatures = targets #TODO norm and return headings
+
         wp_angles = torch.from_numpy(wp_angles).to('cuda')
         wp_angles = wp_angles / TARGET_NORM.to('cuda')
         wp_angles = wp_angles.half()
@@ -59,7 +62,11 @@ def prep_inputs(image, aux, targets=None, is_single_obs=False):
         wp_headings = wp_headings / TARGET_NORM_HEADINGS.to('cuda')
         wp_headings = wp_headings.half()
 
-        return (image, aux, wp_angles, wp_headings)
+        wp_curvatures = torch.from_numpy(wp_curvatures).to('cuda')
+        wp_curvatures = wp_curvatures / TARGET_NORM_CURVATURES
+        wp_curvatures = wp_curvatures.half()
+        
+        return (image, aux, wp_angles, wp_headings, wp_curvatures)
 
     return (image, aux)
 

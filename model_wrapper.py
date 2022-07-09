@@ -1,7 +1,7 @@
 from imports import *
 from constants import *
 from models import EffNet
-from input_prep import TARGET_NORM
+from input_prep import TARGET_NORM, TARGET_NORM_HEADINGS
 from traj_utils import *
 
 class ModelWrapper():
@@ -80,7 +80,7 @@ class LaggedLateralCalculator():
         else:
             r = dist_car_travelled_during_lag / future_vehicle_heading
             future_vehicle_y = np.sin(future_vehicle_heading)*r
-            future_vehicle_x = r - (np.cos(future_vehicle_heading)*r) #TODO check this. Ok, looks fine from quick spot check
+            future_vehicle_x = r - (np.cos(future_vehicle_heading)*r)
 
         # recenter at future vehicle
         wp_x -= future_vehicle_x
@@ -93,7 +93,7 @@ class LaggedLateralCalculator():
 
         curve_constrained_speed_mps = get_curve_constrained_speed(wp_headings, current_speed)
         self.curve_speeds_hist.append(curve_constrained_speed_mps)
-        CURVE_SPEEDS_N_AVG = 6
+        CURVE_SPEEDS_N_AVG = 4
         curve_constrained_speed_mps = sum(self.curve_speeds_hist[-CURVE_SPEEDS_N_AVG:])/CURVE_SPEEDS_N_AVG
         
         return target_wp_angle_future, curve_constrained_speed_mps

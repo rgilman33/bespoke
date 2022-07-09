@@ -97,6 +97,7 @@ class BlenderDataloader():
         wp_angles, wp_dists, _ = np.split(targets, 3, axis=2)
 
         wp_headings = get_headings_from_traj_batch(wp_angles, wp_dists)
+        wp_curvatures = get_curvatures_from_headings_batch(wp_headings)
 
         # mask out wps more than n seconds ahead
         MAX_PRED_S = 6.0
@@ -110,14 +111,14 @@ class BlenderDataloader():
         to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
         to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
 
-        ZERO_THRESH = .36 #.24
+        ZERO_THRESH = .48 #.24
         zero_mask = torch.from_numpy((np.abs(wp_angles) < ZERO_THRESH).astype(np.float16)).to(device)
         to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
 
         to_pred_mask = to_pred_mask * torch.from_numpy(speed_mask).to(device)
 
         img = aug_imgs(img) # aug when still as uint8. Ton of time spent here, way inefficient. Is that still true now?
-        img, aux, wp_angles, wp_headings = prep_inputs(img, aux, targets=(wp_angles, wp_headings)) # we're actually spending substantial time here.
+        img, aux, wp_angles, wp_headings, wp_curvatures = prep_inputs(img, aux, targets=(wp_angles, wp_headings, wp_curvatures)) # we're actually spending substantial time here.
 
         self.seq_ix += bptt
 
@@ -135,6 +136,7 @@ class BlenderDataloader():
                                     aux, 
                                     wp_angles,
                                     wp_headings,
+                                    wp_curvatures,
                                     to_pred_mask,
                                     current_tire_angles_rad, # Extras
                                     current_speeds_mps, 
