@@ -262,7 +262,8 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         TD_LOSS_WEIGHT = 0 # .03
         TORQUE_LOSS_WEIGHT = 0 # .03
 
-        headings_loss /= 10
+        headings_loss /= 15
+        curvatures_loss /= 1.5
 
         # weight our loss items according to running avgs
         loss = control_loss + headings_loss + curvatures_loss 
