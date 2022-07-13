@@ -95,8 +95,12 @@ class BlenderDataloader():
 
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
         wp_angles, wp_dists, _ = np.split(targets, 3, axis=2)
+        
+        wp_angles = smooth_near_wps_batch(wp_angles)
 
         wp_headings = get_headings_from_traj_batch(wp_angles, wp_dists)
+        wp_headings = smooth_near_wps_batch(wp_headings)
+
         wp_curvatures = get_curvatures_from_headings_batch(wp_headings)
 
         # mask out wps more than n seconds ahead

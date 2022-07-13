@@ -202,17 +202,17 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         
         control_loss_no_reduce = mse_loss_no_reduce(wp_angles, wp_angles_pred)
         control_loss_no_reduce = control_loss_no_reduce * to_pred_mask # only asking to pred angles below certain threshold
-        control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
+        #control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
         control_loss = control_loss_no_reduce.mean()
 
         headings_loss = mse_loss_no_reduce(wp_headings, wp_headings_pred)
         headings_loss *= to_pred_mask
-        headings_loss *= loss_weights
+        #headings_loss *= loss_weights
         headings_loss = headings_loss.mean()
 
         curvatures_loss = mse_loss_no_reduce(wp_curvatures, wp_curvatures_pred)
         curvatures_loss *= to_pred_mask
-        curvatures_loss *= loss_weights
+        #curvatures_loss *= loss_weights
         curvatures_loss = curvatures_loss.mean()
 
         with torch.no_grad():
@@ -262,8 +262,8 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         TD_LOSS_WEIGHT = 0 # .03
         TORQUE_LOSS_WEIGHT = 0 # .03
 
-        headings_loss /= 3
-        curvatures_loss /= 4
+        headings_loss /= 10
+
         # weight our loss items according to running avgs
         loss = control_loss + headings_loss + curvatures_loss 
                 # te*(.03*avg_control_loss/avg_te_loss) + \

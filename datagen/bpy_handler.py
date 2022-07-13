@@ -60,6 +60,13 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     normal_shift = NORMAL_SHIFT_MAX if random.random()<.5 else -NORMAL_SHIFT_MAX
     DAGGER_FREQ = random.randint(400, 1000) #random.randint(200, 400)
 
+    global roll_noise # TODO this may be affecting our wp_angles, that may be a problem especially at higher values of roll. Actually no, i don't think it does
+    num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity. can go even lower here, eg to mimic bumpy gravel rd
+    ROLL_MAX_DEG = 4
+    do_roll = random.random() < .1
+    roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
+    roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
+
     def frame_change_post(scene, dg): #TODO move the vehicle movement things BEFORE the data saving so we don't have to do the staggering in the dataloader. Actually i dunno...
         global current_speed_mps, counter, targets_container, overall_frame_counter
         global shift_x, shift_y
@@ -71,7 +78,6 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         cam_loc = cube.data.attributes["cam_loc"].data[0].vector 
         cam_heading = cube.data.attributes["cam_heading"].data[0].vector #pitch, roll, yaw(heading). Roll always flat. in flat town pitch always flat. yaw==heading.
         cam_normal = cube.data.attributes["cam_normal"].data[0].vector
-
         sec_to_undagger = 3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
         meters_to_undagger = current_speed_mps * sec_to_undagger
 
@@ -191,6 +197,9 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
 
         target_speed = min(curvature_constrained_speed, speed_limit)
         current_speed_mps += (target_speed - current_speed_mps)*long_kP
+
+        get_node("cam_roll_add", make_vehicle_nodes).outputs["Value"].default_value = roll_noise[overall_frame_counter]
+
 
     bpy.app.handlers.frame_change_post.clear()
     bpy.app.handlers.frame_change_post.append(frame_change_post)

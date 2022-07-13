@@ -107,7 +107,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     m.reset_hidden(bs)
     m.convert_backbone_to_sequential() # required for the viz version of the model
 
-    rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, obsnet_outs = [], [], [], [], [], [], []
+    rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs = [], [], [], [], [], [], [], []
     chunk_len, ix = 24, 0
 
     while ix < len(img):
@@ -119,9 +119,10 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         with torch.cuda.amp.autocast():
             m.zero_grad()
             pred, obsnet_out = m(img_, aux_) 
-            wp_angles, wp_headings, _ = torch.chunk(pred, 3, -1)
+            wp_angles, wp_headings, wp_curvatures = torch.chunk(pred, 3, -1)
             wp_angles_all.append(wp_angles[0,:,:].detach().cpu().numpy())
             wp_headings_all.append(wp_headings[0,:,:].detach().cpu().numpy())
+            wp_curvatures_all.append(wp_curvatures[0,:,:].detach().cpu().numpy())
             obsnet_outs.append(obsnet_out[0,:,:].detach().cpu().numpy())
             
             if do_gradcam:
@@ -138,6 +139,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
             
     wp_angles_all = np.concatenate(wp_angles_all)
     wp_headings_all = np.concatenate(wp_headings_all)
+    wp_curvatures_all = np.concatenate(wp_curvatures_all)
     obsnet_outs = np.concatenate(obsnet_outs)
 
     if do_gradcam:
@@ -151,23 +153,24 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     # a bit dumb, have to pad before denorming
     wp_angles_all = np.expand_dims(wp_angles_all,0) * TARGET_NORM.cpu().numpy()
     wp_angles_all = wp_angles_all[0] 
-
     wp_headings_all = np.expand_dims(wp_headings_all,0) * TARGET_NORM_HEADINGS.cpu().numpy()
     wp_headings_all = wp_headings_all[0] 
+    wp_curvatures_all = np.expand_dims(wp_curvatures_all,0) * TARGET_NORM_CURVATURES
+    wp_curvatures_all = wp_curvatures_all[0] 
 
     torch.backends.cudnn.enabled = cudnn_was_enabled
 
-    return wp_angles_all, wp_headings_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
+    return wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
 
 
 
-def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, img, aux, wp_angles_targets,
+def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvatures_pred, img, aux, wp_angles_targets,
              cnn_grads, cnn_activations, rnn_grads, rnn_activations,
-            temporal_error):
+            temporal_error, add_charts):
     
     height, width, channels = img[0].shape
     w2, h2 = width//2, height//2
-    height*=2 # stacking two
+    height*= 3 if add_charts else 2 # stacking two, and charts
     width += 50 # for rnn gradcam
     fps = 20
     cutoff = 2.4e-6 # adjust this manually when necessary
@@ -201,7 +204,8 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, img, aux, wp
         # info
         r[:50, :120, :] = 0
         headings = wp_headings_pred[i]
-        curve_limited_speed = get_curve_constrained_speed(headings, speed_mps)
+        curvatures = wp_curvatures_pred[i]
+        curve_limited_speed = get_curve_constrained_speed(curvatures, speed_mps)
         r = cv2.putText(r, f"cls (mph): {round(mps_to_mph(curve_limited_speed))}", (0, 15), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1)
         r = cv2.putText(r, f"s (mph): {round(mps_to_mph(speed_mps))}", (0, 30), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1)
 
@@ -212,6 +216,11 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, img, aux, wp
         # RNN actgrad
         r = get_rnn_gradcam(rnn_activations[i], rnn_grads[i], r)
 
+        # Aux charts
+        if add_charts:
+            charts_fig = get_pts_and_headings_fig(traj, TRAJ_WP_DISTS, headings, curvatures)
+            charts = fig_to_img(charts_fig, (IMG_HEIGHT, width, 3))
+
         # te
         if temporal_error is not None:
             te = np.clip(temporal_error[i] / MAX_CLIP_TE_VIZ, 0, 1.0)
@@ -220,17 +229,17 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, img, aux, wp
 
         r = np.clip(np.flip(r,-1), 0, 255)
 
-        img_ = np.flip(get_rnn_gradcam(rnn_activations[i], rnn_grads[i], img[i]), -1)
+        img_ = np.flip(get_rnn_gradcam(rnn_activations[i], rnn_grads[i], img[i]), -1) #DUMB catting on rnn grad just to match sz
 
-        r = np.concatenate([r, img_], axis=0)
+        r = np.concatenate([r, img_, charts], axis=0) if add_charts else np.concatenate([r, img_], axis=0)
 
         video.write(r)
 
     video.release()
 
 
-def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None):
-    wp_angles_all, wp_headings_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = get_viz_rollout(model_stem, img, aux)
+def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None, add_charts=False):
+    wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = get_viz_rollout(model_stem, img, aux)
     print(wp_angles_all.shape, cnn_activations.shape, cnn_grads.shape)
 
     temporal_error = None
@@ -240,5 +249,88 @@ def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None):
         traj_xs, traj_ys = get_trajs_world_space(trajs, speeds_mps, tire_angle_rad, CRV_WHEELBASE)
         temporal_error = np.sqrt(get_temporal_error(traj_xs.cpu(), traj_ys.cpu(), speeds_mps))
 
-    _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error)
+    _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, wp_curvatures_all, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error, add_charts)
     print("Made vid!")
+
+
+def combine_vids(m_path_1, m_path_2, run_id):
+    fps = 20
+    v1 = cv2.VideoCapture(f'/home/beans/bespoke_vids/{run_id}_m_{m_path_1}_gradcam.avi')
+    v2 = cv2.VideoCapture(f'/home/beans/bespoke_vids/{run_id}_m_{m_path_2}_gradcam.avi')
+    ret, frame_1 = v1.read()
+    ret, frame_2 = v2.read()
+    height, width, channels = frame_1.shape
+
+    video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{run_id}_m_{m_path_1}_{m_path_2}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
+    
+    while True:
+        ret_1, frame_1 = v1.read()
+        ret_2, frame_2 = v2.read()
+        if not (ret_1 and ret_2): break
+        f = np.concatenate([frame_1[:IMG_HEIGHT,:,:], frame_2[:IMG_HEIGHT,:,:]], axis=0)
+        video.write(f)
+
+    video.release()
+    print("combined!")
+
+
+        
+def get_pts_and_headings_fig(wp_angles, wp_dists, wp_headings, wp_curvatures):
+    
+    xs = np.sin(wp_angles) * wp_dists
+    ys = np.cos(wp_angles) * wp_dists
+    
+    # Near traj
+    fig, (ax, ax2, ax3) = plt.subplots(1,3, figsize=(12,3), gridspec_kw={'width_ratios': [1, 1, 2]})
+    
+    ax.scatter(xs[:20], ys[:20])
+
+    for i in range(0,20-1):
+        h = wp_headings[i]
+        xd = np.sin(h)*SEGMENT_DISTS[i]*.6
+        yd = np.cos(h)*SEGMENT_DISTS[i]*.6
+        ax.plot([xs[i], xs[i]+xd], [ys[i], ys[i]+yd], 'Blue')
+
+    ax.set_title("Traj (near)", fontdict={"fontsize":16})
+    ax.set_yticks([6, 12, 24])
+    
+    xmax = max(abs(xs[:19]))
+    x_axis_max = .1 if xmax <= .1 else .5 if xmax <= .5 else 1 if xmax <= 1 else 2 if xmax <=2 else 3 if xmax <=3 else 5
+    ax.set_xticks([-x_axis_max, 0, x_axis_max])
+    
+    # far traj
+    ax2.scatter(xs[20:], ys[20:])
+
+    for i in range(20, 30-1):
+        h = wp_headings[i]
+        xd = np.sin(h)*SEGMENT_DISTS[i]*.6
+        yd = np.cos(h)*SEGMENT_DISTS[i]*.6
+        ax2.plot([xs[i], xs[i]+xd], [ys[i], ys[i]+yd], 'Blue')
+
+    ax2.set_title("Traj (far)", fontdict={"fontsize":16})
+    #ax2.set_yticks([35, 125])
+    
+    xmax = max(abs(xs[20:]))
+    x_axis_max = 1 if xmax <= 1 else 5 if xmax <= 5 else 10 if xmax <=10 else 20
+    ax2.set_xticks([-x_axis_max, 0, x_axis_max])
+    
+    # curvatures
+    maxc = max(abs(wp_curvatures))
+    y_axis_max = .001 if maxc<=.001 else .005 if maxc <= .005 else .01 if maxc <= .01 else .02 if maxc<=.02 else .03
+    ax3.plot(wp_dists, wp_curvatures)
+    ax3.set_title("Curvatures", fontdict={"fontsize":16})
+    ax3.set_yticks([-y_axis_max, 0, y_axis_max])
+    ax3.set_xticks([6, 125])
+    
+    return fig
+
+
+from skimage.transform import resize
+import cv2
+
+def fig_to_img(fig, size):
+    fig.canvas.draw()
+    data = np.fromstring(fig.canvas.tostring_rgb(), dtype=np.uint8, sep='')
+    data = data.reshape(fig.canvas.get_width_height()[::-1] + (3,))
+    chart = (resize(data, size) * 255).astype('uint8')
+    return chart

@@ -106,6 +106,23 @@ HEADING_BPS = [0] + WP_HALFWAYS
 
 SEGMENT_DISTS = np.array(TRAJ_WP_DISTS[1:]) - np.array(TRAJ_WP_DISTS[:-1]) # 19 ones then 10 tens. There is one fewer segment than there are wps
 
+# Dumb, but have to do this bc can't get the jitter out of blender curve
+def smooth_near_wps(traj):
+    # Only use for headings and for wp_angles, as those are both zero at ego origin
+    traj_orig = traj.copy()
+
+    # Value is zero at origin. Including beginning and end tips to aid the smoothing
+    t = np.insert(traj, 0, 0)
+    tt = np.interp(list(range(0,40)), [0]+TRAJ_WP_DISTS, t)
+
+    # tt returns same size as the original, so we only want from six to 26
+    traj_orig[0:20] = moving_average(tt, 5)[6:26]
+
+    return traj_orig
+
+def moving_average(arr, w):
+    return np.convolve(arr, np.ones(w), 'same') / w
+
 def get_headings_from_traj(wp_angles, wp_dists):
     #NOTE this should always be done in full float precision
     wp_xs = np.sin(wp_angles) * wp_dists
@@ -119,9 +136,18 @@ def get_headings_from_traj(wp_angles, wp_dists):
     
     # interp back to our original wp dists so they're nice and aligned w our other data
     headings = np.interp(TRAJ_WP_DISTS, HEADING_BPS, headings)
-    
+
     return headings
 
+
+
+def smooth_near_wps_batch(batch):
+    bs, seq_len, _ = batch.shape
+    smoothed = np.empty_like(batch)
+    for b in range(bs):
+        for s in range(seq_len):
+            smoothed[b,s,:] = smooth_near_wps(batch[b,s,:])
+    return smoothed
 
 def get_headings_from_traj_batch(wp_angles, wp_dists):
     bs, seq_len, _ = wp_angles.shape
@@ -153,7 +179,7 @@ def get_curvatures_from_headings_batch(headings):
 
 
 def tire_angles_to_max_speeds(tire_angles):
-    magic = 3.5 #5.0 # even the official formula has a magic number. We're just taking this from our own runs.
+    magic = 3.8 #5.0 # even the official formula has a magic number. We're just taking this from our own runs.
     max_speeds = np.sqrt(1/(abs(tire_angles)+.0001)) * magic # units is mph bc that's how we eyeballed it
     max_speeds = mph_to_mps(max_speeds)
     return max_speeds
@@ -163,20 +189,20 @@ def max_ix_from_speed(speed_mps):
     long_consideration_max_ix = math.ceil(wp_ix_from_dist_along_traj(long_consideration_max_m))
     return long_consideration_max_ix
 
+MAX_SPEED_MPH = 60.0
 ACCEL = 1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
-CURVE_PREEMPT_SEC = 1.0
-def get_curve_constrained_speed(headings, current_speed_mps):
+def _get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=1.0):
     # given a traj, what is the max speed we can be going right now to ensure we're able to hit all the upcoming wps at a speed appropriate for each one?
     # and given a maximum allowed deceleration. This speed may be higher than the speed limit, it is simply the speed based on upcoming curvature, so
     # in theory a perfectly straight rd could have limit of infinity
     # current_speed_mps is only used to truncate the results bc we don't need to support beyond 5s
     if current_speed_mps < 5: return 30
 
-    curvatures = get_curvatures_from_headings(headings)
+    #curvatures = get_curvatures_from_headings(headings)
     tire_angles = curvatures * CRV_WHEELBASE
     max_speeds_at_each_wp = tire_angles_to_max_speeds(tire_angles)
 
-    curve_preempt_m = CURVE_PREEMPT_SEC * current_speed_mps
+    curve_preempt_m = preempt_sec * current_speed_mps
     max_speeds_at_each_wp_preempted = np.interp(np.array(TRAJ_WP_DISTS) + curve_preempt_m, TRAJ_WP_DISTS, max_speeds_at_each_wp)
     # For each wp, there is a max speed we can be going now to make sure we're going the proper speed when we hit that wp
     current_max_speed_w_respect_to_each_wp = np.sqrt(np.array(TRAJ_WP_DISTS) * ACCEL) + max_speeds_at_each_wp_preempted #max_speeds_at_each_wp # adds elementwise
@@ -184,8 +210,30 @@ def get_curve_constrained_speed(headings, current_speed_mps):
     long_consideration_max_ix = max_ix_from_speed(current_speed_mps)
     curve_constrained_speed = current_max_speed_w_respect_to_each_wp[:long_consideration_max_ix].min()
 
+    curve_constrained_speed = min(curve_constrained_speed, mph_to_mps(MAX_SPEED_MPH)) # just for visual cleanliness
+
     return curve_constrained_speed
 
+def get_curve_constrained_speed(curvatures, current_speed_mps):
+    return min([_get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=s) for s in [0.1, .5, 1.0, 1.5, 2.0]])
+
+# def derive_wp_dists(wp_angles):
+#     wp_dists = [6]
+#     positions = [(0,0)]
+#     edge_dists = np.insert(SEGMENT_DISTS, 0, 6)
+
+#     edge_dist = edge_dists[0]
+#     a1 = wp_angles[0]
+#     pos_1 = (np.sin(a0)*edge_dist, np.cos(a0)*edge_dist)
+
+#     a1 = wp_angles[1]
+
+#     dist_0_2 = np.cos(a1 - a0)*edge_dist * 2
+#     pos_2 = (np.sin(a1)*dist_0_2, np.cos(a1)*dist_0_2)
+
+
+#     for i in range(1, len(wp_angles)):
+        
 
 
 def get_angle_to(pos, theta, target):
@@ -206,3 +254,12 @@ def dist(a, b):
     x = float(a[0]) - float(b[0])
     y = float(a[1]) - float(b[1])
     return (x**2 + y**2)**(1/2)
+
+
+def get_random_roll_noise(window_size=20, num_passes=2):
+    # returns smoothed noise btwn -1 and 1
+    roll_noise = np.random.random(EPISODE_LEN*FPS) - .5
+    for i in range(num_passes):
+        roll_noise = moving_average(roll_noise, 20)
+    roll_noise = roll_noise / abs(roll_noise).max()
+    return roll_noise

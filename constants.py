@@ -82,7 +82,7 @@ CRV_WHEELBASE = 2.66 # both OP and internet agree, rw measurement confirms
 
 device = 'cuda'
 
-
+FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
 BLENDER_MEMBANK_ROOT = "/media/beans/ssd/blender_membank"
 EPISODE_LEN = SEQ_LEN * 10

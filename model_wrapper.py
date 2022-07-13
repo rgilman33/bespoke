@@ -1,7 +1,7 @@
 from imports import *
 from constants import *
 from models import EffNet
-from input_prep import TARGET_NORM, TARGET_NORM_HEADINGS
+from input_prep import TARGET_NORM, TARGET_NORM_CURVATURES, TARGET_NORM_HEADINGS
 from traj_utils import *
 
 class ModelWrapper():
@@ -14,7 +14,6 @@ class ModelWrapper():
         self.llc = LaggedLateralCalculator(wheelbase=wheelbase)
 
         self.target_norm = TARGET_NORM.to(device).to(torch.float32)
-        self.target_norm_headings = TARGET_NORM_HEADINGS.to(device).to(torch.float32)
 
         print(f"Initializing model w {model_dict['stem']}")
 
@@ -24,13 +23,13 @@ class ModelWrapper():
             with torch.no_grad():
                 model_out, obsnet_out = self.model(image_pytorch, aux_pytorch)
 
-        wp_angles, wp_headings, _ = torch.chunk(model_out.to(torch.float32), 3, -1)
+        wp_angles, _, wp_curvatures = torch.chunk(model_out.to(torch.float32), 3, -1)
         wp_angles *= self.target_norm # back into radians, full precision
-        wp_headings *= self.target_norm_headings
+        wp_curvatures *= TARGET_NORM_CURVATURES
         wp_angles = wp_angles[0][0].cpu().detach().numpy()
-        wp_headings = wp_headings[0][0].cpu().detach().numpy()
+        wp_curvatures = wp_curvatures[0][0].cpu().detach().numpy()
 
-        return self.llc.step(wp_angles, wp_headings, current_speed, current_tire_angle)
+        return self.llc.step(wp_angles, wp_curvatures, current_speed, current_tire_angle)
 
 
 class LaggedLateralCalculator():
@@ -46,7 +45,7 @@ class LaggedLateralCalculator():
         self.curve_speeds_hist = [] # TODO prob make this a queue or whatever
 
 
-    def step(self, wp_angles, wp_headings, current_speed, current_tire_angle):
+    def step(self, wp_angles, wp_curvatures, current_speed, current_tire_angle):
         # speed mps, tire_angle rad
 
         LAG_S = .3 
@@ -91,7 +90,7 @@ class LaggedLateralCalculator():
         # subtracting out what vehicle turned
         target_wp_angle_future -= future_vehicle_heading
 
-        curve_constrained_speed_mps = get_curve_constrained_speed(wp_headings, current_speed)
+        curve_constrained_speed_mps = get_curve_constrained_speed(wp_curvatures, current_speed)
         self.curve_speeds_hist.append(curve_constrained_speed_mps)
         CURVE_SPEEDS_N_AVG = 4
         curve_constrained_speed_mps = sum(self.curve_speeds_hist[-CURVE_SPEEDS_N_AVG:])/CURVE_SPEEDS_N_AVG

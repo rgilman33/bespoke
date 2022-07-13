@@ -197,6 +197,13 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("shadow_shape_subtracter", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.03, .08)
     get_node("shadow_noise_scale_small", dirt_gravel_nodes_parent).outputs["Value"].default_value = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95
 
+    get_node("halfshadow_noise_scale", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.1, 1.0)
+    get_node("halfshadow_modulo", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.02, .2)
+    get_node("halfshadow_width", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.003, .01)
+    get_node("halfshadow_add", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(-1, 3)
+    get_node("halfshadow_inner_noise", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.3, 1.0) 
+
+
     ######################
     # Terrain
     ######################
@@ -320,8 +327,8 @@ def setup_map():
 
     get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = 100 if is_just_straight else random.uniform(800, 1200)
     is_wide_laned = lane_width > 3.5
-    nm1 = 0 if (random.random()<.1 or is_highway) else random.uniform(150, 250) if is_wide_laned else random.uniform(200, 300)
-    nm2 = 0 if (random.random()<.3 or is_highway or is_wide_laned) else random.uniform(0, 20) if random.random() < .9 else random.uniform(20, 40)
+    nm1 = 0 if (random.random()<.1 or is_highway) else random.uniform(150, 250) if is_wide_laned else random.uniform(200, 350)
+    nm2 = 0 if (random.random()<.3 or is_highway or is_wide_laned) else random.uniform(0, 20) if random.random() < .9 else random.uniform(20, 60)
     get_node("loop_noise_mult_1", loop_gen_nodes).outputs["Value"].default_value = nm1
     get_node("loop_noise_mult_2", loop_gen_nodes).outputs["Value"].default_value = nm2
     get_node("loop_noise_mult_z_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 220)
