@@ -34,15 +34,15 @@ npc_nodes = bpy.data.node_groups['MakeNPC'].nodes
 all_background_hdris = glob.glob(f"{HDRIS_ROOT}/*")
 all_background_hdris = [x for x in all_background_hdris if "night" not in x]
 
-all_albedos = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/surface/*/*_2K_Albedo.jpg")
+all_albedos = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/surface/*/*_2K_Albedo.jpg")#; print([x.split('/')[-2] for x in all_albedos])
 all_normals = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/surface/*/*_2K_Normal.jpg")
 
 literally_all_albedos = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/**/*_2K_Albedo.jpg", recursive=True)
 literally_all_normals = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/**/*_2K_Normal.jpg", recursive=True)
 
 img_textures = glob.glob(f"{TEXTURES_ROOT}/*.jpg") 
-#literally_all_albedos += img_textures
-literally_all_albedos = img_textures #TODO this name is lying
+literally_all_albedos += img_textures
+#literally_all_albedos = img_textures #TODO this name is lying
 
 rd_surface_keywords = ["gravel", "rock", "concrete", "soil", "mud", "asphalt", "sand", "road"]
 
@@ -54,7 +54,7 @@ make_turnoff_nodes = bpy.data.node_groups['MakeTurnoff2'].nodes
 
 plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
 
-def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=None):
+def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=None, is_only_yellow_lined=False):
     print("Randomizing appearance")
     """ 
     Doesn't change value of underlying targets. Superficial changing of materials, distractors, etc
@@ -75,15 +75,11 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     # Lanelines
     ######################
 
-    ONLY_YELLOW_LINES_PROB = .15 # applied after lanelines prob
-
-    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and not wide_shoulder_add>0 and lane_width<3.6
-
     white_lines_opacity = get_node("white_line_opacity", dirt_gravel_nodes)
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes_parent)
 
     if rd_is_lined:
-        white_lines_opacity.outputs["Value"].default_value = 0 if is_only_yellow_lined else random.uniform(.5, 1.)
+        white_lines_opacity.outputs["Value"].default_value = 0 if is_only_yellow_lined else random.uniform(.6, 1.)
         yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.7, 1.) if is_only_yellow_lined else random.uniform(.5, 1.) 
     else:
         white_lines_opacity.outputs["Value"].default_value = 0
@@ -115,8 +111,8 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
 
     get_node("yellow_is_single", dirt_gravel_nodes_parent).outputs["Value"].default_value = 1 if random.random() < .3 else 0
     get_node("yellow_is_dashed", dirt_gravel_nodes_parent).outputs["Value"].default_value = 1 if random.random() < .3 else 0
-    get_node("yellow_dash_period", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.002, .004)
-    get_node("yellow_dash_space_perc", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.4, .65)
+    get_node("yellow_dash_period", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.004, .008)
+    get_node("yellow_dash_space_perc", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.6, .8)
     
     get_node("yellow_line_specular", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.4, .9)
     get_node("yellow_line_roughness", dirt_gravel_nodes_parent).outputs["Value"].default_value = random.uniform(.1, .7)
@@ -222,6 +218,12 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
 
     get_node("terrain_roughness", make_terrain_nodes).outputs["Value"].default_value  = random.uniform(.4, 1.0)
 
+    get_node("terrain_overlay_fac", make_terrain_nodes).outputs["Value"].default_value  = 0 if random.random() < .6 else random.uniform(0, 1.0)
+    get_node("terrain_overlay_hue", make_terrain_nodes).outputs["Value"].default_value  = random.uniform(0, 1.0)
+    get_node("terrain_overlay_sat", make_terrain_nodes).outputs["Value"].default_value  = random.uniform(.4, 2.0)
+    get_node("terrain_overlay_value", make_terrain_nodes).outputs["Value"].default_value  = random.uniform(.1, 3.0)
+
+
 
     ######################
     # Buildings
@@ -230,7 +232,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("building_roughness", building_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("building_specular", building_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("building_img_normal", building_material).image.filepath = random.choice(literally_all_normals)
-    get_node("building_img_albedo", building_material).image.filepath = random.choice(literally_all_albedos)
+    get_node("building_img_albedo", building_material).image.filepath = random.choice(img_textures) if random.random()<.6 else random.choice(literally_all_albedos)
     get_node("building_hue", building_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("building_sat", building_material).outputs["Value"].default_value = random.uniform(.5, 3.0)
     get_node("building_brightness", building_material).outputs["Value"].default_value = random.uniform(.5, 1.2)
@@ -242,7 +244,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     ######################
 
     get_node("npc_img_normal", npc_material).image.filepath = random.choice(literally_all_normals)
-    get_node("npc_img_albedo", npc_material).image.filepath = random.choice(literally_all_albedos)
+    get_node("npc_img_albedo", npc_material).image.filepath = random.choice(img_textures)
     get_node("npc_hue", npc_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("npc_brightness", npc_material).outputs["Value"].default_value = random.uniform(.5, 2)
 
@@ -302,20 +304,27 @@ def setup_map():
     """
     Changes the rd network. Is a targets-changing thing.
     """
-    HAS_LANELINES_PROB = .65
+    HAS_LANELINES_PROB = .7
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
-    is_highway = rd_is_lined and random.random() < .33 # highways are faster, wider laned, always lined, less curvy
-    wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .33) else 0 # this will cause to always have white line support
+    is_highway = rd_is_lined and random.random() < .2 # highways are faster, wider laned, always lined, less curvy
+    wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0 # this will cause to always have white line support
 
-    is_just_straight = is_highway and random.random()<.01
+    is_just_straight = random.random()<.01
 
-    lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.75, 3.9) if rd_is_lined else random.uniform(1.6, 3.3)
+    lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.8, 3.9) if rd_is_lined else random.uniform(1.6, 3.3)
     get_node("lane_width_master_in", main_map_nodes).outputs["Value"].default_value = lane_width
-    # at lane width of 1.5, drive in middle of rd, at width 4.0 drive 2.4m in
-    vehicle_perpendicular_shift = (lane_width * .54) if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
-    get_node("vehicle_perpendicular_shift", get_postion_along_loop_nodes).outputs["Value"].default_value = vehicle_perpendicular_shift
 
+
+    ONLY_YELLOW_LINES_PROB = .15 # applied after lanelines prob
+    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and not wide_shoulder_add>0 and lane_width<3.6
+
+    # at lane width of 1.5, drive in middle of rd, at width 4.0 drive 2.4m in
+    # vehicle_perpendicular_shift = (lane_width * .54) if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
+
+    lane_centerish = lane_width * .53 #.54
+    vehicle_perpendicular_shift = min(lane_centerish, 1.7) if is_only_yellow_lined else lane_centerish if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
+    get_node("vehicle_perpendicular_shift", get_postion_along_loop_nodes).outputs["Value"].default_value = vehicle_perpendicular_shift
 
     get_node("loop_random_seed_x", loop_gen_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
     get_node("loop_random_seed_y", loop_gen_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
@@ -325,15 +334,15 @@ def setup_map():
     get_node("loop_noise_scale_1", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.0045, .0055)
     get_node("loop_noise_scale_2", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.01, .015) 
 
-    get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = 100 if is_just_straight else random.uniform(800, 1200)
-    is_wide_laned = lane_width > 3.5
-    nm1 = 0 if (random.random()<.1 or is_highway) else random.uniform(150, 250) if is_wide_laned else random.uniform(200, 350)
-    nm2 = 0 if (random.random()<.3 or is_highway or is_wide_laned) else random.uniform(0, 20) if random.random() < .9 else random.uniform(20, 60)
+    get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 100) if (is_just_straight or random.random() < .33) else random.uniform(800, 1200)
+    is_wide_laned = lane_width>3.3 or wide_shoulder_add>0
+    nm1 = 0 if (random.random()<.05 or is_highway or is_just_straight) else random.uniform(100, 200) if is_wide_laned else random.uniform(100, 300)
+    nm2 = 0 if (random.random()<.7 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if random.random()<.25 else random.uniform(60, 100)
     get_node("loop_noise_mult_1", loop_gen_nodes).outputs["Value"].default_value = nm1
     get_node("loop_noise_mult_2", loop_gen_nodes).outputs["Value"].default_value = nm2
     get_node("loop_noise_mult_z_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 220)
-    get_node("loop_noise_mult_z_1", loop_gen_nodes).outputs["Value"].default_value = random.uniform(2, 8) if is_highway else random.uniform(4, 12) if random.random() < .9 else random.uniform(8, 16)
-    get_node("loop_noise_mult_z_2", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.0, .1) if is_highway else random.uniform(.0, .25) if rd_is_lined else random.uniform(.0, .4)
+    get_node("loop_noise_mult_z_1", loop_gen_nodes).outputs["Value"].default_value = random.uniform(2, 8) if random.random()<.9 else random.uniform(8, 12)
+    get_node("loop_noise_mult_z_2", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.0, .08) if rd_is_lined else random.uniform(.0, .2)
 
     get_node("rd_hump_exp", profile_gen_nodes).outputs["Value"].default_value = random.uniform(.05, .2) #random.uniform(.0, .04) if no_gutter else random.uniform(.05, .12)
     # get_node("gutter_width", profile_gen_nodes).outputs["Value"].default_value = random.uniform(.5, 2.5)
@@ -362,10 +371,10 @@ def setup_map():
     #bpy.data.objects["Camera"].location[1] = random.uniform(-.2, 0.)
     #bpy.data.objects["Camera"].rotation_euler[0] = np.radians(random.uniform(87, 89))
  
-    randomize_appearance(rd_is_lined=rd_is_lined, lane_width=lane_width, wide_shoulder_add=wide_shoulder_add)
+    randomize_appearance(rd_is_lined=rd_is_lined, lane_width=lane_width, wide_shoulder_add=wide_shoulder_add, is_only_yellow_lined=is_only_yellow_lined)
 
-    # No NPCs when too narrow
-    if lane_width < 3.1:
+    # No NPCs when too narrow gravel rds
+    if not rd_is_lined and lane_width < 3.1:
         bpy.data.objects["Cylinder"].hide_render = True
     else:
         bpy.data.objects["Cylinder"].hide_render = False

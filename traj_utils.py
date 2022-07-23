@@ -140,6 +140,20 @@ def get_headings_from_traj(wp_angles, wp_dists):
     return headings
 
 
+# used to generate blender data. Should match the batched apparatus used in blender dataloader for making trn data curvatures
+# would be nice to actually use the exact same fns, but would need to update the fns below to accept both batched and non-batched data
+# the only reason not using same fn is bc calling the batched versions in the dataloader, calling the single versions here
+def get_curve_constrained_speed_from_wp_angles(wp_angles, wp_dists, current_speed_mps, max_accel=MAX_ACCEL):
+    wp_angles = smooth_near_wps(wp_angles)
+    headings = get_headings_from_traj(wp_angles, wp_dists)
+    headings = smooth_near_wps(headings)
+    curvatures = get_curvatures_from_headings(headings)
+    curve_constrained_speed = get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=max_accel)
+
+    return curve_constrained_speed
+
+
+
 
 def smooth_near_wps_batch(batch):
     bs, seq_len, _ = batch.shape
@@ -189,13 +203,13 @@ def max_ix_from_speed(speed_mps):
     long_consideration_max_ix = math.ceil(wp_ix_from_dist_along_traj(long_consideration_max_m))
     return long_consideration_max_ix
 
-MAX_SPEED_MPH = 60.0
-ACCEL = 1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
-def _get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=1.0):
+MAX_SPEED_MPH = 80.0
+def _get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACCEL, preempt_sec=1.0):
     # given a traj, what is the max speed we can be going right now to ensure we're able to hit all the upcoming wps at a speed appropriate for each one?
     # and given a maximum allowed deceleration. This speed may be higher than the speed limit, it is simply the speed based on upcoming curvature, so
     # in theory a perfectly straight rd could have limit of infinity
     # current_speed_mps is only used to truncate the results bc we don't need to support beyond 5s
+    # returns mps
     if current_speed_mps < 5: return 30
 
     #curvatures = get_curvatures_from_headings(headings)
@@ -205,7 +219,7 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=1.0)
     curve_preempt_m = preempt_sec * current_speed_mps
     max_speeds_at_each_wp_preempted = np.interp(np.array(TRAJ_WP_DISTS) + curve_preempt_m, TRAJ_WP_DISTS, max_speeds_at_each_wp)
     # For each wp, there is a max speed we can be going now to make sure we're going the proper speed when we hit that wp
-    current_max_speed_w_respect_to_each_wp = np.sqrt(np.array(TRAJ_WP_DISTS) * ACCEL) + max_speeds_at_each_wp_preempted #max_speeds_at_each_wp # adds elementwise
+    current_max_speed_w_respect_to_each_wp = np.sqrt(np.array(TRAJ_WP_DISTS) * max_accel) + max_speeds_at_each_wp_preempted #max_speeds_at_each_wp # adds elementwise
 
     long_consideration_max_ix = max_ix_from_speed(current_speed_mps)
     curve_constrained_speed = current_max_speed_w_respect_to_each_wp[:long_consideration_max_ix].min()
@@ -214,8 +228,9 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=1.0)
 
     return curve_constrained_speed
 
-def get_curve_constrained_speed(curvatures, current_speed_mps):
-    return min([_get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=s) for s in [0.1, .5, 1.0, 1.5, 2.0]])
+def get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACCEL):
+    # returns mps
+    return min([_get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=s, max_accel=MAX_ACCEL) for s in [0.1, .5, 1.0, 1.5, 2.0]])
 
 # def derive_wp_dists(wp_angles):
 #     wp_dists = [6]

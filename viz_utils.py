@@ -276,6 +276,8 @@ def combine_vids(m_path_1, m_path_2, run_id):
 
         
 def get_pts_and_headings_fig(wp_angles, wp_dists, wp_headings, wp_curvatures):
+
+    #plt.close('all') # dunno about this. HACK
     
     xs = np.sin(wp_angles) * wp_dists
     ys = np.cos(wp_angles) * wp_dists

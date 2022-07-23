@@ -15,19 +15,20 @@ def linear_to_sin_decay(p):
     return np.sin(p*np.pi+np.pi/2)
 
 def reset_drive_style():
-    global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
+    global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before, max_accel
     global is_highway
 
     wp_m_offset = -30 #-12 # telling to always be right on top of traj, this will always be the closest wp
     if is_highway:
-        speed_limit = random.uniform(15, 18) if random.random()<.05 else random.uniform(25, 27) if random.random()<.15 else random.uniform(18, 25)
+        speed_limit = random.uniform(16, 19) if random.random()<.05 else random.uniform(25, 27) if random.random()<.10 else random.uniform(19, 25)
     else:
-        speed_limit = random.uniform(8, 22) # mps
+        speed_limit = random.uniform(8, 12) if random.random() < .05 else random.uniform(12, 26) # mps
 
-    lateral_kP = .7 #random.uniform(.7, .9)
+    lateral_kP = .7 #random.uniform(.7, .8)
     long_kP = random.uniform(.02, .05)
-    curve_speed_mult = random.uniform(.85, 1.1)
+    curve_speed_mult = random.uniform(.8, 1.2)
     turn_slowdown_sec_before = random.uniform(.25, .75)
+    max_accel = random.uniform(1.0, 2.0)
 
 def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highway=False, _is_lined=False):
     global current_speed_mps, counter, targets_container, overall_frame_counter
@@ -62,15 +63,15 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
 
     global roll_noise # TODO this may be affecting our wp_angles, that may be a problem especially at higher values of roll. Actually no, i don't think it does
     num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity. can go even lower here, eg to mimic bumpy gravel rd
-    ROLL_MAX_DEG = 4
-    do_roll = random.random() < .1
+    ROLL_MAX_DEG = 5
+    do_roll = random.random() < .2
     roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
     roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
 
-    def frame_change_post(scene, dg): #TODO move the vehicle movement things BEFORE the data saving so we don't have to do the staggering in the dataloader. Actually i dunno...
+    def frame_change_post(scene, dg):
         global current_speed_mps, counter, targets_container, overall_frame_counter
         global shift_x, shift_y
-        global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before
+        global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before, max_accel
         global current_tire_angle, is_lined
 
         cube = bpy.data.objects["Cube"].evaluated_get(dg) #; print("TEST 2", [a for a in cube.data.attributes])
@@ -81,7 +82,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         sec_to_undagger = 3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
         meters_to_undagger = current_speed_mps * sec_to_undagger
 
-        traj = []
+        traj, wp_dists = [], []
         for i, wp_dist in enumerate(traj_wp_dists):
             wp = cube.data.attributes[f"wp{i}"].data[0].vector 
 
@@ -98,15 +99,16 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
                                         cam_heading[2]+(np.pi/2), 
                                         wp[:2])
 
-            wp_dist = dist(wp, cam_loc)
+            wp_dist_actual = dist(wp, cam_loc)
             targets_container[counter, i] = angle_to_wp
-            targets_container[counter, i+N_WPS] = wp_dist
+            targets_container[counter, i+N_WPS] = wp_dist_actual
             targets_container[counter, i+2*N_WPS] = wp[2]-cam_loc[2]
 
             traj.append(angle_to_wp) 
+            wp_dists.append(wp_dist_actual)
 
         traj = np.array(traj) # This is the possibly dagger-shifted traj. Targets are already stored in container, but we don't use them anymore here
-
+        wp_dists = np.array(wp_dists)
 
         ############
         # save data
@@ -186,16 +188,20 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[0] + delta_x
         get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[1] + delta_y 
 
-        # TODO use the same apparatus we using in rw rollouts. As rw rollouts get better, can improve this to better match
-        # This isn't exact, bc we're taking the angle slightly ahead of actual steer angle, and our lookup is for actual angles
-        # right way to do this would be to estimate, in one second what turn angle will i have to implement
-        angle_for_curve_limit, _, _ = get_target_wp(traj, current_speed_mps, wp_m_offset=current_speed_mps*turn_slowdown_sec_before) 
-        # half second ahead of target wp. So our kP long will have to be fast enough to always get us down low enough
+        # # TODO use the same apparatus we using in rw rollouts. As rw rollouts get better, can improve this to better match
+        # # This isn't exact, bc we're taking the angle slightly ahead of actual steer angle, and our lookup is for actual angles
+        # # right way to do this would be to estimate, in one second what turn angle will i have to implement
+        # angle_for_curve_limit, _, _ = get_target_wp(traj, current_speed_mps, wp_m_offset=current_speed_mps*turn_slowdown_sec_before) 
+        # # half second ahead of target wp. So our kP long will have to be fast enough to always get us down low enough
 
-        curvature_constrained_speed = np.interp(abs(angle_for_curve_limit), max_speed_bps, max_speed_vals)
+        # curvature_constrained_speed = np.interp(abs(angle_for_curve_limit), max_speed_bps, max_speed_vals)
+        # curvature_constrained_speed *= curve_speed_mult
+
+        curvature_constrained_speed = get_curve_constrained_speed_from_wp_angles(traj, wp_dists, current_speed_mps, max_accel=max_accel)
         curvature_constrained_speed *= curve_speed_mult
 
         target_speed = min(curvature_constrained_speed, speed_limit)
+
         current_speed_mps += (target_speed - current_speed_mps)*long_kP
 
         get_node("cam_roll_add", make_vehicle_nodes).outputs["Value"].default_value = roll_noise[overall_frame_counter]

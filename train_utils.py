@@ -266,14 +266,14 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         curvatures_loss /= 1.5
 
         # weight our loss items according to running avgs
-        loss = control_loss + headings_loss + curvatures_loss 
+        loss = control_loss #+ headings_loss + curvatures_loss 
                 # te*(.03*avg_control_loss/avg_te_loss) + \
                 #             torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
                 #             torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
 
         logger.log({f"{dataloader.path_stem}_control_loss": control_loss.item(),
-                    f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
-                    f"{dataloader.path_stem}_curvatures_loss": curvatures_loss.item(),   
+                    #f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
+                    #f"{dataloader.path_stem}_curvatures_loss": curvatures_loss.item(),   
                     f"consistency losses/{dataloader.path_stem}_steer_cost":steer_cost.item(),
                     f"consistency losses/{dataloader.path_stem}_te_loss":te.item(),
                     # # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
