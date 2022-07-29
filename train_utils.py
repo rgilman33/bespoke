@@ -155,10 +155,10 @@ def add_trajs_to_img(img, pred, targets, speed_mps=None):
     return img
 
 
-LOSS_EPS = 1 - 1/500 
+LOSS_EPS = 1 - 1/200 
 
 avg_control_loss = .003
-avg_td_loss = 12
+avg_td_loss = 120
 avg_torque_loss = 170
 avg_te_loss = .02
 
@@ -202,17 +202,17 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         
         control_loss_no_reduce = mse_loss_no_reduce(wp_angles, wp_angles_pred)
         control_loss_no_reduce = control_loss_no_reduce * to_pred_mask # only asking to pred angles below certain threshold
-        #control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
+        control_loss_no_reduce = control_loss_no_reduce * loss_weights # we care less about further wps, they're mostly used only for speed est at this pt
         control_loss = control_loss_no_reduce.mean()
 
         headings_loss = mse_loss_no_reduce(wp_headings, wp_headings_pred)
         headings_loss *= to_pred_mask
-        #headings_loss *= loss_weights
+        headings_loss *= loss_weights
         headings_loss = headings_loss.mean()
 
         curvatures_loss = mse_loss_no_reduce(wp_curvatures, wp_curvatures_pred)
         curvatures_loss *= to_pred_mask
-        #curvatures_loss *= loss_weights
+        curvatures_loss *= loss_weights
         curvatures_loss = curvatures_loss.mean()
 
         with torch.no_grad():
@@ -259,21 +259,21 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
 
         #print(avg_control_loss, avg_td_loss, avg_torque_loss, avg_te_loss)
 
-        TD_LOSS_WEIGHT = 0 # .03
+        TD_LOSS_WEIGHT = .03
         TORQUE_LOSS_WEIGHT = 0 # .03
 
-        headings_loss /= 15
-        curvatures_loss /= 1.5
+        headings_loss /= 40
+        curvatures_loss /= 2
 
         # weight our loss items according to running avgs
-        loss = control_loss #+ headings_loss + curvatures_loss 
+        loss = control_loss + headings_loss + curvatures_loss + torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
                 # te*(.03*avg_control_loss/avg_te_loss) + \
                 #             torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
                 #             torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
 
         logger.log({f"{dataloader.path_stem}_control_loss": control_loss.item(),
-                    #f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
-                    #f"{dataloader.path_stem}_curvatures_loss": curvatures_loss.item(),   
+                    f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
+                    f"{dataloader.path_stem}_curvatures_loss": curvatures_loss.item(),   
                     f"consistency losses/{dataloader.path_stem}_steer_cost":steer_cost.item(),
                     f"consistency losses/{dataloader.path_stem}_te_loss":te.item(),
                     # # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
@@ -366,7 +366,7 @@ def gather_ixs(preds, speeds_kph):
     return ixs
 
 MAX_ACCEPTABLE_TORQUE = 6000
-MAX_ACCEPTABLE_TORQUE_DELTA = 400 #700
+MAX_ACCEPTABLE_TORQUE_DELTA = 800 #700
 rad_to_deg = lambda x: x*57.2958
 
 def get_torque(pred, aux):

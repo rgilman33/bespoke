@@ -96,10 +96,11 @@ class BlenderDataloader():
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
         wp_angles, wp_dists, _ = np.split(targets, 3, axis=2)
         
-        # wp_angles = smooth_near_wps_batch(wp_angles)
+        wp_angles_smoothed = smooth_near_wps_batch(wp_angles)
 
-        wp_headings = get_headings_from_traj_batch(wp_angles, wp_dists)
+        wp_headings = get_headings_from_traj_batch(wp_angles_smoothed, wp_dists)
         wp_headings = smooth_near_wps_batch(wp_headings)
+        wp_headings = smooth_near_wps_batch(wp_headings) # el doble
 
         wp_curvatures = get_curvatures_from_headings_batch(wp_headings)
 
@@ -109,21 +110,21 @@ class BlenderDataloader():
         max_pred_dists_m = avg_speeds_mps * MAX_PRED_S
         speed_mask = pad(pad(np.array(TRAJ_WP_DISTS, dtype=np.float16)))
         speed_mask = (speed_mask <= max_pred_dists_m).astype(np.float16) 
-        # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj. The broadcasting above 'just works' bc thank you np
+        # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj. The broadcasting above 'just works' bc np good good
 
-        # MAX_ANGLE_TO_PRED = .18 #.16
-        # to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
-        # to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
+        MAX_ANGLE_TO_PRED = .36 #.18 #.16
+        to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
+        to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
 
         # ZERO_THRESH = .48 #.24
         # zero_mask = torch.from_numpy((np.abs(wp_angles) < ZERO_THRESH).astype(np.float16)).to(device)
         # to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
 
-        # to_pred_mask = to_pred_mask * torch.from_numpy(speed_mask).to(device)
-        to_pred_mask = torch.from_numpy(speed_mask).to(device)
+        to_pred_mask = to_pred_mask * torch.from_numpy(speed_mask).to(device)
+        #to_pred_mask = torch.from_numpy(speed_mask).to(device)
 
-        img = aug_imgs(img) # aug when still as uint8. Ton of time spent here, way inefficient. Is that still true now?
-        img, aux, wp_angles, wp_headings, wp_curvatures = prep_inputs(img, aux, targets=(wp_angles, wp_headings, wp_curvatures)) # we're actually spending substantial time here.
+        img = aug_imgs(img) # is this still inefficient?
+        img, aux, wp_angles, wp_headings, wp_curvatures = prep_inputs(img, aux, targets=(wp_angles, wp_headings, wp_curvatures)) # is this also still slow?
 
         self.seq_ix += bptt
 

@@ -336,8 +336,9 @@ def setup_map():
 
     get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 100) if (is_just_straight or random.random() < .33) else random.uniform(800, 1200)
     is_wide_laned = lane_width>3.3 or wide_shoulder_add>0
-    nm1 = 0 if (random.random()<.05 or is_highway or is_just_straight) else random.uniform(100, 200) if is_wide_laned else random.uniform(100, 300)
-    nm2 = 0 if (random.random()<.7 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if random.random()<.25 else random.uniform(60, 100)
+    nm1 = 0 if (random.random()<.05 or is_just_straight) else random.uniform(100, (200 if is_wide_laned else 300))
+    nm2_r = random.random()
+    nm2 = 0 if (nm2_r<.85 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.98 else random.uniform(60, 100)
     get_node("loop_noise_mult_1", loop_gen_nodes).outputs["Value"].default_value = nm1
     get_node("loop_noise_mult_2", loop_gen_nodes).outputs["Value"].default_value = nm2
     get_node("loop_noise_mult_z_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 220)
@@ -374,7 +375,7 @@ def setup_map():
     randomize_appearance(rd_is_lined=rd_is_lined, lane_width=lane_width, wide_shoulder_add=wide_shoulder_add, is_only_yellow_lined=is_only_yellow_lined)
 
     # No NPCs when too narrow gravel rds
-    if not rd_is_lined and lane_width < 3.1:
+    if not rd_is_lined and lane_width < 3.2:
         bpy.data.objects["Cylinder"].hide_render = True
     else:
         bpy.data.objects["Cylinder"].hide_render = False
