@@ -27,9 +27,10 @@ if __name__ == "__main__":
         if os.path.exists(next_targets_path):
             os.remove(next_targets_path)
 
-        is_highway, is_lined = setup_map() #TODO can return more here
+        is_highway, is_lined, pitch_perturbation, yaw_perturbation = setup_map()
 
-        set_frame_change_post_handler(bpy, save_data=True, run_root=run_root, _is_highway=is_highway, _is_lined=is_lined)
+        set_frame_change_post_handler(bpy, save_data=True, run_root=run_root, _is_highway=is_highway, _is_lined=is_lined, 
+                                        _pitch_perturbation=pitch_perturbation, _yaw_perturbation=yaw_perturbation)
 
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
         bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk

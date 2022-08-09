@@ -70,7 +70,7 @@ def combine_img_cam(act_grad, img, cutoff):
     
     return cam
 
-def get_rnn_gradcam(act, grad, img, cutoff=.2):
+def get_rnn_gradcam(act, grad, img, cutoff=.1):
     
     ag = (act * grad).astype('float32')
     ag = cv2.resize(ag, (int(IMG_HEIGHT/2), IMG_HEIGHT), interpolation=cv2.INTER_AREA)
@@ -239,7 +239,8 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
 
 
 def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None, add_charts=False):
-    wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = get_viz_rollout(model_stem, img, aux)
+    rollout_data = get_viz_rollout(model_stem, img, aux)
+    wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = rollout_data
     print(wp_angles_all.shape, cnn_activations.shape, cnn_grads.shape)
 
     temporal_error = None
@@ -251,6 +252,7 @@ def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None, ad
 
     _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, wp_curvatures_all, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error, add_charts)
     print("Made vid!")
+    return rollout_data
 
 
 def combine_vids(m_path_1, m_path_2, run_id):

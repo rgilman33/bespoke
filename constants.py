@@ -32,8 +32,8 @@ N_WPS_TO_USE = N_WPS
 traj_wp_dists = TRAJ_WP_DISTS
 
 aux_properties = [
-    'left_blinker',
-    'right_blinker',
+    'left_blinker', # pitch
+    'right_blinker', # yaw
     'current_speed',
     'speed_as_percent_of_limit',
     'current_tire_angle_rad'

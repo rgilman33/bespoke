@@ -227,7 +227,8 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                                                                 wp_angles[ix_worst, bptt_ix_worst, :],
                                                                 speed_mps=speed_mps) #TODO add speed_mps to this so it truncates excess traj
 
-        # pitch_loss = mse_loss(pitch, obs_net_out[:,:,1])
+        pitch_loss = mse_loss(pitch, obs_net_out[:,:,1])
+        yaw_loss = mse_loss(yaw, obs_net_out[:,:,2])
 
         pred_including_prev = torch.cat([last_pred, wp_angles_pred], dim=1)
         aux_including_prev = torch.cat([last_aux, aux], dim=1)
@@ -271,15 +272,18 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                 #             torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
                 #             torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
 
+        loss += ((pitch_loss + yaw_loss)/300)
+
         logger.log({f"{dataloader.path_stem}_control_loss": control_loss.item(),
                     f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
                     f"{dataloader.path_stem}_curvatures_loss": curvatures_loss.item(),   
                     f"consistency losses/{dataloader.path_stem}_steer_cost":steer_cost.item(),
                     f"consistency losses/{dataloader.path_stem}_te_loss":te.item(),
                     # # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
-                    # # f"aux losses/{dataloader.path_stem}_pitch_loss":pitch_loss.item(),
+                    f"aux losses/{dataloader.path_stem}_pitch_loss":pitch_loss.item(),
+                    f"aux losses/{dataloader.path_stem}_yaw_loss":yaw_loss.item(),
                     # f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_loss":1 if has_torque_loss else 0,
-                    # f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_delta_loss":1 if has_torque_delta_loss else 0,
+                    f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_delta_loss":1 if has_torque_delta_loss else 0,
                    })
 
         if has_torque_loss:
@@ -295,7 +299,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             CLIP_GRAD_NORM = 3
             torch.nn.utils.clip_grad_norm_(model.fcs_1.parameters(), CLIP_GRAD_NORM)
             torch.nn.utils.clip_grad_norm_(model.rnn.parameters(), CLIP_GRAD_NORM)
-            torch.nn.utils.clip_grad_norm_(model.fcs_2.parameters(), CLIP_GRAD_NORM)
+            torch.nn.utils.clip_grad_norm_(model._fcs_2.parameters(), CLIP_GRAD_NORM)
             
             scaler.step(opt)
             scaler.update() 
@@ -366,7 +370,7 @@ def gather_ixs(preds, speeds_kph):
     return ixs
 
 MAX_ACCEPTABLE_TORQUE = 6000
-MAX_ACCEPTABLE_TORQUE_DELTA = 800 #700
+MAX_ACCEPTABLE_TORQUE_DELTA = 1_000 #700
 rad_to_deg = lambda x: x*57.2958
 
 def get_torque(pred, aux):

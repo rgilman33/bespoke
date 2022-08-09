@@ -61,13 +61,19 @@ class BlenderDataloader():
             aux = np.load(f"{t_stem}/aux_{end_ix}.npy")
             aux_chunk[b, :, :] = aux
 
+            maps = np.load(f"{t_stem}/maps_{end_ix}.npy") # Not placing in its own chunk bc we'll just place directly on imgs
+
             img_paths = sorted(glob.glob(f"{t_stem}/imgs/*"))[end_ix-SEQ_LEN+1:end_ix+1] # imgs 1 indexed, targets zero indexed
 
             for i, p in enumerate(img_paths):
                 img_chunk[b, i, :,:,:] = cv2.imread(p)[:,:,::-1] #bgr to rgb
         
-        targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of the hypths that we're misaligned
+        targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of their off by one
         aux_chunk[:,:-1,:] = aux_chunk[:,1:,:] #TODO should maybe do this further upstream actually
+        maps[:-1,:,:,:] = maps[1:,:,:,:]
+        
+        HAS_MAP_PROB = .7
+        img_chunk[b,:,:,-80:,:] = maps if random.random() < HAS_MAP_PROB else 0 # giving maps to the entire chunk, or not at all
 
     def queue_up_batch(self):
         bptt = BPTT
@@ -84,14 +90,14 @@ class BlenderDataloader():
         pitch = aux[:,:,0].copy()
         yaw = aux[:,:,1].copy()
         aux[:,:,4] = 0.0
-        aux[:,:,0] = 0.0
-        aux[:,:,1] = 0.0
+        #aux[:,:,0] = 0.0
+        #aux[:,:,1] = 0.0
         aux[:,:,3] = 0.0 # temporary HACK
         
-        pitch = torch.FloatTensor(pitch).to('cuda')
+        pitch = torch.HalfTensor(pitch).to('cuda')
         current_tire_angles_rad = torch.FloatTensor(current_tire_angles_rad).to('cuda')
         current_speeds_mps = torch.FloatTensor(current_speeds_mps).to('cuda')
-        yaw = torch.FloatTensor(yaw).to('cuda')
+        yaw = torch.HalfTensor(yaw).to('cuda')
 
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
         wp_angles, wp_dists, _ = np.split(targets, 3, axis=2)

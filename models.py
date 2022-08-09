@@ -6,12 +6,13 @@ class ObserverNet(nn.Module):
         super(ObserverNet, self).__init__()
         act = nn.ReLU()
         drop = nn.Dropout(0.2)
-        self.fcs = nn.Sequential(nn.Linear(512, 256), act, drop, nn.Linear(256, 3))
+        self.fcs = nn.Sequential(nn.Linear(512, 256), act, drop, nn.Linear(256, 3)) # error, pitch, yaw
 
     def forward(self, x):
         return self.fcs(x)
 
 VIZ_IX = 5 # viz_ix from 3 (granular) to at least 5, maybe more?
+N_CALIB = 2
 
 class EffNet(nn.Module):
     def __init__(self, model_arch='efficientnet_b3', is_for_viz=False):
@@ -27,7 +28,7 @@ class EffNet(nn.Module):
         self.use_rnn = True
         
         self.rnn = nn.GRU(self.inner_dim, self.inner_dim, 1, batch_first=True)
-        self.fcs_2 = nn.Sequential(nn.Linear(self.inner_dim, 512), act, drop, nn.Linear(512, N_TARGETS))
+        self._fcs_2 = nn.Sequential(nn.Linear(self.inner_dim + N_CALIB, 512), act, drop, nn.Linear(512, N_TARGETS))
 
         self.obsnet = ObserverNet()
 
@@ -51,10 +52,15 @@ class EffNet(nn.Module):
     def rnn_activations_hook(self, grad):
         self.rnn_gradients = grad.detach().cpu()
 
-    def forward(self, x, aux): #x is img
-        # reshape for CNNs
+    def forward(self, x, aux):
+        # flatten batch and seq for CNNs
         bs, bptt, c, h, w = x.shape
         x = x.reshape(bs*bptt,c,h,w).contiguous() # contig required otherwise get error when using non-swarm dataloaders. "can;t something on something set w detach or .data"
+        
+        pitch_yaw = torch.empty(bs,bptt,2).half().to(device)
+        pitch_yaw[:,:,:] = aux[:,:,:2]
+        aux[:,:,:2] = 0
+
         aux = aux.reshape(bs*bptt,len(aux_properties))
 
         if self.is_for_viz:
@@ -69,31 +75,20 @@ class EffNet(nn.Module):
 
             x = bb[VIZ_IX+1:](x)
         else:
-            #x = self.backbone(img)
-
-            # #modules = [module for k, module in self.backbone._modules.items()]
-            # x = checkpoint_sequential(modules, 4, img)
-            # x = checkpoint_sequential(self.backbone, 4, (img, self.dummy_tensor))
-
             x = self.backbone.conv_stem(x)
             x = self.backbone.bn1(x)
             x = self.backbone.act1(x)
-            #x = torch.utils.checkpoint.checkpoint(self.backbone.blocks, x)
-            #x = self.backbone.blocks(x)
             x = checkpoint_sequential(self.backbone.blocks, 7, x)
             x = self.backbone.conv_head(x)
             x = self.backbone.bn2(x)
             x = self.backbone.act2(x)
             x = self.backbone.global_pool(x)
             x = self.backbone.classifier(x)
-            
-            #x = torch.utils.checkpoint.checkpoint(self.backbone, img, self.dummy_tensor)
-
 
         x = torch.cat([x, aux], dim=-1)
         x = self.fcs_1(x)
 
-        # unpack seq and bs for rnn
+        # unpack seq and batch for rnn
         x = x.reshape(bs, bptt, self.inner_dim)
         x, self.h = self.rnn(x, self.h)
         self.h.detach_()
@@ -105,6 +100,10 @@ class EffNet(nn.Module):
             self.rnn_activations = rnn_activations.detach().cpu()
             x = rnn_activations
 
-        obsnet_out = self.obsnet(x if self.is_for_viz else x.detach())
-        x = self.fcs_2(x)
+        # obsnet_out = self.obsnet(x if self.is_for_viz else x.detach()) # obsnet does not get access to calib params, it preds them
+        obsnet_out = self.obsnet(x)
+
+        x = torch.cat([x, pitch_yaw], dim=-1) # cat it calib params
+
+        x = self._fcs_2(x)
         return x, obsnet_out

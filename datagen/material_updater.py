@@ -79,8 +79,8 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes_parent)
 
     if rd_is_lined:
-        white_lines_opacity.outputs["Value"].default_value = 0 if is_only_yellow_lined else random.uniform(.6, 1.)
-        yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.7, 1.) if is_only_yellow_lined else random.uniform(.5, 1.) 
+        white_lines_opacity.outputs["Value"].default_value = 0 if is_only_yellow_lined else random.uniform(.6, 1.05)
+        yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.7, 1.05) if is_only_yellow_lined else random.uniform(.6, 1.05) 
     else:
         white_lines_opacity.outputs["Value"].default_value = 0
         yellow_lines_opacity.outputs["Value"].default_value = 0
@@ -307,10 +307,10 @@ def setup_map():
     HAS_LANELINES_PROB = .7
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
-    is_highway = rd_is_lined and random.random() < .2 # highways are faster, wider laned, always lined, less curvy
+    is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, less curvy
     wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0 # this will cause to always have white line support
 
-    is_just_straight = random.random()<.01
+    is_just_straight = random.random()<.04
 
     lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.8, 3.9) if rd_is_lined else random.uniform(1.6, 3.3)
     get_node("lane_width_master_in", main_map_nodes).outputs["Value"].default_value = lane_width
@@ -338,7 +338,7 @@ def setup_map():
     is_wide_laned = lane_width>3.3 or wide_shoulder_add>0
     nm1 = 0 if (random.random()<.05 or is_just_straight) else random.uniform(100, (200 if is_wide_laned else 300))
     nm2_r = random.random()
-    nm2 = 0 if (nm2_r<.85 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.98 else random.uniform(60, 100)
+    nm2 = 0 if (nm2_r<.8 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.97 else random.uniform(60, 100)
     get_node("loop_noise_mult_1", loop_gen_nodes).outputs["Value"].default_value = nm1
     get_node("loop_noise_mult_2", loop_gen_nodes).outputs["Value"].default_value = nm2
     get_node("loop_noise_mult_z_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 220)
@@ -370,8 +370,14 @@ def setup_map():
     
     #bpy.data.objects["Camera"].location[2] = random.uniform(1.45, 1.65)*-1
     #bpy.data.objects["Camera"].location[1] = random.uniform(-.2, 0.)
-    #bpy.data.objects["Camera"].rotation_euler[0] = np.radians(random.uniform(87, 89))
- 
+    
+    BASE_PITCH = 88
+    BASE_YAW = 180
+    pitch_perturbation = random.uniform(-2, 2)
+    yaw_perturbation = random.uniform(-2, 2)
+    bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation) #np.radians(random.uniform(87, 89))
+    bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation) #np.radians(random.uniform(87, 89))
+
     randomize_appearance(rd_is_lined=rd_is_lined, lane_width=lane_width, wide_shoulder_add=wide_shoulder_add, is_only_yellow_lined=is_only_yellow_lined)
 
     # No NPCs when too narrow gravel rds
@@ -379,6 +385,7 @@ def setup_map():
         bpy.data.objects["Cylinder"].hide_render = True
     else:
         bpy.data.objects["Cylinder"].hide_render = False
+    bpy.data.objects["Cone"].hide_render
 
-    return is_highway, rd_is_lined
+    return is_highway, rd_is_lined, pitch_perturbation, yaw_perturbation
         
