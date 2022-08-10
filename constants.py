@@ -1,6 +1,6 @@
 import numpy as np
 
-BESPOKE_ROOT = '/media/beans/ssd/bespoke'
+BESPOKE_ROOT = '/home/beans/bespoke'
 
 webcam_img_height = 480
 webcam_img_width = 640
@@ -84,7 +84,7 @@ device = 'cuda'
 
 FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
-BLENDER_MEMBANK_ROOT = "/media/beans/ssd/blender_membank"
+BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
 EPISODE_LEN = SEQ_LEN * 10
 RUNS_TO_STORE_PER_PROCESS = 30
 N_RUNNERS = 12

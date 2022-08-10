@@ -2,6 +2,7 @@ import subprocess
 import xmltodict # using this instead of overpy to parse OSM data manually ourselves
 import numpy as np
 
+OSM_DB_PATH = "/media/beans/ssd/osm/db"
 
 def get_big_map():
     # NOTE currently just returns map for silverton area
@@ -28,7 +29,7 @@ def get_big_map():
 
     # grabbing osm data from our local db. Could also grab this from online, if wanted eg big dump of certain area, could then
     # store that offline and not need to deal w local db at all
-    completion = subprocess.run(["/home/beans/osm-3s_v0.7.56.9/bin/osm3s_query", "--db-dir=/media/beans/ssd/osm/db", f'--request={q}'], 
+    completion = subprocess.run(["/home/beans/osm-3s_v0.7.56.9/bin/osm3s_query", f"--db-dir={OSM_DB_PATH}", f'--request={q}'], 
                                                                     check=True, capture_output=True)
     
     # Manual parsing of osm data, which is just xml after all

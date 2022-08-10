@@ -101,7 +101,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     torch.backends.cudnn.enabled=False # otherwise can't do backward through RNN w cudnn
 
     m = EffNet(model_arch="efficientnet_b3", is_for_viz=True).to(device)
-    m.load_state_dict(torch.load(f"/media/beans/ssd/bespoke/models/m_{model_stem}.torch"))
+    m.load_state_dict(torch.load(f"{BESPOKE_ROOT}/bespoke/models/m_{model_stem}.torch"))
     m.eval()
     bs = 1
     m.reset_hidden(bs)
