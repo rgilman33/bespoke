@@ -75,6 +75,12 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
     roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
 
+    # noise for the map
+    num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
+    MAPS_NOISE_MAX_DEG = 5
+    maps_noise_mult = random.uniform(.001, np.radians(MAPS_NOISE_MAX_DEG))
+    maps_noise = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+
     t0 = time.time()
     dg = bpy.context.evaluated_depsgraph_get()
     cone = bpy.data.objects["Cone"].evaluated_get(dg)
@@ -156,7 +162,9 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         if overall_frame_counter % refresh_nav_map_freq == 0: # This always has to be called on first frame otherwise small_map is none
             close_buffer = CLOSE_RADIUS # TODO is this correct?
             current_lat, current_lon = cam_loc[0], cam_loc[1]
-            small_map = get_map(lats, lons, way_ids, current_lat, current_lon, cam_heading+np.pi/2, close_buffer)
+            small_map = get_map(lats, lons, way_ids, current_lat, current_lon, 
+                                cam_heading+(np.pi/2)+maps_noise[overall_frame_counter], 
+                                close_buffer)
 
         maps_container[counter,:,:,:] = small_map
 

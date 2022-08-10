@@ -67,13 +67,16 @@ class BlenderDataloader():
 
             for i, p in enumerate(img_paths):
                 img_chunk[b, i, :,:,:] = cv2.imread(p)[:,:,::-1] #bgr to rgb
-        
+
+            #maps[:-1,:,:,:] = maps[1:,:,:,:] This lines them up, without it we're actually off by one lagged, which i actually kind of want
+            
+            # giving maps to the entire chunk, or not at all
+            HAS_MAP_PROB = .7
+            img_chunk[b,:,:,-80:,:] = maps[:,:,::-1,:] if random.random() < HAS_MAP_PROB else 0 # fliplr
+                    
         targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of their off by one
         aux_chunk[:,:-1,:] = aux_chunk[:,1:,:] #TODO should maybe do this further upstream actually
-        maps[:-1,:,:,:] = maps[1:,:,:,:]
-        
-        HAS_MAP_PROB = .7
-        img_chunk[b,:,:,-80:,:] = maps if random.random() < HAS_MAP_PROB else 0 # giving maps to the entire chunk, or not at all
+
 
     def queue_up_batch(self):
         bptt = BPTT

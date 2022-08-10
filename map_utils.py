@@ -8,6 +8,8 @@ CLOSE_RADIUS = 200
 CLOSE_BUFFER = np.degrees(CLOSE_RADIUS / EARTH_RADIUS)
 LAT_SZ_PX, LON_SZ_PX = 200, 200 # we'll crop out of this
 
+NAVMAP_WIDTH, NAVMAP_HEIGHT = 80, 100 #TODO use these throughout instead of hardcoded
+
 # filtering down the FAR_RADIUS chunk of map data into the CLOSE_RADIUS. We'll draw this entire close area 
 # then chop it down to the actual size we need, which will be about half
 # this takes .1 - .3 ms w small chunk, 1 ms w silverton area chunk.
@@ -63,7 +65,7 @@ def draw_small_map(lats, lons, way_ids):
     ixs_of_last_nodes_on_ways = list(is_last_node_on_way_filter.nonzero()[0]+1) # this is actually first node of next way?
     ixs_of_last_nodes_on_ways = [0] + ixs_of_last_nodes_on_ways + [len(lats)]
     
-    small_map = np.zeros((LAT_SZ_PX, LON_SZ_PX, 3))    
+    small_map = np.zeros((LAT_SZ_PX, LON_SZ_PX, 3), dtype='uint8')    
     pts = np.stack([lats, lons], axis=-1)
     pts = pts.reshape((-1, 1, 2))  # quirk of cv2
     
@@ -114,3 +116,4 @@ def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
         way_ids += ([i+3]* len(rd_lats)) # just making sure isn't same id as real rd
 
     return lats, lons, way_ids
+
