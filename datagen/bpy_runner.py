@@ -2,8 +2,8 @@
 import os, sys, bpy, time, glob, random
 import numpy as np
 
-sys.path.append("/media/beans/ssd/bespoke")
-sys.path.append("/media/beans/ssd/bespoke/datagen")
+sys.path.append('/home/beans/bespoke')
+sys.path.append('/home/beans/bespoke/datagen')
 from material_updater import setup_map
 from bpy_handler import set_frame_change_post_handler
 from constants import *

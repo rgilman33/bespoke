@@ -3,8 +3,8 @@ import sys, bpy
 import numpy as np
 import importlib
 
-sys.path.append("/media/beans/ssd/bespoke/datagen")
-sys.path.append("/media/beans/ssd/bespoke")
+sys.path.append('/home/beans/bespoke')
+sys.path.append('/home/beans/bespoke/datagen')
 
 import constants
 import material_updater

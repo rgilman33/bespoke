@@ -1,7 +1,7 @@
 import numpy as np
 import os, random, sys, bpy, time, glob
 
-sys.path.append("/media/beans/ssd/bespoke")
+sys.path.append("/home/beans/bespoke")
 from constants import *
 from traj_utils import *
 from map_utils import *

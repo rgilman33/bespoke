@@ -1,10 +1,10 @@
 import bpy, random, glob, time, sys
 import numpy as np
 
-sys.path.append("/media/beans/ssd/bespoke")
+sys.path.append("/home/beans/bespoke")
 from constants import *
 
-STATIC_ROOT = "/media/beans/ssd/static"
+STATIC_ROOT = "/home/beans/static"
 TEXTURES_ROOT = f"{STATIC_ROOT}/textures"
 HDRIS_ROOT = f"{STATIC_ROOT}/hdris" 
 MEGASCANS_DOWNLOADED_ROOT = f"{STATIC_ROOT}/Megascans Library/Downloaded" #TODO must update this in bridge app
