@@ -4,9 +4,9 @@ from constants import *
 
 EARTH_RADIUS = 6373000.0  # approximate radius of earth in meters
 # TODO URGENT our conversions btwn degrees latlon and meters is not exact, as it depends on latitude
-CLOSE_RADIUS = 200
+CLOSE_RADIUS = 400 #200
 CLOSE_BUFFER = np.degrees(CLOSE_RADIUS / EARTH_RADIUS)
-LAT_SZ_PX, LON_SZ_PX = 200, 200 # we'll crop out of this
+LAT_SZ_PX, LON_SZ_PX = 400, 400 # we'll crop out of this
 
 NAVMAP_WIDTH, NAVMAP_HEIGHT = 80, 100 #TODO use these throughout instead of hardcoded
 
@@ -84,7 +84,7 @@ def draw_small_map(lats, lons, way_ids):
     small_map = cv2.circle(small_map, (h, h), radius=2, color=(0,255,255), thickness=-1)
 
     # map is size (200, 200, 3), now we crop to where we want. 
-    small_map = small_map[10:110, 60:140, :] # TODO don't hardcode these values
+    small_map = small_map[110:210, 160:240, :] # TODO don't hardcode these values
     
     return small_map
 
