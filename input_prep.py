@@ -52,7 +52,7 @@ def prep_inputs(image, aux, targets=None, is_single_obs=False):
     image = norm_img(image)
 
     if targets is not None:
-        wp_angles, wp_headings, wp_curvatures = targets #TODO norm and return headings
+        wp_angles, wp_headings, wp_curvatures = targets
 
         wp_angles = torch.from_numpy(wp_angles).to('cuda')
         wp_angles = wp_angles / TARGET_NORM.to('cuda')

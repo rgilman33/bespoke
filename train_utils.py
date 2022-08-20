@@ -194,7 +194,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         (img, aux, wp_angles, wp_headings, wp_curvatures, to_pred_mask, current_tire_angles_rad, current_speeds_mps, pitch, yaw), is_first_in_seq = batch
 
         if is_first_in_seq: 
-            model.reset_hidden(dataloader.bs) # reset hiddens to zeros
+            model.reset_hidden(dataloader.bs)
             last_pred, last_aux, last_speeds, last_tire_angles = torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda'), torch.HalfTensor().to('cuda')
         
         with torch.cuda.amp.autocast(): pred, obs_net_out = model(img, aux)
@@ -296,9 +296,9 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             scaler.scale(loss).backward() 
             scaler.unscale_(opt)
 
-            CLIP_GRAD_NORM = 3
+            CLIP_GRAD_NORM = 10
             torch.nn.utils.clip_grad_norm_(model.fcs_1.parameters(), CLIP_GRAD_NORM)
-            torch.nn.utils.clip_grad_norm_(model.rnn.parameters(), CLIP_GRAD_NORM)
+            torch.nn.utils.clip_grad_norm_(model._rnn.parameters(), CLIP_GRAD_NORM)
             torch.nn.utils.clip_grad_norm_(model._fcs_2.parameters(), CLIP_GRAD_NORM)
             
             scaler.step(opt)

@@ -56,3 +56,5 @@ def get_big_map():
     lats, lons, way_ids = np.array(lats), np.array(lons), np.array(way_ids)
     
     return lats, lons, way_ids
+
+    

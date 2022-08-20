@@ -71,7 +71,7 @@ class BlenderDataloader():
             #maps[:-1,:,:,:] = maps[1:,:,:,:] This lines them up, without it we're actually off by one lagged, which i actually kind of want
             
             # giving maps to the entire chunk, or not at all
-            HAS_MAP_PROB = .7
+            HAS_MAP_PROB = .85
             img_chunk[b,:,:,-80:,:] = maps[:,:,::-1,:] if random.random() < HAS_MAP_PROB else 0 # fliplr
                     
         targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of their off by one
@@ -119,7 +119,7 @@ class BlenderDataloader():
         max_pred_dists_m = avg_speeds_mps * MAX_PRED_S
         speed_mask = pad(pad(np.array(TRAJ_WP_DISTS, dtype=np.float16)))
         speed_mask = (speed_mask <= max_pred_dists_m).astype(np.float16) 
-        # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj. The broadcasting above 'just works' bc np good good
+        # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj.
 
         MAX_ANGLE_TO_PRED = .36 #.18 #.16
         to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)

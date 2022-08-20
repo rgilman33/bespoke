@@ -26,7 +26,7 @@ def reset_drive_style():
     else:
         speed_limit = random.uniform(8, 12) if rr < .05 else random.uniform(12, 18) if rr < .1 else random.uniform(18, 26) # mps
 
-    lateral_kP = .7 #random.uniform(.7, .8)
+    lateral_kP = random.uniform(.75, .95)
     long_kP = random.uniform(.02, .05)
     curve_speed_mult = random.uniform(.7, 1.2)
     turn_slowdown_sec_before = random.uniform(.25, .75)
@@ -75,11 +75,17 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
     roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
 
-    # noise for the map
+    # noise for the map, heading
     num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
     MAPS_NOISE_MAX_DEG = 5
     maps_noise_mult = random.uniform(.001, np.radians(MAPS_NOISE_MAX_DEG))
     maps_noise = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+
+    # noise for the map, position
+    num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
+    MAPS_NOISE_MAX_POS_SHIFT = 4 #m
+    maps_noise_mult = random.uniform(.001, MAPS_NOISE_MAX_POS_SHIFT)
+    maps_noise_position = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
     t0 = time.time()
     dg = bpy.context.evaluated_depsgraph_get()
@@ -162,7 +168,9 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         if overall_frame_counter % refresh_nav_map_freq == 0: # This always has to be called on first frame otherwise small_map is none
             close_buffer = CLOSE_RADIUS # TODO is this correct?
             current_lat, current_lon = cam_loc[0], cam_loc[1]
-            small_map = get_map(lats, lons, way_ids, current_lat, current_lon, 
+            small_map = get_map(lats, lons, way_ids, 
+                                current_lat + maps_noise_position[overall_frame_counter], 
+                                current_lon + maps_noise_position[overall_frame_counter], 
                                 cam_heading+(np.pi/2)+maps_noise[overall_frame_counter], 
                                 close_buffer)
 

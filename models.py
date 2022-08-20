@@ -5,14 +5,23 @@ class ObserverNet(nn.Module):
     def __init__(self):
         super(ObserverNet, self).__init__()
         act = nn.ReLU()
-        drop = nn.Dropout(0.2)
-        self.fcs = nn.Sequential(nn.Linear(512, 256), act, drop, nn.Linear(256, 3)) # error, pitch, yaw
+        not_drop = nn.Identity() #nn.Dropout(0.2)
+        self.fcs = nn.Sequential(nn.Linear(512, 256), act, not_drop, nn.Linear(256, 3)) # error, pitch, yaw
 
     def forward(self, x):
         return self.fcs(x)
 
 VIZ_IX = 5 # viz_ix from 3 (granular) to at least 5, maybe more?
 N_CALIB = 2
+
+def add_noise(activations, std=.1):
+    noise = torch.randn(activations.shape, dtype=activations.dtype).to(device) * std
+    noise += 1 # centered at one w std of std
+    return activations * noise
+
+def dropout_no_rescale(activations, p=.2): 
+    mask = (torch.rand_like(activations) > p).half()
+    return activations * mask
 
 class EffNet(nn.Module):
     def __init__(self, model_arch='efficientnet_b3', is_for_viz=False):
@@ -22,13 +31,22 @@ class EffNet(nn.Module):
 
         backbone_out = self.backbone.num_features #b3 is 1536
         act = nn.ReLU()
-        drop = nn.Dropout(0.2)
+        DROP = 0.2
+        not_drop = nn.Identity()
+        drop = nn.Dropout(DROP)
         self.inner_dim = 512
-        self.fcs_1 = nn.Sequential( nn.Linear(backbone_out + len(aux_properties), self.inner_dim), act, drop)
+        self.fcs_1 = nn.Sequential(nn.Linear(backbone_out + len(aux_properties), self.inner_dim), act, not_drop)
         self.use_rnn = True
         
-        self.rnn = nn.GRU(self.inner_dim, self.inner_dim, 1, batch_first=True)
-        self._fcs_2 = nn.Sequential(nn.Linear(self.inner_dim + N_CALIB, 512), act, drop, nn.Linear(512, N_TARGETS))
+        self._rnn = nn.LSTM(self.inner_dim, self.inner_dim, 1, batch_first=True)
+        # self.fcs_2 = nn.Sequential(nn.Linear(self.inner_dim + self.inner_dim + N_CALIB, 512), act, not_drop, nn.Linear(512, N_TARGETS))
+        self._fcs_2 = nn.Sequential(nn.Linear(self.inner_dim + N_CALIB, 512), act, not_drop, nn.Linear(512, N_TARGETS))
+
+
+        self.hidden_init = nn.Parameter(torch.randn((1,1,self.inner_dim))/10, requires_grad=True)
+        self.cell_init = nn.Parameter(torch.randn((1,1,self.inner_dim))/10, requires_grad=True)
+        self.use_trainable_hidden = True
+        self.h, self.c = None, None
 
         self.obsnet = ObserverNet()
 
@@ -41,16 +59,24 @@ class EffNet(nn.Module):
 
     def convert_backbone_to_sequential(self):
         self.backbone = self.backbone.as_sequential()
-        #self.backbone = ModuleWrapperIgnores2ndArg(self.backbone)
+
+    # def set_random_hidden(self, bs, std=.1):
+    #     self.h = torch.randn((1,bs,self.inner_dim)).half().to(device)*std
 
     def reset_hidden(self, bs):
-        self.h = torch.zeros((1,bs,self.inner_dim)).to(device)
+        self.use_trainable_hidden = True
 
     def activations_hook(self, grad):
         self.gradients = grad.detach().cpu()
 
     def rnn_activations_hook(self, grad):
         self.rnn_gradients = grad.detach().cpu()
+    
+    def set_dropout_prob(self, p):
+        for mm in self.modules():
+            if type(mm) == nn.Dropout:
+                mm.p = p
+                print(mm.p)
 
     def forward(self, x, aux):
         # flatten batch and seq for CNNs
@@ -86,12 +112,23 @@ class EffNet(nn.Module):
             x = self.backbone.classifier(x)
 
         x = torch.cat([x, aux], dim=-1)
-        x = self.fcs_1(x)
+        x_fcs1_out = self.fcs_1(x)
 
         # unpack seq and batch for rnn
-        x = x.reshape(bs, bptt, self.inner_dim)
-        x, self.h = self.rnn(x, self.h)
-        self.h.detach_()
+        x_fcs1_out = x_fcs1_out.reshape(bs, bptt, self.inner_dim)
+
+        if self.use_trainable_hidden:
+            hidden = self.hidden_init.expand(1, bs, self.inner_dim)
+            cell = self.cell_init.expand(1, bs, self.inner_dim)
+            self.use_trainable_hidden = False
+        else:
+            hidden, cell = self.h, self.c
+
+        if self.training and not self.is_for_viz:
+           x_fcs1_out = dropout_no_rescale(x_fcs1_out, p=.2)
+
+        x, h_c = self._rnn(x_fcs1_out, (hidden, cell))
+        self.h, self.c = h_c[0].detach(), h_c[1].detach()
 
         if self.is_for_viz:
             # Viz
@@ -103,7 +140,9 @@ class EffNet(nn.Module):
         # obsnet_out = self.obsnet(x if self.is_for_viz else x.detach()) # obsnet does not get access to calib params, it preds them
         obsnet_out = self.obsnet(x)
 
-        x = torch.cat([x, pitch_yaw], dim=-1) # cat it calib params
+        # x = torch.cat([x, x_fcs1_out, pitch_yaw], dim=-1) # cat in calib params
+        x = torch.cat([x, pitch_yaw], dim=-1) # cat in calib params
+
 
         x = self._fcs_2(x)
         return x, obsnet_out

@@ -16,7 +16,6 @@ OP_UI_BACKGROUND_WIDTH = 1164
 OP_UI_BACKGROUND_HEIGHT = 874
 OP_UI_MARGIN = 300
 
-SEQ_LEN = 116 #232 #24
 N_CHANNELS = 3
 BPTT = 9 #8 #4 #8
 
@@ -85,7 +84,8 @@ device = 'cuda'
 FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
 BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
-EPISODE_LEN = SEQ_LEN * 10
+SEQ_LEN = 116 * 5
+EPISODE_LEN = SEQ_LEN * 2 #10
 RUNS_TO_STORE_PER_PROCESS = 30
 N_RUNNERS = 12
 

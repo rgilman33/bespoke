@@ -117,3 +117,8 @@ def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
 
     return lats, lons, way_ids
 
+# Distance btwn lon lines is a fn of lat. Mult rw lon values by this mult to make it approximately an xy grid eg as we get from blender
+# no need for haversine formula, just make it all an xy grid, easier to reason about This is totally fine for how we're using maps, and 
+# our big map distances are on the order of tens of km. 
+def get_lon_mult(lat_deg):
+    return np.cos(np.radians(lat_deg))

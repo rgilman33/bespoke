@@ -322,7 +322,7 @@ def setup_map():
     # at lane width of 1.5, drive in middle of rd, at width 4.0 drive 2.4m in
     # vehicle_perpendicular_shift = (lane_width * .54) if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
 
-    lane_centerish = lane_width * .53 #.54
+    lane_centerish = lane_width * .54
     vehicle_perpendicular_shift = min(lane_centerish, 1.7) if is_only_yellow_lined else lane_centerish if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
     get_node("vehicle_perpendicular_shift", get_postion_along_loop_nodes).outputs["Value"].default_value = vehicle_perpendicular_shift
 

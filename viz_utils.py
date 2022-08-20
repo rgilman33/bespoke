@@ -97,23 +97,32 @@ from models import EffNet
 from input_prep import *
 
 def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
-    cudnn_was_enabled = torch.backends.cudnn.enabled
-    torch.backends.cudnn.enabled=False # otherwise can't do backward through RNN w cudnn
+    if do_gradcam:
+        cudnn_was_enabled = torch.backends.cudnn.enabled
+        torch.backends.cudnn.enabled=False # otherwise can't do backward through RNN w cudnn
 
-    m = EffNet(model_arch="efficientnet_b3", is_for_viz=True).to(device)
-    m.load_state_dict(torch.load(f"{BESPOKE_ROOT}/models/m_{model_stem}.torch"))
+    m = EffNet(model_arch="efficientnet_b3", is_for_viz=do_gradcam).to(device)
+    m.load_state_dict(torch.load(f"{BESPOKE_ROOT}/models/m_{model_stem}.torch"), strict=False)
     m.eval()
     bs = 1
     m.reset_hidden(bs)
-    m.convert_backbone_to_sequential() # required for the viz version of the model
+
+    if do_gradcam:
+        m.convert_backbone_to_sequential() # required for the viz version of the model
 
     rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs = [], [], [], [], [], [], [], []
-    chunk_len, ix = 24, 0
+    chunk_len, ix = 48, 0 # 24, 0
+    counter = 0
 
     while ix < len(img):
+        # if counter%10==0:
+        #     m.reset_hidden(bs)
+        # counter+=1
+
         aux_ = pad(aux[ix:ix+chunk_len]) # current speed is important!!!
         img_ = pad(img[ix:ix+chunk_len])
-        ix += chunk_len
+        #img_ = aug_imgs(img_) # this is useful for optimizing our img aug
+
         img_, aux_ = prep_inputs(img_, aux_)
 
         with torch.cuda.amp.autocast():
@@ -136,6 +145,9 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
                 rnn_grads.append(m.rnn_gradients[0].numpy()) #torch.Size([24, 512])
                 
             del wp_angles
+
+        ix += chunk_len
+        
             
     wp_angles_all = np.concatenate(wp_angles_all)
     wp_headings_all = np.concatenate(wp_headings_all)
@@ -146,9 +158,9 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         cnn_activations, cnn_grads = np.concatenate(cnn_activations, axis=0), np.concatenate(cnn_grads, axis=0)
         rnn_activations, rnn_grads = np.concatenate(rnn_activations, axis=0), np.concatenate(rnn_grads, axis=0)
         
-    seqlen, n_acts = rnn_activations.shape
-    rnn_activations = rnn_activations.reshape(seqlen, 32, 16)
-    rnn_grads = rnn_grads.reshape(seqlen, 32, 16)
+        seqlen, n_acts = rnn_activations.shape
+        rnn_activations = rnn_activations.reshape(seqlen, 32, 16)
+        rnn_grads = rnn_grads.reshape(seqlen, 32, 16)
 
     # a bit dumb, have to pad before denorming
     wp_angles_all = np.expand_dims(wp_angles_all,0) * TARGET_NORM.cpu().numpy()
@@ -158,7 +170,8 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     wp_curvatures_all = np.expand_dims(wp_curvatures_all,0) * TARGET_NORM_CURVATURES
     wp_curvatures_all = wp_curvatures_all[0] 
 
-    torch.backends.cudnn.enabled = cudnn_was_enabled
+    if do_gradcam:
+        torch.backends.cudnn.enabled = cudnn_was_enabled
 
     return wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
 
@@ -186,10 +199,11 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
 
         speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this max() necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
 
+        # traj targets
         if wp_angles_targets is not None:
             r = draw_wps(r, wp_angles_targets[i], color=(100, 200, 200), thickness=-1, speed_mps=speed_mps)
 
-        # wps
+        # traj preds
         traj = wp_angles_pred[i]
         r = draw_wps(r, traj, speed_mps=speed_mps)
 
