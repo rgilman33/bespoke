@@ -193,7 +193,7 @@ def get_curvatures_from_headings_batch(headings):
 
 
 def tire_angles_to_max_speeds(tire_angles):
-    magic = 3.8 #5.0 # even the official formula has a magic number. We're just taking this from our own runs. Five was human run.
+    magic = 4.1 #3.8 #5.0 # even the official formula has a magic number. We're just taking this from our own runs. Five was human run.
     max_speeds = np.sqrt(1/(abs(tire_angles)+.0001)) * magic # units is mph bc that's how we eyeballed it
     max_speeds = mph_to_mps(max_speeds)
     return max_speeds
@@ -285,10 +285,10 @@ def get_random_roll_noise(window_size=20, num_passes=2):
     return roll_noise
 
 
-MAX_CCS_UNROLL_ACCEL = 1.0
+MAX_CCS_UNROLL_ACCEL = .5 #1.0
 class CurveConstrainedSpeedCalculator():
     def __init__(self):
-        self.curve_speeds_history = []
+        self.curve_speeds_history = [30 for _ in range(20)]
         self.prev_commanded_ccs = 30
     
     def step(self, wp_curvatures, current_speed):
