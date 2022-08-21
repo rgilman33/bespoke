@@ -278,3 +278,20 @@ def get_random_roll_noise(window_size=20, num_passes=2):
         roll_noise = moving_average(roll_noise, 20)
     roll_noise = roll_noise / abs(roll_noise).max()
     return roll_noise
+
+
+class CurveConstrainedSpeedCalculator():
+    def __init__(self):
+        self.curve_speeds_history = []
+    
+    def step(self, wp_curvatures, current_speed):
+        # Curve constrained speed
+        curve_constrained_speed_mps = get_curve_constrained_speed(wp_curvatures, current_speed)
+        self.curve_speeds_history.append(curve_constrained_speed_mps)
+        
+        CURVE_SPEED_UNROLL_DELAY_S = 3.0
+        FPS = 20
+        CURVE_SPEED_UNROLL_DELAY_IX = int(CURVE_SPEED_UNROLL_DELAY_S*FPS)
+        curve_constrained_speed_mps = min(self.curve_speeds_history[-CURVE_SPEED_UNROLL_DELAY_IX:])
+
+        return curve_constrained_speed_mps
