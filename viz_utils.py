@@ -189,6 +189,8 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
     cutoff = 2.4e-6 # adjust this manually when necessary
     MAX_CLIP_TE_VIZ = .2 # viz will be white at this point
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{run_id}_m_{model_stem}_gradcam.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
+    curve_constrained_speed_calculator = CurveConstrainedSpeedCalculator()
+    prev_torque = 0
 
     for i in range(len(img)-1):
 
@@ -210,6 +212,10 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
         target_wp_angle, wp_dist, _ = get_target_wp(traj, speed_mps)
         r = draw_wps(r, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=(50, 255, 50), thickness=-1)
 
+        torque = np.degrees(target_wp_angle) * mps_to_kph(speed_mps)**2
+        td = torque - prev_torque
+        prev_torque = torque
+
         close_long_wp_dist, far_long_wp_dist = CURVE_PREP_SLOWDOWN_S_MIN*speed_mps, CURVE_PREP_SLOWDOWN_S_MAX*speed_mps
         close_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(traj, close_long_wp_dist)
         far_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(traj, far_long_wp_dist)
@@ -219,9 +225,13 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
         r[:50, :120, :] = 0
         headings = wp_headings_pred[i]
         curvatures = wp_curvatures_pred[i]
-        curve_limited_speed = get_curve_constrained_speed(curvatures, speed_mps)
-        r = cv2.putText(r, f"cls (mph): {round(mps_to_mph(curve_limited_speed))}", (0, 15), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1)
+        curve_constrained_speed = curve_constrained_speed_calculator.step(curvatures, speed_mps)
+        r = cv2.putText(r, f"ccs (mph): {round(mps_to_mph(curve_constrained_speed))}", (0, 15), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1)
         r = cv2.putText(r, f"s (mph): {round(mps_to_mph(speed_mps))}", (0, 30), cv2.FONT_HERSHEY_SIMPLEX, .5, (255, 255, 255), 1)
+        TORQUE_MAX, TORQUE_DELTA_MAX = 10_000, 800 #TODO these should be integrated w OP
+        torque, td = abs(torque), abs(td)
+        torque_text_color = (255, 255, 255) if (torque<TORQUE_MAX and td<TORQUE_DELTA_MAX) else (255, 100, 100)
+        r = cv2.putText(r, f"t, td: {round(torque)}, {round(td)}", (0, 45), cv2.FONT_HERSHEY_SIMPLEX, .5, torque_text_color, 1)
 
         # Guidelines
         r[:,w2-1:w2+1,:] -= 20 # darker line vertical center

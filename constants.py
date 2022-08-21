@@ -47,6 +47,7 @@ mps_to_kph = lambda x: (x/1000)*60*60
 kph_to_mps = lambda x: (x*1000)/(60*60)
 mps_to_mph = lambda x: x*2.23694
 mph_to_mps = lambda x : x*.44704
+kph_to_mph = lambda x : x*0.621371
 
 # 6.3, still using 6.7
 min_dist_lookup = [ # TODO change this name to be more accurate

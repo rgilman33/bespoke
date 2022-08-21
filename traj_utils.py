@@ -230,7 +230,12 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_AC
 
 def get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACCEL):
     # returns mps
-    return min([_get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=s, max_accel=MAX_ACCEL) for s in [0.1, .5, 1.0, 1.5, 2.0]])
+    ccs = min([_get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=s, max_accel=MAX_ACCEL) for s in [0.1, .5, 1.0, 1.5, 2.0]])
+
+    # this magic is in addition to the magic number in curve-to-speeds formula above
+    ccs *= np.interp(mps_to_mph(current_speed_mps), [20, 40], [1.0, 1.12]) # rw driving we seem to accept more torque at higher speeds? maybe not, maybe rds are generally banked at higher speeds?
+    
+    return ccs
 
 # def derive_wp_dists(wp_angles):
 #     wp_dists = [6]
@@ -280,18 +285,25 @@ def get_random_roll_noise(window_size=20, num_passes=2):
     return roll_noise
 
 
+MAX_CCS_UNROLL_ACCEL = 1.0
 class CurveConstrainedSpeedCalculator():
     def __init__(self):
         self.curve_speeds_history = []
+        self.prev_commanded_ccs = 30
     
     def step(self, wp_curvatures, current_speed):
         # Curve constrained speed
         curve_constrained_speed_mps = get_curve_constrained_speed(wp_curvatures, current_speed)
         self.curve_speeds_history.append(curve_constrained_speed_mps)
         
-        CURVE_SPEED_UNROLL_DELAY_S = 3.0
+        CURVE_SPEED_UNROLL_DELAY_S = 5.0
         FPS = 20
         CURVE_SPEED_UNROLL_DELAY_IX = int(CURVE_SPEED_UNROLL_DELAY_S*FPS)
         curve_constrained_speed_mps = min(self.curve_speeds_history[-CURVE_SPEED_UNROLL_DELAY_IX:])
+
+        # don't accel after a turn too quickly
+        max_speed_increase_per_step = MAX_CCS_UNROLL_ACCEL / FPS
+        curve_constrained_speed_mps = min(curve_constrained_speed_mps, self.prev_commanded_ccs+max_speed_increase_per_step)
+        self.prev_commanded_ccs = curve_constrained_speed_mps
 
         return curve_constrained_speed_mps
