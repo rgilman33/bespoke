@@ -120,6 +120,6 @@ def clear_obs_per_sec():
 
 
 # These are used in rw rollout to get avg, to smooth out long
-CURVE_PREP_SLOWDOWN_S_MIN, CURVE_PREP_SLOWDOWN_S_MAX = 5., 5. #2.5, 3.5 TODO this will go away. Seconds will depend on velocity delta to be covered
+CURVE_PREP_SLOWDOWN_S_MIN, CURVE_PREP_SLOWDOWN_S_MAX = 6., 6. #2.5, 3.5 TODO this will go away. Seconds will depend on velocity delta to be covered
 
-MAX_ACCEL = .75 #1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
+MAX_ACCEL = .6 #1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel

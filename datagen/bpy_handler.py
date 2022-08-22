@@ -11,9 +11,12 @@ def linear_to_cos(p):
     # p is linear from 0 to 1. Outputs smooth values from 0 to 1 to back to zero
     return (np.cos(p*np.pi*2)*-1 + 1) / 2
 
+# def linear_to_sin_decay(p):
+#     # p is linear from 0 to 1. Outputs smooth values from 1 to 0
+#     return np.sin(p*np.pi+np.pi/2)
 def linear_to_sin_decay(p):
     # p is linear from 0 to 1. Outputs smooth values from 1 to 0
-    return np.sin(p*np.pi+np.pi/2)
+    return np.sin(p*np.pi+np.pi/2) / 2 + .5
 
 def reset_drive_style():
     global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before, max_accel
@@ -132,7 +135,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
             if i==0: dist_to_closest_wp = dist(cam_loc, wp)
 
             if abs(shift_x)>0 or abs(shift_y)>0:
-                perc_into_undaggering = wp_dist / meters_to_undagger
+                perc_into_undaggering = wp_dist / meters_to_undagger # the corrective traj
                 p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
                 wp = [wp[0] + shift_x*p, wp[1] + shift_y*p, wp[2]]
             

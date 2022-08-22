@@ -216,7 +216,7 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_AC
     tire_angles = curvatures * CRV_WHEELBASE
     max_speeds_at_each_wp = tire_angles_to_max_speeds(tire_angles)
 
-    curve_preempt_m = preempt_sec * current_speed_mps
+    curve_preempt_m = preempt_sec * current_speed_mps # we want to be going the desired speed BEFORE we hit the wp, not AT the wp, is that true?
     max_speeds_at_each_wp_preempted = np.interp(np.array(TRAJ_WP_DISTS) + curve_preempt_m, TRAJ_WP_DISTS, max_speeds_at_each_wp)
     # For each wp, there is a max speed we can be going now to make sure we're going the proper speed when we hit that wp
     current_max_speed_w_respect_to_each_wp = np.sqrt(np.array(TRAJ_WP_DISTS) * max_accel) + max_speeds_at_each_wp_preempted #max_speeds_at_each_wp # adds elementwise
@@ -285,11 +285,10 @@ def get_random_roll_noise(window_size=20, num_passes=2):
     return roll_noise
 
 
-MAX_CCS_UNROLL_ACCEL = .5 #1.0
+MAX_CCS_UNROLL_ACCEL = .6 #1.0
 class CurveConstrainedSpeedCalculator():
     def __init__(self):
-        self.curve_speeds_history = [30 for _ in range(20)]
-        self.prev_commanded_ccs = 30
+        self.reset()
     
     def step(self, wp_curvatures, current_speed):
         # Curve constrained speed
@@ -307,3 +306,7 @@ class CurveConstrainedSpeedCalculator():
         self.prev_commanded_ccs = curve_constrained_speed_mps
 
         return curve_constrained_speed_mps
+
+    def reset(self):
+        self.curve_speeds_history = [30 for _ in range(20)]
+        self.prev_commanded_ccs = 30

@@ -319,11 +319,16 @@ def setup_map():
     ONLY_YELLOW_LINES_PROB = .15 # applied after lanelines prob
     is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and not wide_shoulder_add>0 and lane_width<3.6
 
+    IS_COUNTRY_MTN_PROB = .15 # interspersed very curvy with totally straight. Train slowdowns and sharp curves.
+    is_country_mtn = random.random() < IS_COUNTRY_MTN_PROB and lane_width < 3.6 and not (is_highway or is_just_straight)
+
+    get_node("has_turnoffs", main_map_nodes).outputs["Value"].default_value = 0 if is_country_mtn else 1 # when too curvy, turnoffs interfere w rd
+
     # at lane width of 1.5, drive in middle of rd, at width 4.0 drive 2.4m in
     # vehicle_perpendicular_shift = (lane_width * .54) if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
 
-    lane_centerish = lane_width * .54
-    vehicle_perpendicular_shift = min(lane_centerish, 1.7) if is_only_yellow_lined else lane_centerish if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
+    lane_centerish = lane_width * .53
+    vehicle_perpendicular_shift = lane_centerish if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
     get_node("vehicle_perpendicular_shift", get_postion_along_loop_nodes).outputs["Value"].default_value = vehicle_perpendicular_shift
 
     get_node("loop_random_seed_x", loop_gen_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
@@ -332,13 +337,13 @@ def setup_map():
 
     get_node("loop_noise_scale_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.0005, .0012)
     get_node("loop_noise_scale_1", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.0045, .0055)
-    get_node("loop_noise_scale_2", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.01, .015) 
+    get_node("loop_noise_scale_2", loop_gen_nodes).outputs["Value"].default_value = random.uniform(.006, .011) if is_country_mtn else random.uniform(.01, .015) 
 
-    get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 100) if (is_just_straight or random.random() < .33) else random.uniform(800, 1200)
+    get_node("loop_noise_mult_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 50) if (is_just_straight or random.random() < .33 or is_country_mtn) else random.uniform(800, 1200)
     is_wide_laned = lane_width>3.3 or wide_shoulder_add>0
-    nm1 = 0 if (random.random()<.05 or is_just_straight) else random.uniform(100, (200 if is_wide_laned else 300))
+    nm1 = 0 if (random.random()<.05 or is_just_straight or is_country_mtn) else random.uniform(100, (200 if is_wide_laned else 300))
     nm2_r = random.random()
-    nm2 = 0 if (nm2_r<.8 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.97 else random.uniform(60, 100)
+    nm2 = random.uniform(200,300) if is_country_mtn else 0 if (nm2_r<.8 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.97 else random.uniform(60, 100)
     get_node("loop_noise_mult_1", loop_gen_nodes).outputs["Value"].default_value = nm1
     get_node("loop_noise_mult_2", loop_gen_nodes).outputs["Value"].default_value = nm2
     get_node("loop_noise_mult_z_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 220)
