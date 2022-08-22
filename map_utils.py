@@ -98,6 +98,10 @@ def get_map(lats, lons, way_ids, current_lat, current_lon, vehicle_heading, clos
     return small_map
 
 
+def linear_to_sin(p):
+    # p is linear from 0 to 1. Outputs smooth values from 0 to 1
+    return (np.sin(p*np.pi+np.pi/2) / 2 + .5)*-1 + 1
+
 # only used by blender
 def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
     for i in range(n_noise_rds):
@@ -109,8 +113,16 @@ def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
         if random.random()>.5: end_lat_add*=-1
         if random.random()>.5: end_lon_add*=-1
 
-        rd_lats = [start_lat+(end_lat_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
-        rd_lons = [start_lon+(end_lon_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
+        r = random.random()
+        if r < .3: # just altering if make lat lon or none curvy. A hack to get curvature in noise rds
+            rd_lats = [start_lat+(end_lat_add*linear_to_sin(p)) for p in [0, .2, .4, .6, .8, 1.0]]
+            rd_lons = [start_lon+(end_lon_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
+        elif r < .6:
+            rd_lats = [start_lat+(end_lat_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
+            rd_lons = [start_lon+(end_lon_add*linear_to_sin(p)) for p in [0, .2, .4, .6, .8, 1.0]]
+        else:
+            rd_lats = [start_lat+(end_lat_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
+            rd_lons = [start_lon+(end_lon_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
         lats += rd_lats
         lons += rd_lons
         way_ids += ([i+3]* len(rd_lats)) # just making sure isn't same id as real rd

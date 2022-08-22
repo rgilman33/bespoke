@@ -121,7 +121,7 @@ class BlenderDataloader():
         speed_mask = (speed_mask <= max_pred_dists_m).astype(np.float16) 
         # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj.
 
-        MAX_ANGLE_TO_PRED = .36 #.18 #.16
+        MAX_ANGLE_TO_PRED = .48 #.36 #.18 #.16
         to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
         to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
 

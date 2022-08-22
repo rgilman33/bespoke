@@ -80,7 +80,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
 
     if rd_is_lined:
         white_lines_opacity.outputs["Value"].default_value = 0 if is_only_yellow_lined else random.uniform(.6, 1.05)
-        yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.7, 1.05) if is_only_yellow_lined else random.uniform(.6, 1.05) 
+        yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.5, 1.05) 
     else:
         white_lines_opacity.outputs["Value"].default_value = 0
         yellow_lines_opacity.outputs["Value"].default_value = 0
@@ -304,13 +304,13 @@ def setup_map():
     """
     Changes the rd network. Is a targets-changing thing.
     """
-    HAS_LANELINES_PROB = .7
+    HAS_LANELINES_PROB = .8
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
     is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, less curvy
     wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0 # this will cause to always have white line support
 
-    is_just_straight = random.random()<.04
+    is_just_straight = random.random()<.02
 
     lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.8, 3.9) if rd_is_lined else random.uniform(1.6, 3.3)
     get_node("lane_width_master_in", main_map_nodes).outputs["Value"].default_value = lane_width
@@ -331,7 +331,7 @@ def setup_map():
     vehicle_perpendicular_shift = lane_centerish if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
     get_node("vehicle_perpendicular_shift", get_postion_along_loop_nodes).outputs["Value"].default_value = vehicle_perpendicular_shift
 
-    get_node("loop_random_seed_x", loop_gen_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
+    get_node("loop_random_seed_x", loop_gen_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6) # TODO different noises should get their own seeds, to increase combinations
     get_node("loop_random_seed_y", loop_gen_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
     get_node("loop_random_seed_z", loop_gen_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
 

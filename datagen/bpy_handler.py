@@ -86,7 +86,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
 
     # noise for the map, position
     num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-    MAPS_NOISE_MAX_POS_SHIFT = 4 #m
+    MAPS_NOISE_MAX_POS_SHIFT = 6 #m
     maps_noise_mult = random.uniform(.001, MAPS_NOISE_MAX_POS_SHIFT)
     maps_noise_position = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
