@@ -343,7 +343,7 @@ def setup_map():
     is_wide_laned = lane_width>3.3 or wide_shoulder_add>0
     nm1 = 0 if (random.random()<.05 or is_just_straight or is_country_mtn) else random.uniform(100, (200 if is_wide_laned else 300))
     nm2_r = random.random()
-    nm2 = random.uniform(200,300) if is_country_mtn else 0 if (nm2_r<.8 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.97 else random.uniform(60, 100)
+    nm2 = random.uniform(100,200) if is_country_mtn else 0 if (nm2_r<.8 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.97 else random.uniform(60, 100)
     get_node("loop_noise_mult_1", loop_gen_nodes).outputs["Value"].default_value = nm1
     get_node("loop_noise_mult_2", loop_gen_nodes).outputs["Value"].default_value = nm2
     get_node("loop_noise_mult_z_0", loop_gen_nodes).outputs["Value"].default_value = random.uniform(0, 220)

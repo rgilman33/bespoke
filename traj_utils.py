@@ -129,12 +129,13 @@ def get_headings_from_traj(wp_angles, wp_dists):
     wp_ys = np.cos(wp_angles) * wp_dists
 
     # these headings are at half-wp marks
-    xd_over_yd = (wp_xs[1:] - wp_xs[:-1])/(wp_ys[1:] - wp_ys[:-1])
-    headings = np.arctan(xd_over_yd) 
+    #xd_over_yd = (wp_xs[1:] - wp_xs[:-1])/(wp_ys[1:] - wp_ys[:-1])
+    #headings = np.arctan(xd_over_yd) 
+    headings = np.arctan2(wp_xs[1:] - wp_xs[:-1], wp_ys[1:] - wp_ys[:-1])
     # cat a zero on the front bc we know the heading is zero at vehicle, by definition
-    headings = np.concatenate([np.array([0], dtype=np.float16), headings])
+    headings = np.concatenate([np.array([0], dtype=np.float32), headings])
     
-    # interp back to our original wp dists so they're nice and aligned w our other data
+    # interp back to our original wp dists so they're aligned w our other data
     headings = np.interp(TRAJ_WP_DISTS, HEADING_BPS, headings)
 
     return headings
@@ -310,3 +311,14 @@ class CurveConstrainedSpeedCalculator():
     def reset(self):
         self.curve_speeds_history = [30 for _ in range(20)]
         self.prev_commanded_ccs = 30
+
+from input_prep import *
+def get_speed_mask(aux):
+    MAX_PRED_S = 6.0
+    avg_speeds_mps = kph_to_mps(aux[:,:,2:3].mean(axis=1, keepdims=True))
+    max_pred_dists_m = avg_speeds_mps * MAX_PRED_S
+    speed_mask = pad(pad(np.array(TRAJ_WP_DISTS, dtype=np.float16)))
+    speed_mask = (speed_mask <= max_pred_dists_m).astype(np.float16) 
+    # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj.
+
+    return speed_mask

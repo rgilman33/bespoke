@@ -123,6 +123,8 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         img_ = pad(img[ix:ix+chunk_len])
         #img_ = aug_imgs(img_) # this is useful for optimizing our img aug
 
+        speed_mask = get_speed_mask(pad(aux))
+
         img_, aux_ = prep_inputs(img_, aux_)
 
         with torch.cuda.amp.autocast():
@@ -138,8 +140,9 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
                 cnn_activations.append(m.activations.mean(1, keepdim=True).numpy()) # (24, 1, 13, 80), mean of channels
                 rnn_activations.append(m.rnn_activations[0].numpy()) #torch.Size([24, 512]), 
                 
-                wp_angles[:,:,GRADCAM_WP_IX].sum().backward() # gradients w respect to lateral preds
-                #obsnet_out[:,:,0].sum().backward() # gradients w respect to undertainty preds
+                #wp_angles[:,:,GRADCAM_WP_IX].sum().backward() # gradients w respect to lateral preds
+
+                (wp_angles * torch.from_numpy(speed_mask).to(device)).mean().backward()
                 
                 cnn_grads.append(m.gradients.mean(1, keepdim=True).numpy())
                 rnn_grads.append(m.rnn_gradients[0].numpy()) #torch.Size([24, 512])
@@ -186,7 +189,7 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
     height*= 3 if add_charts else 2 # stacking two, and charts
     width += 50 # for rnn gradcam
     fps = 20
-    cutoff = 2.4e-6 # adjust this manually when necessary
+    cutoff = 2.4e-8 #2.4e-6 # adjust this manually when necessary
     MAX_CLIP_TE_VIZ = .2 # viz will be white at this point
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{run_id}_m_{model_stem}_gradcam.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
     curve_constrained_speed_calculator = CurveConstrainedSpeedCalculator()
