@@ -78,25 +78,25 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
     roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
 
+    gps_bad = random.random() < .05
     # noise for the map, heading
     num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-    MAPS_NOISE_MAX_DEG = 5
-    maps_noise_mult = random.uniform(.001, np.radians(MAPS_NOISE_MAX_DEG))
+    maps_noise_mult = random.uniform(np.radians(5), np.radians(25)) if gps_bad else random.uniform(.001, np.radians(5))
     maps_noise = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
     # noise for the map, position
     num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-    MAPS_NOISE_MAX_POS_SHIFT = 6 #m
-    maps_noise_mult = random.uniform(.001, MAPS_NOISE_MAX_POS_SHIFT)
+    maps_noise_mult = random.uniform(10, 50) if gps_bad else random.uniform(.001, 10)
     maps_noise_position = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
     t0 = time.time()
+    global lats, lons, way_ids
     dg = bpy.context.evaluated_depsgraph_get()
     cone = bpy.data.objects["Cone"].evaluated_get(dg)
     curve_pos = [(d.vector[0], d.vector[1]) for d in cone.data.attributes["curve_position"].data]
-    global lats, lons, way_ids
-    lats, lons, way_ids = [d[0] for d in curve_pos], [d[1] for d in curve_pos], [1 for _ in range(len(curve_pos))]
-
+    way_ids = [d.value for d in cone.data.attributes["way_id"].data]
+    lats, lons = [d[0] for d in curve_pos], [d[1] for d in curve_pos]
+    assert len(lats) == len(way_ids)
     lats, lons, way_ids = add_noise_rds_to_map(lats, lons, way_ids)
 
     lats = np.array(lats, dtype='float64')
@@ -124,7 +124,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         cam_loc = cube.data.attributes["cam_loc"].data[0].vector
         cam_rotation = cube.data.attributes["cam_heading"].data[0].vector #pitch, roll, yaw(heading). Roll always flat. in flat town pitch always flat. yaw==heading.
         cam_normal = cube.data.attributes["cam_normal"].data[0].vector
-        sec_to_undagger = 3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
+        sec_to_undagger = 2 #3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
         meters_to_undagger = current_speed_mps * sec_to_undagger
 
         cam_heading = cam_rotation[2]+(np.pi/2)
@@ -157,7 +157,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
 
         # target wp close to vehicle, used for steering AP to keep it tight on traj TODO consolidate w above apparatus
         wp = cube.data.attributes[f"wpcloseposition"].data[0].vector 
-        if abs(shift_x)>0 or abs(shift_y)>0:
+        if abs(shift_x)>0 or abs(shift_y)>0: #TODO is this correct?
             CLOSE_WP_DIST = 3
             perc_into_undaggering = CLOSE_WP_DIST / meters_to_undagger
             p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)

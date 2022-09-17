@@ -64,6 +64,7 @@ def draw_small_map(lats, lons, way_ids):
     is_last_node_on_way_filter = (way_ids[:-1] != way_ids[1:])
     ixs_of_last_nodes_on_ways = list(is_last_node_on_way_filter.nonzero()[0]+1) # this is actually first node of next way?
     ixs_of_last_nodes_on_ways = [0] + ixs_of_last_nodes_on_ways + [len(lats)]
+    #print([(way_ids[i], lats[i]) for i in range(len(lats))])
     
     small_map = np.zeros((LAT_SZ_PX, LON_SZ_PX, 3), dtype='uint8')    
     pts = np.stack([lats, lons], axis=-1)
@@ -125,7 +126,7 @@ def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
             rd_lons = [start_lon+(end_lon_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
         lats += rd_lats
         lons += rd_lons
-        way_ids += ([i+3]* len(rd_lats)) # just making sure isn't same id as real rd
+        way_ids += ([i+300]* len(rd_lats)) # just making sure isn't same id as real rds HACK this whole fn is hacky. beware.
 
     return lats, lons, way_ids
 

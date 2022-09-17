@@ -72,7 +72,7 @@ class BlenderDataloader():
             
             # giving maps to the entire chunk, or not at all
             HAS_MAP_PROB = .85
-            img_chunk[b,:,:,-80:,:] = maps[:,:,::-1,:] if random.random() < HAS_MAP_PROB else 0 # fliplr
+            img_chunk[b,:,:,-80:,:] = maps[:,:,::-1,:] if random.random() < HAS_MAP_PROB else 0 # fliplr #TODO don't hardcode map width
                     
         targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of their off by one
         aux_chunk[:,:-1,:] = aux_chunk[:,1:,:] #TODO should maybe do this further upstream actually
@@ -113,7 +113,7 @@ class BlenderDataloader():
 
         wp_curvatures = get_curvatures_from_headings_batch(wp_headings)
 
-        # mask out wps more than n seconds ahead
+        # mask out loss for wps more than n seconds ahead
         speed_mask = get_speed_mask(aux)
 
         MAX_ANGLE_TO_PRED = .48 #.36 #.18 #.16

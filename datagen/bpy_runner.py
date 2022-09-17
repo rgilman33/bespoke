@@ -13,6 +13,11 @@ argv = argv[argv.index("--") + 1:]  # get all args after "--" ['example', 'args'
 dataloader_id = argv[0]
 dataloader_root = f"{BLENDER_MEMBANK_ROOT}/dataloader_{dataloader_id}"
 
+def random_uniform(_min, _max):
+    return random.uniform(_min, _max)
+
+bpy.app.driver_namespace['random_uniform'] = random_uniform
+
 if __name__ == "__main__":
     for i in range(10_000_000):
         overall_frame_counter = 0

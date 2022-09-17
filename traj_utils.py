@@ -194,7 +194,7 @@ def get_curvatures_from_headings_batch(headings):
 
 
 def tire_angles_to_max_speeds(tire_angles):
-    magic = 4.1 #3.8 #5.0 # even the official formula has a magic number. We're just taking this from our own runs. Five was human run.
+    magic = 4.1 #3.8 #5.0 # even the official formula has a magic number. We're just taking this from our own runs. 5.0 was estimated from human run as "correct" value.
     max_speeds = np.sqrt(1/(abs(tire_angles)+.0001)) * magic # units is mph bc that's how we eyeballed it
     max_speeds = mph_to_mps(max_speeds)
     return max_speeds
@@ -312,7 +312,9 @@ class CurveConstrainedSpeedCalculator():
         self.curve_speeds_history = [30 for _ in range(20)]
         self.prev_commanded_ccs = 30
 
-from input_prep import *
+# from input_prep import * this will make torch be imported, don't do this then we have to install in blender's python, hassle
+pad = lambda x: np.expand_dims(x,0)
+
 def get_speed_mask(aux):
     MAX_PRED_S = 6.0
     avg_speeds_mps = kph_to_mps(aux[:,:,2:3].mean(axis=1, keepdims=True))

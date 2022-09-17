@@ -292,7 +292,6 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             logger.log({f"consistency losses/{dataloader.path_stem}_torque_delta_loss":torque_delta_loss.item()})
 
         if backwards:
-            # Backward
             scaler.scale(loss).backward() 
             scaler.unscale_(opt)
 
