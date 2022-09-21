@@ -391,7 +391,7 @@ def setup_map():
     # #bpy.data.objects["Camera"].location[2] = random.uniform(1.45, 1.65)*-1
     # #bpy.data.objects["Camera"].location[1] = random.uniform(-.2, 0.)
     
-    BASE_PITCH = 88
+    BASE_PITCH = 89
     BASE_YAW = 180
     pitch_perturbation = random.uniform(-2, 2)
     yaw_perturbation = random.uniform(-2, 2)

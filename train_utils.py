@@ -157,9 +157,9 @@ def add_trajs_to_img(img, pred, targets, speed_mps=None):
 
 LOSS_EPS = 1 - 1/200 
 
-avg_control_loss = .003
-avg_td_loss = 120
-avg_torque_loss = 170
+avg_control_loss = .01
+avg_td_loss = 15
+avg_torque_loss = 2000
 avg_te_loss = .02
 
 # we're saying we don't care as much about the further wps, regardless of angle

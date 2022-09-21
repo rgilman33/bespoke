@@ -7,9 +7,9 @@ webcam_img_width = 640
 IMG_WIDTH = webcam_img_width
 
 BOTTOM_CHOP = 150
-TOP_CHOP = 150 + 80
+TOP_CHOP = 150 + 60
 
-IMG_HEIGHT = 100 #
+IMG_HEIGHT = 120 #
 assert IMG_HEIGHT == (webcam_img_height - TOP_CHOP - BOTTOM_CHOP)
 
 OP_UI_BACKGROUND_WIDTH = 1164
@@ -123,3 +123,7 @@ def clear_obs_per_sec():
 CURVE_PREP_SLOWDOWN_S_MIN, CURVE_PREP_SLOWDOWN_S_MAX = 6., 6. #2.5, 3.5 TODO this will go away. Seconds will depend on velocity delta to be covered
 
 MAX_ACCEL = .6 #1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
+
+MAP_WIDTH = 80
+assert MAP_WIDTH%2==0
+MAP_HEIGHT = IMG_HEIGHT

@@ -194,7 +194,7 @@ def get_curvatures_from_headings_batch(headings):
 
 
 def tire_angles_to_max_speeds(tire_angles):
-    magic = 4.1 #3.8 #5.0 # even the official formula has a magic number. We're just taking this from our own runs. 5.0 was estimated from human run as "correct" value.
+    magic = 4.5 #4.1 #3.8 #5.0 # even the official formula has a magic number. We're just taking this from our own runs. 5.0 was estimated from human run as "correct" value.
     max_speeds = np.sqrt(1/(abs(tire_angles)+.0001)) * magic # units is mph bc that's how we eyeballed it
     max_speeds = mph_to_mps(max_speeds)
     return max_speeds

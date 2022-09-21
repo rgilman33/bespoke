@@ -56,7 +56,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     
     targets_container = np.zeros((SEQ_LEN, N_WPS*3), dtype=np.float32)
     aux_container = np.zeros((SEQ_LEN, N_AUX), dtype=np.float32)
-    maps_container = np.zeros((SEQ_LEN, 100, 80, 3), dtype='uint8')
+    maps_container = np.zeros((SEQ_LEN, MAP_HEIGHT, MAP_WIDTH, 3), dtype='uint8')
 
     counter = 0
     overall_frame_counter = 0

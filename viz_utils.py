@@ -73,7 +73,7 @@ def combine_img_cam(act_grad, img, cutoff):
 def get_rnn_gradcam(act, grad, img, cutoff=.1):
     
     ag = (act * grad).astype('float32')
-    ag = cv2.resize(ag, (int(IMG_HEIGHT/2), IMG_HEIGHT), interpolation=cv2.INTER_AREA)
+    ag = cv2.resize(ag, (50, IMG_HEIGHT), interpolation=cv2.INTER_AREA) # width chosen manually
     # at this point they're about -.5 to .5
     
     ag = ag*2 # TODO kindof a trap, just hardcoding for now to get more in the range of -1 to 1
@@ -151,7 +151,6 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
 
         ix += chunk_len
         
-            
     wp_angles_all = np.concatenate(wp_angles_all)
     wp_headings_all = np.concatenate(wp_headings_all)
     wp_curvatures_all = np.concatenate(wp_curvatures_all)
@@ -162,7 +161,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         rnn_activations, rnn_grads = np.concatenate(rnn_activations, axis=0), np.concatenate(rnn_grads, axis=0)
         
         seqlen, n_acts = rnn_activations.shape
-        rnn_activations = rnn_activations.reshape(seqlen, 32, 16)
+        rnn_activations = rnn_activations.reshape(seqlen, 32, 16) # splitting rnn hidden vector into a rectangle for viewing
         rnn_grads = rnn_grads.reshape(seqlen, 32, 16)
 
     # a bit dumb, have to pad before denorming
@@ -191,6 +190,7 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
     fps = 20
     cutoff = 2.4e-8 #2.4e-6 # adjust this manually when necessary
     MAX_CLIP_TE_VIZ = .2 # viz will be white at this point
+    print(height, width, channels)
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{run_id}_m_{model_stem}_gradcam.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
     curve_constrained_speed_calculator = CurveConstrainedSpeedCalculator()
     prev_torque = 0
@@ -223,7 +223,7 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
         close_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(traj, close_long_wp_dist)
         far_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(traj, far_long_wp_dist)
         r = draw_wps(r, np.array([close_long_wp_angle, far_long_wp_angle]), wp_dists=np.array([close_long_wp_dist, far_long_wp_dist]), color=(50, 50, 255), thickness=-1)
-        
+
         # info
         r[:50, :120, :] = 0
         headings = wp_headings_pred[i]
@@ -235,11 +235,11 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
         torque, td = abs(torque), abs(td)
         torque_text_color = (255, 255, 255) if (torque<TORQUE_MAX and td<TORQUE_DELTA_MAX) else (255, 100, 100)
         r = cv2.putText(r, f"t, td: {round(torque)}, {round(td)}", (0, 45), cv2.FONT_HERSHEY_SIMPLEX, .5, torque_text_color, 1)
-
+                
         # Guidelines
         r[:,w2-1:w2+1,:] -= 20 # darker line vertical center
         r[h2-1:h2+1:,:,:] -= 20 # darker line horizontal center
-
+        
         # RNN actgrad
         r = get_rnn_gradcam(rnn_activations[i], rnn_grads[i], r)
 
