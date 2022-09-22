@@ -135,30 +135,3 @@ def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
 # our big map distances are on the order of tens of km. 
 def get_lon_mult(lat_deg):
     return np.cos(np.radians(lat_deg))
-
-
-HEADING_ESTIMATION_M = 8.
-
-import pyproj
-
-class GPSTracker():
-    def __init__(self):
-        self.lats_history = [0 for _ in range(100)]
-        self.lons_history = [0 for _ in range(100)]
-        self.geodesic = pyproj.Geod(ellps='WGS84')
-        self.heading = 0
-
-    def step(self, current_lat, current_lon, current_speed_mps):
-        if current_speed_mps > 2.0: # only update heading if moving faster than threshold
-
-            headings_estimation_seconds_lookback = HEADING_ESTIMATION_M / current_speed_mps
-            headings_estimation_ix_lookback = int(math.ceil(GPS_HZ * headings_estimation_seconds_lookback))
-            prev_lat, prev_lon = self.lats_history[-headings_estimation_ix_lookback], self.lons_history[-headings_estimation_ix_lookback]
-
-            fwd_azimuth, back_azimuth, distance = geodesic.inv(prev_lon, prev_lat, current_lon, current_lat) # using real latlon to compute heading, though could just use our fixed up xy pseudo latlons
-            self.vehicle_heading = np.radians(fwd_azimuth)
-
-        self.lats_history.append(current_lat)
-        self.lons_history.append(current_lon)
-
-        return self.vehicle_heading
