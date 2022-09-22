@@ -127,3 +127,5 @@ MAX_ACCEL = .6 #1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in te
 MAP_WIDTH = 80
 assert MAP_WIDTH%2==0
 MAP_HEIGHT = IMG_HEIGHT
+
+GPS_HZ = 5
