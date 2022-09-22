@@ -23,6 +23,10 @@ def dropout_no_rescale(activations, p=.2):
     mask = (torch.rand_like(activations) > p).half()
     return activations * mask
 
+# b3 is 1536 features, 14M params or so
+# b4 is 1792 features, 21M params
+# b5 is 2048 features, 32M params, don't seem to be any weights for models this size and above
+
 class EffNet(nn.Module):
     def __init__(self, model_arch='efficientnet_b3', is_for_viz=False):
         super(EffNet, self).__init__()
@@ -137,8 +141,8 @@ class EffNet(nn.Module):
             self.rnn_activations = rnn_activations.detach().cpu()
             x = rnn_activations
 
-        # obsnet_out = self.obsnet(x if self.is_for_viz else x.detach()) # obsnet does not get access to calib params, it preds them
-        obsnet_out = self.obsnet(x)
+        obsnet_out = self.obsnet(x if self.is_for_viz else x.detach())
+        #obsnet_out = self.obsnet(x)
 
         # x = torch.cat([x, x_fcs1_out, pitch_yaw], dim=-1) # cat in calib params
         x = torch.cat([x, pitch_yaw], dim=-1) # cat in calib params

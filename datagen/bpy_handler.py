@@ -81,12 +81,12 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     gps_bad = random.random() < .05
     # noise for the map, heading
     num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-    maps_noise_mult = np.radians(50) if gps_bad else random.uniform(.001, np.radians(5)) # radians
+    maps_noise_mult = np.radians(30) if gps_bad else random.uniform(.001, np.radians(5)) # radians
     maps_noise = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
     # noise for the map, position
     num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-    maps_noise_mult = 60 if gps_bad else random.uniform(.001, 10)
+    maps_noise_mult = 50 if gps_bad else random.uniform(.001, 10) # meters
     maps_noise_position = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
     t0 = time.time()

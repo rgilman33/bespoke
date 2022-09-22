@@ -272,7 +272,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                 #             torque_loss*(TORQUE_LOSS_WEIGHT*avg_control_loss/avg_torque_loss) + \
                 #             torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
 
-        loss += ((pitch_loss + yaw_loss)/300)
+        # loss += ((pitch_loss + yaw_loss)/300)
 
         logger.log({f"{dataloader.path_stem}_control_loss": control_loss.item(),
                     f"{dataloader.path_stem}_headings_loss": headings_loss.item(),   
@@ -280,8 +280,8 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                     f"consistency losses/{dataloader.path_stem}_steer_cost":steer_cost.item(),
                     f"consistency losses/{dataloader.path_stem}_te_loss":te.item(),
                     # # f"aux losses/{dataloader.path_stem}_uncertainty_loss":uncertainty_loss.item(),
-                    f"aux losses/{dataloader.path_stem}_pitch_loss":pitch_loss.item(),
-                    f"aux losses/{dataloader.path_stem}_yaw_loss":yaw_loss.item(),
+                    # f"aux losses/{dataloader.path_stem}_pitch_loss":pitch_loss.item(),
+                    # f"aux losses/{dataloader.path_stem}_yaw_loss":yaw_loss.item(),
                     # f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_loss":1 if has_torque_loss else 0,
                     f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_delta_loss":1 if has_torque_delta_loss else 0,
                    })

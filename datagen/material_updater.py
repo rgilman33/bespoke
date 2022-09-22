@@ -66,7 +66,9 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     ######################
 
     background_hdri_nodes["Environment Texture"].image.filepath = random.choice(all_background_hdris)
-    get_node("hdri_rotation", background_hdri_nodes).outputs["Value"].default_value = random.uniform(0, 6.28)
+    #get_node("hdri_rotation_x", background_hdri_nodes).outputs["Value"].default_value = random.uniform(-.3, .3)
+    #get_node("hdri_rotation_y", background_hdri_nodes).outputs["Value"].default_value = random.uniform(-.3, .3)
+    get_node("hdri_rotation_z", background_hdri_nodes).outputs["Value"].default_value = random.uniform(0, 6.28)
 
     get_node("hdri_hue", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.45, .55)
     get_node("hdri_sat", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.5, 1.5)
@@ -362,7 +364,7 @@ def setup_map():
     get_node("rdside_hills_noise_scale", main_map_nodes).outputs["Value"].default_value = .03 * 10**random.uniform(0, 1)
     get_node("rdside_hills_noise_mult", main_map_nodes).outputs["Value"].default_value = 3 * 10**random.uniform(0, 1)
 
-    get_node("mtns_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(10, 60)
+    get_node("mtns_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(20, 120)
 
     t1, t2, t3 = get_turnoff_locs()
     get_node("turnoff1_loc", rd_curves_nodes).outputs["Value"].default_value = t1
@@ -393,8 +395,8 @@ def setup_map():
     
     BASE_PITCH = 89
     BASE_YAW = 180
-    pitch_perturbation = random.uniform(-2, 2)
-    yaw_perturbation = random.uniform(-2, 2)
+    pitch_perturbation = 0 #random.uniform(-2, 2)
+    yaw_perturbation = 0 #random.uniform(-2, 2)
     bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation) #np.radians(random.uniform(87, 89))
     bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation) #np.radians(random.uniform(87, 89))
 
