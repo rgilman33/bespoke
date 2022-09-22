@@ -104,7 +104,9 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
     way_ids = np.array(way_ids, dtype='int')
 
     refresh_nav_map_freq = random.choice([3,4,5]) # alternatively, can use vehicle speed and heading to interpolate ala kalman TODO
-    # TODO we'll need some noise, some lag in the nav map
+
+    # global gps_tracker
+    # gps_tracker = GPSTracker()
 
     print(f"Preparing the nav map took {round(time.time()-t0, 3)} seconds. Map has {len(curve_pos)} nodes")
 
@@ -171,6 +173,8 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         if overall_frame_counter % refresh_nav_map_freq == 0: # This always has to be called on first frame otherwise small_map is none
             close_buffer = CLOSE_RADIUS # TODO is this correct?
             current_lat, current_lon = cam_loc[0], cam_loc[1]
+            #heading = gps_tracker.step(current_lat, current_lon, current_speed_mps)
+
             small_map = get_map(lats, lons, way_ids, 
                                 current_lat + maps_noise_position[overall_frame_counter], 
                                 current_lon + maps_noise_position[overall_frame_counter], 

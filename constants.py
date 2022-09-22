@@ -117,6 +117,11 @@ def clear_obs_per_sec():
         os.remove(p)
 
 
+def set_lr(lr):
+    np.save(f"{BLENDER_MEMBANK_ROOT}/lr.npy", np.array([lr], dtype='float'))
+
+def get_lr():
+    return np.load(f"{BLENDER_MEMBANK_ROOT}/lr.npy")[0]
 
 
 # These are used in rw rollout to get avg, to smooth out long
