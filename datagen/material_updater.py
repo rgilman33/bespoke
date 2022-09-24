@@ -397,8 +397,8 @@ def setup_map():
     BASE_YAW = 180
     pitch_perturbation = 0 #random.uniform(-2, 2)
     yaw_perturbation = 0 #random.uniform(-2, 2)
-    bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation) #np.radians(random.uniform(87, 89))
-    bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation) #np.radians(random.uniform(87, 89))
+    bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation)
+    bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation)
 
     randomize_appearance(rd_is_lined=rd_is_lined, lane_width=lane_width, wide_shoulder_add=wide_shoulder_add, is_only_yellow_lined=is_only_yellow_lined)
 

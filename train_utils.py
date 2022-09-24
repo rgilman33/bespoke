@@ -225,7 +225,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                 worst_control_loss_all_img = add_trajs_to_img(img[ix_worst, bptt_ix_worst, :, :, :], 
                                                                 wp_angles_pred[ix_worst, bptt_ix_worst, :], 
                                                                 wp_angles[ix_worst, bptt_ix_worst, :],
-                                                                speed_mps=speed_mps) #TODO add speed_mps to this so it truncates excess traj
+                                                                speed_mps=speed_mps)
 
         pitch_loss = mse_loss(pitch, obs_net_out[:,:,1])
         yaw_loss = mse_loss(yaw, obs_net_out[:,:,2])
