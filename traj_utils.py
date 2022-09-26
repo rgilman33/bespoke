@@ -324,3 +324,39 @@ def get_speed_mask(aux):
     # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj.
 
     return speed_mask
+
+
+class TorqueLimiter():
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.prev_published_tire_angle_deg = 0
+
+
+    def step(self, desired_tire_angle_deg, current_speed_kph):
+        # Torque limits
+        BASELINE = self.prev_published_tire_angle_deg # current_tire_angle_deg
+
+        max_angle_bc_abs_torque = TORQUE_ABS_MAX / (current_speed_kph**2 + 1)
+        max_angle_delta_bc_td = TORQUE_DELTA_MAX / (current_speed_kph**2 + 1)
+
+        commanded_td = (desired_tire_angle_deg - BASELINE) * current_speed_kph**2
+        commanded_torque = desired_tire_angle_deg * current_speed_kph**2
+
+        torque_limited_angle_deg = np.clip(desired_tire_angle_deg, -max_angle_bc_abs_torque, max_angle_bc_abs_torque)
+        is_abs_torque_limited = torque_limited_angle_deg != desired_tire_angle_deg
+
+        td_limited_angle_deg = np.clip(desired_tire_angle_deg, 
+                                        BASELINE - max_angle_delta_bc_td, 
+                                        BASELINE + max_angle_delta_bc_td)
+        is_td_limited = td_limited_angle_deg != desired_tire_angle_deg
+
+        if is_td_limited or is_abs_torque_limited:
+            tire_angle_deg = td_limited_angle_deg if abs(td_limited_angle_deg)<abs(torque_limited_angle_deg) else torque_limited_angle_deg
+        else:
+            tire_angle_deg = desired_tire_angle_deg
+
+        self.prev_published_tire_angle_deg = tire_angle_deg
+
+        return tire_angle_deg, is_abs_torque_limited, is_td_limited, commanded_torque, commanded_td
