@@ -315,7 +315,7 @@ def setup_map():
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
     is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, less curvy
-    wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0 # this will cause to always have white line support
+    wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0
 
     is_just_straight = random.random()<.01
 
@@ -327,7 +327,7 @@ def setup_map():
 
 
     ONLY_YELLOW_LINES_PROB = .15 # applied after lanelines prob
-    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and not wide_shoulder_add>0 and lane_width<3.6
+    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and rd_is_lined # and not wide_shoulder_add>0 and lane_width<3.6 # bc now setting at fixed dist
 
     IS_COUNTRY_MTN_PROB = .15 # interspersed very curvy with totally straight. Train slowdowns and sharp curves.
     is_country_mtn = random.random() < IS_COUNTRY_MTN_PROB and lane_width < 3.6 and not (is_highway or is_just_straight)
@@ -335,8 +335,9 @@ def setup_map():
     get_node("has_turnoffs", rd_curves_nodes).outputs["Value"].default_value = 1 #0 if is_country_mtn else 1 # when too curvy, turnoffs interfere w rd
 
     lane_centerish = lane_width * .53
-    vehicle_perpendicular_shift = lane_centerish if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
+    vehicle_perpendicular_shift = 1.7 if is_only_yellow_lined else lane_centerish if rd_is_lined else (lane_width - np.interp(lane_width, [1.5, 4.0], [1.5, 2.4]))
     get_node("vehicle_perpendicular_shift", get_postion_along_loop_nodes).outputs["Value"].default_value = vehicle_perpendicular_shift
+    # CRV is 1.85m wide. 
 
     get_node("loop_random_seed_x", rd_noise_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6) # TODO different noises should get their own seeds, to increase combinations
     get_node("loop_random_seed_y", rd_noise_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
@@ -395,8 +396,8 @@ def setup_map():
     
     BASE_PITCH = 89
     BASE_YAW = 180
-    pitch_perturbation = 0 #random.uniform(-2, 2)
-    yaw_perturbation = 0 #random.uniform(-2, 2)
+    pitch_perturbation = random.uniform(-2, 2)
+    yaw_perturbation = random.uniform(-2, 2)
     bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation)
     bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation)
 
