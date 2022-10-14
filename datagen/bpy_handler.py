@@ -163,7 +163,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
             CLOSE_WP_DIST = 3
             perc_into_undaggering = CLOSE_WP_DIST / meters_to_undagger
             p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
-            wp = [wp[0] + shift_x*p, wp[1] + shift_y*p, wp[2]]
+            wp = [wp[0] + shift_x*p, wp[1] + shift_y*p, wp[2]] #TODO URGENT is this section correct? why we multiply by p here?
         angle_to_target_wp_ap = get_angle_to(cam_loc[:2], 
                                             cam_heading, 
                                             wp[:2])
@@ -213,7 +213,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         # DAGGER
         global shift_x_max, shift_y_max, DAGGER_FREQ, is_doing_dagger, dagger_counter, normal_shift
 
-        DAGGER_DURATION = sec_to_undagger*2*20 # frames TODO don't hardcode frames here
+        DAGGER_DURATION = sec_to_undagger*2*20 # frames TODO don't hardcode FPS here
 
         shift_x_max = cam_normal[0]*normal_shift
         shift_y_max = cam_normal[1]*normal_shift
@@ -266,14 +266,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highw
         get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[0] + delta_x
         get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = cam_loc[1] + delta_y 
 
-        # # TODO use the same apparatus we using in rw rollouts. As rw rollouts get better, can improve this to better match
-        # # This isn't exact, bc we're taking the angle slightly ahead of actual steer angle, and our lookup is for actual angles
-        # # right way to do this would be to estimate, in one second what turn angle will i have to implement
-        # angle_for_curve_limit, _, _ = get_target_wp(traj, current_speed_mps, wp_m_offset=current_speed_mps*turn_slowdown_sec_before) 
-        # # half second ahead of target wp. So our kP long will have to be fast enough to always get us down low enough
-
-        # curvature_constrained_speed = np.interp(abs(angle_for_curve_limit), max_speed_bps, max_speed_vals)
-        # curvature_constrained_speed *= curve_speed_mult
+        ###
 
         curvature_constrained_speed = get_curve_constrained_speed_from_wp_angles(traj, wp_dists, current_speed_mps, max_accel=max_accel)
         curvature_constrained_speed *= curve_speed_mult

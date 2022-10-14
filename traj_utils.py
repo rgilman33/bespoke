@@ -326,6 +326,10 @@ def get_speed_mask(aux):
     return speed_mask
 
 
+
+TORQUE_ABS_MAX = 10_000 
+TORQUE_DELTA_MAX = 800
+
 class TorqueLimiter():
     def __init__(self):
         self.reset()
