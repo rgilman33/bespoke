@@ -129,8 +129,6 @@ def get_headings_from_traj(wp_angles, wp_dists):
     wp_ys = np.cos(wp_angles) * wp_dists
 
     # these headings are at half-wp marks
-    #xd_over_yd = (wp_xs[1:] - wp_xs[:-1])/(wp_ys[1:] - wp_ys[:-1])
-    #headings = np.arctan(xd_over_yd) 
     headings = np.arctan2(wp_xs[1:] - wp_xs[:-1], wp_ys[1:] - wp_ys[:-1])
     # cat a zero on the front bc we know the heading is zero at vehicle, by definition
     headings = np.concatenate([np.array([0], dtype=np.float32), headings])
@@ -139,6 +137,7 @@ def get_headings_from_traj(wp_angles, wp_dists):
     headings = np.interp(TRAJ_WP_DISTS, HEADING_BPS, headings)
 
     return headings
+
 
 
 # used to generate blender data. Should match the batched apparatus used in blender dataloader for making trn data curvatures
@@ -256,10 +255,27 @@ def get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACC
 #     for i in range(1, len(wp_angles)):
         
 
+def get_angles_to(xs, ys, heading):
+    # wps w respect to current pos, ie centered at zero, ie pos already subtracted out. Radians in and out.
+    # current heading can be range 0 to 2*pi or -pi to pi
+    # replacing below function so 1) i can understand it and 2) is vectorized
+    
+    angles = np.arctan2(xs, ys) # from -pi to pi, zero is up
+    
+    angles[angles<0] += 2*np.pi # rotate to range 0 to 2*pi
+    
+    angles -= heading # subtract out current heading
+    
+    angles[angles<-np.pi] += 2*np.pi # rotate into range -pi to pi
+    angles[angles>np.pi] -= 2*np.pi
+    
+    return angles
+
 
 def get_angle_to(pos, theta, target):
     theta = float(theta)
-    pos = np.array(pos, dtype=np.float32); target = np.array(target, dtype=np.float32)
+    pos = np.array(pos, dtype=np.float32)
+    target = np.array(target, dtype=np.float32)
     R = np.array([
         [np.cos(theta), -np.sin(theta)],
         [np.sin(theta),  np.cos(theta)],

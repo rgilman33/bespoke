@@ -55,3 +55,12 @@ if __name__ == "__main__":
             print("Interupting datagen bc received should_stop flag")
             break
 
+
+"""
+# Install new packages into blender's python
+
+import subprocess
+package_name = "pandas"
+python_exe = "/home/beans/blender_3.3/3.3/python/bin/python3.10"
+subprocess.call([python_exe, "-m", "pip", "install", package_name])
+"""
