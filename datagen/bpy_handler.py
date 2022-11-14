@@ -7,33 +7,8 @@ from constants import *
 from traj_utils import *
 from map_utils import *
 
-
-def linear_to_cos(p):
-    # p is linear from 0 to 1. Outputs smooth values from 0 to 1 to back to zero
-    return (np.cos(p*np.pi*2)*-1 + 1) / 2
-
-def linear_to_sin_decay(p):
-    # p is linear from 0 to 1. Outputs smooth values from 1 to 0
-    return np.sin(p*np.pi+np.pi/2) / 2 + .5
-
-def reset_drive_style():
-    global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before, max_accel
-    global is_highway
-
-    wp_m_offset = -30 #-12 # telling to always be right on top of traj, this will always be the closest wp
-    rr = random.random() 
-    if is_highway:
-        speed_limit = random.uniform(16, 19) if rr<.05 else random.uniform(19, 25) if rr < .5 else random.uniform(25, 27)
-    else:
-        speed_limit = random.uniform(8, 12) if rr < .05 else random.uniform(12, 18) if rr < .1 else random.uniform(18, 26) # mps
-
-    lateral_kP = 1.0 #.95 #.85 #random.uniform(.75, .95)
-    long_kP = random.uniform(.02, .05)
-    curve_speed_mult = random.uniform(.7, 1.2)
-    turn_slowdown_sec_before = random.uniform(.25, .75)
-    max_accel = random.uniform(1.0, 2.0)
-
-import time
+sys.path.append("/home/beans/bespoke/datagen")
+from autopilot import Autopilot
 
 #########################################
 """
@@ -41,50 +16,92 @@ We're currently getting some of our wps by shifting the white lines inwards, get
 curve. The point of the latter is to be able to smooth the curve, don't want to always just follow the lines, humans smooth them
 out. 
 """
-ROUTE_LEN_M = 2000
-WP_SPACING = .1 # TODO plug this into value in blendfile so always up to date
-ROUTE_LEN = ROUTE_LEN_M // WP_SPACING
-TRAJ_WP_IXS = np.round(np.array(TRAJ_WP_DISTS) / WP_SPACING).astype('int')
 
-TRAJ_WP_DISTS_NP = np.array(TRAJ_WP_DISTS, dtype='float32')
+# illegal_connections = {
+#     1:[2],
+#     2: [1],
+#     3: [12],
+# }
 
-def get_next_possible_wps(prev_wp, df):
-    df = df.copy()
-    threshold = 1.0 # m
-    all_start_wps = df[df.ix_in_curve==0]
+def get_next_possible_wps(prev_wp, all_start_wps):
+
+    threshold = WP_SPACING*2 # meters. should work w slightly above WP_SPACING
+
+    # seg_id = prev_wp.segment_id 
+
+    # # illegal internal moves
+    # if seg_id in illegal_connections.keys():
+    #     all_start_wps = all_start_wps[all_start_wps.segment_id.isin(illegal_connections[seg_id]) == False]
+
+    all_start_wps = all_start_wps[(all_start_wps.way_id != prev_wp.way_id)]
+
     dist_to_prev_wp = ((all_start_wps.pos_x - prev_wp.pos_x)**2 + (all_start_wps.pos_y - prev_wp.pos_y)**2)**.5
     close_start_wps = all_start_wps[dist_to_prev_wp < threshold]
     return close_start_wps
 
-def get_route(df):
+def _get_route(df, start_locs_df, route_len):
+    # route_len is in meters
     segments = []
-    start_wp = df.sample(1).iloc[0]
+    start_wp = start_locs_df.sample(1).iloc[0] if start_locs_df is not None else df.sample(1).iloc[0]
     intersection_id = start_wp.intersection_id
-    segment_id = start_wp.segment_id
+    wps_segment_uid = start_wp.wps_segment_uid
+
+    all_start_wps = df[(df.ix_in_curve==0) & (df.wp_no_go==False)]
+
     n_wps = 0
-    while n_wps < ROUTE_LEN:
+    visited_sections = []
+    while n_wps < (route_len/WP_SPACING):
         
-        segment_df = df[(df.segment_id == segment_id) & (df.intersection_id==intersection_id)]
+        segment_df = df[df.wps_segment_uid == wps_segment_uid]
         segment_df = segment_df.sort_values("ix_in_curve")
-        segments.append(segment_df)
+        segments.append(segment_df.iloc[:-1]) # Not taking last wp of each segment bc it's the same loc as first wp of next segment?
         n_wps += len(segment_df)
 
-        last_wp = segment_df[segment_df.ix_in_curve==segment_df.ix_in_curve.max()]
-        last_wp = last_wp.iloc[0]
-        close_start_wps = get_next_possible_wps(last_wp, df)
+        last_wp = segment_df.iloc[-1]
+
+        # only visit each segment once, but don't care about connecting slips. 
+        # This could be rationalized a bit. Include to- from- info and it's good w no if statement.
+        if not last_wp.wps_connect:
+            visited_sections.append(last_wp.intersection_section_id) 
+
+        close_start_wps = get_next_possible_wps(last_wp, all_start_wps)
+
+        close_start_wps = close_start_wps[close_start_wps.intersection_section_id.isin(visited_sections)==False]
+
+        # TODO need to refine that a bit, was taking longer. Maybe limit start wps to ends. And mark loose edges as no-go.
+        # # go straight more often than turn
+        # straight_wp_segments = [2,3,4] # not left or right TODO is this time consuming?
+        # go_straight_options = close_start_wps[close_start_wps.wp_curve_id.isin(straight_wp_segments)]
+        # if random.random() < .6 and len(go_straight_options) > 0:
+        #     close_start_wps = go_straight_options
+
         if len(close_start_wps)==0: break
         next_wp = close_start_wps.sample(1).iloc[0]
-        intersection_id = next_wp.intersection_id
-        segment_id = next_wp.segment_id
-    
+        wps_segment_uid = next_wp.wps_segment_uid
+        
     route_wps = pd.concat(segments)
     return route_wps
+
+def get_route(wp_df, start_locs_df=None, route_len=2000):
+    # route len in meters
+    _route_len = 0
+    while _route_len < route_len:
+        route = _get_route(wp_df, start_locs_df, route_len)
+        _route_len = len(route)*WP_SPACING
+    return route
 
 def get_wp_df(wps_holder_object):
     t0 = time.time()
 
     df = pd.DataFrame()
-    df['is_wp_curve'] = [d.value for d in wps_holder_object.data.attributes["is_wp_curve"].data]
+    df['wps'] = [d.value for d in wps_holder_object.data.attributes["wps"].data]
+
+    # When all turnoffs connect then all wps are go and the attribute doesn't show up
+    if "wp_no_go" in wps_holder_object.data.attributes:
+        df['wp_no_go'] = [d.value for d in wps_holder_object.data.attributes["wp_no_go"].data]
+    else:
+        df['wp_no_go'] = False
+
     t0 = time.time()
     pos = [d.vector for d in wps_holder_object.data.attributes["curve_position"].data] # .2 sec
     print("getting pos", time.time() - t0)
@@ -104,307 +121,180 @@ def get_wp_df(wps_holder_object):
     df["curve_roll"] = [d[1] for d in rotations]
     df["curve_heading"] = [d[2] for d in rotations]
 
-    df["intersection_id"] = intersection_id = [d.value for d in wps_holder_object.data.attributes["intersection_id"].data] # .06 sec
+    df["intersection_id"] = [d.value for d in wps_holder_object.data.attributes["intersection_id"].data] # .06 sec
+    df["section_id"] = [d.value for d in wps_holder_object.data.attributes["section_id"].data]
+    df["intersection_section_id"] = (df.intersection_id.astype(str) + df.section_id.astype(str)).astype(str)
+    df["to_section"] = [d.value for d in wps_holder_object.data.attributes["to_section"].data]
+    df["from_section"] = [d.value for d in wps_holder_object.data.attributes["from_section"].data]
 
-    df["segment_id"] = [d.value for d in wps_holder_object.data.attributes["segment_id"].data]
+    # dumb packing up of one-hot into single categorical
+    wp_left = [d.value for d in wps_holder_object.data.attributes["wp_left"].data]
+    wp_l1 = [d.value for d in wps_holder_object.data.attributes["wp_l1"].data]
+    wp_l2 = [d.value for d in wps_holder_object.data.attributes["wp_l2"].data]
+    wp_l3 = [d.value for d in wps_holder_object.data.attributes["wp_l3"].data]
+    wp_right = [d.value for d in wps_holder_object.data.attributes["wp_right"].data]
+    wp_curve_id = []
+    for i in range(len(wp_left)):
+        wp_curve_id.append(1 if wp_left[i] else 2 if wp_l1[i] else 3 if wp_l2[i] else 4 if wp_l3[i] else 5 if wp_right[i] else 0)
+    df["wp_curve_id"] = wp_curve_id
+
+    df["wps_segment_uid"] = (df.intersection_id.astype(str) + df.section_id.astype(str) + df.wp_curve_id.astype(str) + \
+                                df.from_section.astype(str) + df.to_section.astype(str)).astype(int)
+    # these last two properties necessary to differentiate slips within an intersection
+
     df["ix_in_curve"] = [d.value for d in wps_holder_object.data.attributes["ix_in_curve"].data]
 
-    df["is_turnoff"] = [d.value for d in wps_holder_object.data.attributes["is_turnoff"].data]
-    df.is_turnoff = df.is_turnoff.astype(int)
+    df["wps_connect"] = [d.value for d in wps_holder_object.data.attributes["wps_connect"].data]
 
-    df["way_id"] = (df.intersection_id + df.is_turnoff/10)*10
+    # used for coarse wp navmap
+    df["arm_id"] = [d.value for d in wps_holder_object.data.attributes["arm_id"].data]
+    df["way_id"] = (df.intersection_id.astype(str) + df.arm_id.astype(str)).astype(int)
 
     return df
 ####################################
-    
 
-def set_frame_change_post_handler(bpy, save_data=False, run_root=None, _is_highway=False, _is_lined=False,
-                                    _pitch_perturbation=0, _yaw_perturbation=0):
-    global current_speed_mps, counter, targets_container, overall_frame_counter
-    global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult 
-    global current_tire_angle
-    global is_highway, is_lined, pitch_perturbation, yaw_perturbation
-    is_highway, is_lined, pitch_perturbation, yaw_perturbation = _is_highway, _is_lined, _pitch_perturbation, _yaw_perturbation 
 
-    current_tire_angle = 0
+def update_ap_object(nodes, ap):
+    get_node("pitch", nodes).outputs["Value"].default_value = ap.current_rotation[0]
+    get_node("roll", nodes).outputs["Value"].default_value = ap.current_rotation[1]
+    get_node("heading", nodes).outputs["Value"].default_value = ap.current_rotation[2]
+    get_node("pos_x", nodes).outputs["Value"].default_value = ap.current_pos[0]
+    get_node("pos_y", nodes).outputs["Value"].default_value = ap.current_pos[1]
+    get_node("pos_z", nodes).outputs["Value"].default_value = ap.current_pos[2]
 
-    DRIVE_STYLE_CHANGE_IX = random.randint(200, 600)
-    reset_drive_style()
+class NPC():
+    def __init__(self, ap, nodes, blender_object):
+        self.ap, self.nodes, self.blender_object = ap, nodes, blender_object
+        self.dist_from_ego_start_go = random.uniform(100, 200)
+        self.is_done = False
+
+class TrafficManager():
+    def __init__(self, ego_ap, wp_df, is_highway=False):
+        # self.npc_nodes, self.npc_aps, self.npc_objects = [], [], []
+        self.npcs = []
+        self.is_highway = is_highway
+        self.ego = ego_ap
+        # npcs only start along the route, not randomly scattered on map
+        start_locs_df = wp_df[wp_df.intersection_id.isin(ego_ap.visited_intersections)] 
+        # no NPCs right next to ego at start
+        start_locs_df = start_locs_df[(start_locs_df.intersection_section_id != ego_ap.start_intersection_section_id)]
+        self.wp_df = wp_df
+        self.start_locs_df = start_locs_df
+
+        # remove old npcs
+        for o in bpy.data.objects:
+            if "npc." in o.name:
+                bpy.data.objects.remove(o, do_unlink=True)
+
+    def add_npcs(self, n_npcs):
+
+        for i in range(n_npcs):
+            c = bpy.data.objects["npc"].copy()
+            c.data = c.data.copy()
+            c.modifiers["GeometryNodes"].node_group = c.modifiers["GeometryNodes"].node_group.copy()
+            bpy.context.collection.objects.link(c)
+            nodes = c.modifiers["GeometryNodes"].node_group.nodes
+
+            npc_ap = Autopilot(is_highway=self.is_highway, ap_id=i, save_data=False, is_ego=False)
+            route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=500)
+            npc_ap.set_route(route)
+
+            update_ap_object(nodes, npc_ap)
+
+            npc = NPC(npc_ap, nodes, c)
+            self.npcs.append(npc)
+
+    def step(self):
+        self.ego.set_should_yield(False)
+
+        for npc in self.npcs:
+            if npc.ap.route_is_done:
+                npc.blender_object.hide_render = True
+                npc.is_done = True
+                continue
+
+            npc.ap.set_should_yield(False)
+
+            if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < 90: # Only check detailed trajs if within distance TODO this dist should be dynamic based on the speeds of both parties
+                ego_traj = self.ego.negotiation_traj[:, :2]
+                npc_traj = npc.ap.negotiation_traj[:, :2]
+
+                # Result is traj_len x traj_len matrix w dist btwn every point in A to every pt in B
+                result = (ego_traj[:, None, :] - npc_traj[None, :, :])**2 # padding + broadcasting is forcing np to give us the matrix we want. I don't fully understand why.
+                result = np.sqrt(result[:,:,0] + result[:,:,1])
+                if result.min() < CRV_WIDTH * 1.2: 
+                    argmin_ix_a, argmin_ix_b = np.unravel_index(result.argmin(), result.shape) # np magic to find argmin in 2d array. Don't fully understand.
+                    ego_dist_to_collision = argmin_ix_a * self.ego.m_per_wp
+                    npc_dist_to_collision = argmin_ix_b * npc.ap.m_per_wp
+                    if ego_dist_to_collision > npc_dist_to_collision:
+                        self.ego.set_should_yield(True)
+                    else:
+                        npc.ap.set_should_yield(True)
+
+            # move if visible to ego
+            if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < npc.dist_from_ego_start_go:
+                npc.ap.step()
+                update_ap_object(npc.nodes, npc.ap)
+
+        self.npcs = [npc for npc in self.npcs if not npc.is_done] 
+
+
+def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
+                                _is_highway=False, _is_lined=False, _pitch_perturbation=0, _yaw_perturbation=0,
+                                has_npcs=True):
+    global ap, tm
+    ap = Autopilot(is_highway=_is_highway, pitch_perturbation=_pitch_perturbation, yaw_perturbation=_yaw_perturbation, 
+                        run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True)
 
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
-    targets_container = np.zeros((SEQ_LEN, N_WPS*3), dtype=np.float32)
-    aux_container = np.zeros((SEQ_LEN, N_AUX), dtype=np.float32)
-    maps_container = np.zeros((SEQ_LEN, MAP_HEIGHT, MAP_WIDTH, 3), dtype='uint8')
-
-    counter = 0
-    overall_frame_counter = 0
-    current_speed_mps = speed_limit / 2 # starting a bit slower in case in curve
-
-    # dagger
-    global is_doing_dagger, dagger_counter, shift_x, shift_y, normal_shift, DAGGER_FREQ
-    is_doing_dagger = False
-    dagger_counter = 0
-    shift_x, shift_y = 0, 0
-    NORMAL_SHIFT_MAX = .8
-    normal_shift = NORMAL_SHIFT_MAX if random.random()<.5 else -NORMAL_SHIFT_MAX
-    DAGGER_FREQ = 200 # TODO UNDO random.randint(400, 1000) #random.randint(200, 400)
-
-    global roll_noise # TODO this may be affecting our wp_angles, that may be a problem especially at higher values of roll. Actually no, i don't think it does
-    num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity. can go even lower here, eg to mimic bumpy gravel rd
-    ROLL_MAX_DEG = 5
-    do_roll = random.random() < .2
-    roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
-    roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
-
-    gps_bad = random.random() < .05
-    # noise for the map, heading
-    num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-    maps_noise_mult = np.radians(30) if gps_bad else random.uniform(.001, np.radians(5)) # radians
-    maps_noise = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
-
-    # noise for the map, position
-    num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-    maps_noise_mult = 50 if gps_bad else random.uniform(.001, 10) # meters
-    maps_noise_position = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
-
-
-
     t0 = time.time()
     dg = bpy.context.evaluated_depsgraph_get()
-    #######################
     wps_holder_object = bpy.data.objects["wps_holder"].evaluated_get(dg)
     wp_df = get_wp_df(wps_holder_object)
+    coarse_map_df = wp_df[wp_df.wps==False]
+    wp_df = wp_df[wp_df.wps]
     print("get wp df", time.time() - t0)
 
-    route_len = 0
-    while route_len < ROUTE_LEN:
-        route = get_route(wp_df)
-        route_len = len(route)
+    route = get_route(wp_df, route_len=ROUTE_LEN_M)
     print("get route", time.time() - t0)
 
-    #######################
+    ap.set_route(route)
 
-    global lats, lons, way_ids
+    ap.set_nav_map(coarse_map_df)
 
-    coarse_map_df = wp_df[wp_df.is_wp_curve==False]
+    update_ap_object(make_vehicle_nodes, ap)
 
-    way_ids = coarse_map_df.way_id.to_numpy()
-    lats, lons = coarse_map_df.pos_x.to_numpy(), coarse_map_df.pos_y.to_numpy()
-    # lats, lons, way_ids = add_noise_rds_to_map(lats, lons, way_ids)
+    tm = TrafficManager(wp_df=wp_df, ego_ap=ap, is_highway=_is_highway)
+    # if has_npcs:
+    #     tm.add_npcs(10)
 
-    lats = np.array(lats, dtype='float64')
-    lons = np.array(lons, dtype='float64')
-    way_ids = np.array(way_ids, dtype='int')
-
-    refresh_nav_map_freq = random.choice([3,4,5]) # alternatively, can use vehicle speed and heading to interpolate ala kalman TODO
-
-    # global gps_tracker
-    # gps_tracker = GPSTracker()
-
-    waypoints = np.empty((len(route), 3), dtype="float64")
-    smooth_amount = 20
-
-    waypoints[:,0] = moving_average(route.pos_x.to_numpy(), smooth_amount)
-    waypoints[:,1] = moving_average(route.pos_y.to_numpy(), smooth_amount)
-    waypoints[:,2] = moving_average(route.pos_z.to_numpy(), 20)
-
-    wp_normals = np.empty((len(route), 3), dtype="float64")
-    wp_normals[:, 0] = moving_average(route.normal_x.to_numpy(), smooth_amount) 
-    wp_normals[:, 1] = moving_average(route.normal_y.to_numpy(), smooth_amount) 
-    wp_normals[:, 2] = moving_average(route.normal_z.to_numpy(), smooth_amount)
-
-    wp_rotations = np.empty((len(route), 3), dtype="float64") # pitch, roll, yaw
-    wp_rotations[:, 0] = moving_average(route.curve_pitch.to_numpy(), 40) ## pitch
-    wp_rotations[:, 1] = route.curve_roll.to_numpy() ## roll
-    wp_rotations[:, 2] = moving_average(route.curve_heading.to_numpy(), smooth_amount) # yaw
-
-
-
-    global current_pos, current_heading, distance_along_loop
-    START_IX = (smooth_amount // 2) + 1
-    current_pos = waypoints[START_IX]
-    current_heading = wp_rotations[START_IX, 2]
-
-    get_node("pitch", make_vehicle_nodes).outputs["Value"].default_value = wp_rotations[START_IX, 0]
-    get_node("heading", make_vehicle_nodes).outputs["Value"].default_value = current_heading
-    get_node("roll", make_vehicle_nodes).outputs["Value"].default_value = wp_rotations[START_IX, 1]
-
-    get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = waypoints[START_IX][0]
-    get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = waypoints[START_IX][1]
-    get_node("pos_z", make_vehicle_nodes).outputs["Value"].default_value = waypoints[START_IX][2]
-
-    distance_along_loop = START_IX * WP_SPACING
-
-    print(f"Preparing the nav map took {round(time.time()-t0, 3)} seconds. Map has {len(route)} nodes")
+    print("total setup time", time.time() - t0)
+        
+    wp_sphere_nodes = bpy.data.node_groups['wp_sphere_nodes'].nodes 
+    get_node("pitch", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[0]
+    get_node("roll", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[1]
+    get_node("heading", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[2]
+    get_node("pos_x", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[0]
+    get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[1]
+    get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[2]
 
     def frame_change_post(scene, dg):
-        global current_speed_mps, counter, targets_container, overall_frame_counter
-        global shift_x, shift_y
-        global wp_m_offset, speed_limit, lateral_kP, long_kP, curve_speed_mult, turn_slowdown_sec_before, max_accel
-        global current_tire_angle, is_lined
-        global current_pos, current_heading, distance_along_loop
+        global ap, tm
+        ap.step()
+        update_ap_object(make_vehicle_nodes, ap)
 
-        cube = bpy.data.objects["Cube"].evaluated_get(dg)
+        # debugging
+        get_node("pitch", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[0]
+        get_node("roll", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[1]
+        get_node("heading", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[2]
+        get_node("pos_x", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[0]
+        get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[1]
+        get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[2] + 1
 
-        frame_ix = scene.frame_current
-        
-        sec_to_undagger = 3 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
-        meters_to_undagger = current_speed_mps * sec_to_undagger
-
-        current_wp_ix = int(round(distance_along_loop / WP_SPACING, 0))
-        wp_ixs = current_wp_ix + TRAJ_WP_IXS
-        current_wps = waypoints[wp_ixs]
-        cam_normal = wp_normals[current_wp_ix]
+        tm.step()
 
 
-        # getting targets
-            
-        deltas = current_wps - current_pos
-        xs, ys = deltas[:, 0], deltas[:, 1]
-
-        if abs(shift_x) > 0 or abs(shift_y) > 0:
-            perc_into_undaggering = TRAJ_WP_DISTS_NP / meters_to_undagger 
-            p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
-            xs += shift_x*p
-            ys += shift_y*p
-
-        angles_to_wps = get_angles_to(xs, ys, -current_heading)
-        wp_dists_actual = np.sqrt(xs**2 + ys**2)
-        
-        targets_container[counter, :N_WPS] = angles_to_wps
-        targets_container[counter, N_WPS:N_WPS*2] = wp_dists_actual
-        targets_container[counter, N_WPS*2:] = deltas[:,2]
-
-
-        # Navmap
-        global lats, lons, way_ids, small_map
-        # gps doesn't refresh as fast as do frames
-        if overall_frame_counter % refresh_nav_map_freq == 0: # This always has to be called on first frame otherwise small_map is none
-            close_buffer = CLOSE_RADIUS # TODO is this correct?
-            current_lat, current_lon = current_pos[0], current_pos[1]
-            #heading = gps_tracker.step(current_lat, current_lon, current_speed_mps)
-
-            small_map = get_map(lats, lons, way_ids, 
-                                current_lat + maps_noise_position[overall_frame_counter], 
-                                current_lon + maps_noise_position[overall_frame_counter], 
-                                current_heading+(np.pi)+maps_noise[overall_frame_counter], 
-                                close_buffer)
-
-        maps_container[counter,:,:,:] = small_map
-
-        ############
-        # save data
-        aux_container[counter, 2] = mps_to_kph(current_speed_mps)
-        aux_container[counter, 4] = current_tire_angle
-        aux_container[counter, 0] = pitch_perturbation
-        aux_container[counter, 1] = yaw_perturbation
-
-        if (counter+1) == SEQ_LEN:
-            if save_data:
-                np.save(f"{run_root}/aux_{overall_frame_counter}.npy", aux_container)  
-                np.save(f"{run_root}/targets_{overall_frame_counter}.npy", targets_container)
-                np.save(f"{run_root}/maps_{overall_frame_counter}.npy", maps_container)  
-
-                next_seq_path = f"{run_root}/targets_{overall_frame_counter+SEQ_LEN}.npy"
-                if os.path.exists(next_seq_path):
-                    os.remove(next_seq_path)
-
-            targets_container[:,:] = 0.0 # TODO shouldn't need this, but it's for safety?
-            aux_container[:,:] = 0.0
-            counter = 0
-        else:
-            counter += 1
-        
-        overall_frame_counter += 1
-
-        #############################################################################
-
-        # target wp close to vehicle, used for steering AP to keep it tight on traj
-        # This just follows the cos dagger traj directly. This is the wp we aim towards.
-        CLOSE_WP_DIST = 3.0
-        wp = waypoints[current_wp_ix + int(round(CLOSE_WP_DIST/WP_SPACING))]
-        if abs(shift_x)>0 or abs(shift_y)>0:
-            wp = [wp[0] + shift_x, wp[1] + shift_y, wp[2]]
-
-        deltas = wp - current_pos
-        xs, ys = deltas[0:1], deltas[1:2]
-        angle_to_target_wp_ap = get_angles_to(xs, ys, -current_heading)[0] # blender counterclockwise is positive
-
-        # DAGGER
-        global shift_x_max, shift_y_max, DAGGER_FREQ, is_doing_dagger, dagger_counter, normal_shift
-
-        DAGGER_DURATION = sec_to_undagger*2*FPS # frames. TODO this doesn't need to be tied w sec_to_undagger
-
-        shift_x_max = cam_normal[0]*normal_shift
-        shift_y_max = cam_normal[1]*normal_shift
-
-        if frame_ix % DAGGER_FREQ == 0:
-            is_doing_dagger = True
-        if is_doing_dagger:
-            dagger_counter += 1
-            r = linear_to_cos(dagger_counter/DAGGER_DURATION)
-            
-            shift_x = r * shift_x_max
-            shift_y = r * shift_y_max
-            
-        if dagger_counter == DAGGER_DURATION:
-            is_doing_dagger = False
-            dagger_counter = 0
-            shift_x = 0
-            shift_y = 0
-            normal_shift = 1 if random.random()<.5 else -1
-                
-        ########################
-        # Moving the car
-
-        # speed limit and turn agg
-        if frame_ix % DRIVE_STYLE_CHANGE_IX: reset_drive_style()
-
-        fps = random.gauss(20, 2)
-
-        dist_car_travelled = current_speed_mps * (1 / fps)
-
-        # always using close wp for ap, to keep right on traj
-        current_tire_angle = angle_to_target_wp_ap * lateral_kP
-        _wheelbase = 1.5 #CRV_WHEELBASE # NOTE this isn't correct, but i want ego to be turning faster, otherwise taking turns too wide
-        _vehicle_turn_rate = current_tire_angle * (current_speed_mps/_wheelbase) # rad/sec # we're using target wp angle as the tire_angle
-        vehicle_heading_delta = _vehicle_turn_rate * (1/fps) # radians
-
-        # we get slightly out of sync bc our wps are going along based on curve, but we're controlling cube like a vehicle. 
-        # Keeping totally synced so wp angles remain perfect. This isn't what moves the car, that's below
-        dist_car_travelled_corrected = dist_car_travelled + (MIN_WP_M - wp_dists_actual[0])*.25
-        distance_along_loop += dist_car_travelled_corrected
-
-        get_node("pitch", make_vehicle_nodes).outputs["Value"].default_value = wp_rotations[current_wp_ix, 0]
-        
-        current_heading = current_heading - vehicle_heading_delta
-        get_node("heading", make_vehicle_nodes).outputs["Value"].default_value = current_heading
-
-        _current_heading = current_heading+(np.pi/2) # TODO can rationalize this away
-        angle_to_future_vehicle_loc = _current_heading - (vehicle_heading_delta/2) # this isn't the exact calc. See rollout_utils for more accurate version
-        delta_x = dist_car_travelled*np.cos(angle_to_future_vehicle_loc)
-        delta_y = (dist_car_travelled*np.sin(angle_to_future_vehicle_loc))
-
-        current_x = current_pos[0] + delta_x
-        current_y = current_pos[1] + delta_y
-        current_z = waypoints[current_wp_ix][2] # Just setting this manually to the wp itself. Not "driving" it like XY
-
-        get_node("pos_x", make_vehicle_nodes).outputs["Value"].default_value = current_x
-        get_node("pos_y", make_vehicle_nodes).outputs["Value"].default_value = current_y 
-        get_node("pos_z", make_vehicle_nodes).outputs["Value"].default_value = current_z
-        
-        current_pos = np.array([current_x, current_y, current_z])
-        ###
-
-        curvature_constrained_speed = get_curve_constrained_speed_from_wp_angles(angles_to_wps, wp_dists_actual, current_speed_mps, max_accel=max_accel)
-        curvature_constrained_speed *= curve_speed_mult
-
-        target_speed = min(curvature_constrained_speed, speed_limit)
-
-        current_speed_mps += (target_speed - current_speed_mps)*long_kP
-
-        get_node("roll", make_vehicle_nodes).outputs["Value"].default_value = roll_noise[overall_frame_counter]
 
 
     bpy.app.handlers.frame_change_post.clear()

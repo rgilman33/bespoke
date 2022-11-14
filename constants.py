@@ -85,8 +85,8 @@ device = 'cuda'
 FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
 BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
-SEQ_LEN = 116 * 5
-EPISODE_LEN = SEQ_LEN * 2 #10
+SEQ_LEN = 116 * 2
+EPISODE_LEN = SEQ_LEN * 5 #10
 RUNS_TO_STORE_PER_PROCESS = 30
 N_RUNNERS = 12
 
@@ -134,3 +134,26 @@ assert MAP_WIDTH%2==0
 MAP_HEIGHT = IMG_HEIGHT
 
 GPS_HZ = 5
+
+CRV_WIDTH = 1.85 
+
+
+NORMAL_SHIFT_MAX = 1.0
+ROUTE_LEN_M = 1600 #TODO BEWARE UNDO MAYBE 2000
+WP_SPACING = .1
+TRAJ_WP_IXS = np.round(np.array(TRAJ_WP_DISTS) / WP_SPACING).astype('int')
+
+TRAJ_WP_DISTS_NP = np.array(TRAJ_WP_DISTS, dtype='float32')
+
+def linear_to_cos(p):
+    # p is linear from 0 to 1. Outputs smooth values from 0 to 1 to back to zero
+    return (np.cos(p*np.pi*2)*-1 + 1) / 2
+
+def linear_to_sin_decay(p):
+    # p is linear from 0 to 1. Outputs smooth values from 1 to 0
+    return np.sin(p*np.pi+np.pi/2) / 2 + .5
+
+
+def linear_to_sin(p):
+    # p is linear from 0 to 1. Outputs smooth values from 0 to 1
+    return (np.sin(p*np.pi+np.pi/2) / 2 + .5)*-1 + 1

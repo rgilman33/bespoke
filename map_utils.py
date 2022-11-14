@@ -56,7 +56,7 @@ def prepare_small_map_nodes(lats, lons, way_ids, current_lat, current_lon, vehic
     
     return lats, lons, way_ids
 
-def draw_small_map(lats, lons, way_ids):
+def draw_small_map(lats, lons, way_ids, route_lats=None, route_lons=None):
     
     # We'll draw each line using open-cv. We want to draw each separately so as to not connect ends of some rds w starts of others.
     is_last_node_on_way_filter = (way_ids[:-1] != way_ids[1:])
@@ -78,6 +78,11 @@ def draw_small_map(lats, lons, way_ids):
         ptsSegment = pts[start_ix:end_ix,:,:]
         small_map = cv2.polylines(small_map, [ptsSegment], isClosed, color, thickness)
     
+    # route
+    if route_lats is not None:
+        for i in range(len(route_lats)):
+            small_map = cv2.circle(small_map, (route_lats[i], route_lons[i]), radius=2, color=(150,150,255), thickness=-1)
+            
     # ego vehicle, for human viewing
     h = LAT_SZ_PX//2
     small_map = cv2.circle(small_map, (h, h), radius=2, color=(0,255,255), thickness=-1)
@@ -90,18 +95,20 @@ def draw_small_map(lats, lons, way_ids):
     return small_map
 
 
-def get_map(lats, lons, way_ids, current_lat, current_lon, vehicle_heading, close_buffer):
+def get_map(lats, lons, way_ids, route, current_lat, current_lon, vehicle_heading, close_buffer):
     # helper, wrap the two big fns above
+    # map
     lats, lons, way_ids = prepare_small_map_nodes(lats, lons, way_ids, current_lat, current_lon, vehicle_heading, close_buffer)
 
-    small_map = draw_small_map(lats, lons, way_ids)
+    # route
+    route_lats, route_lons, _ = prepare_small_map_nodes(route[:,0], route[:,1], np.ones(len(route)), current_lat, current_lon, vehicle_heading, close_buffer)
+
+    small_map = draw_small_map(lats, lons, way_ids, route_lats=route_lats, route_lons=route_lons)
+
 
     return small_map
 
 
-def linear_to_sin(p):
-    # p is linear from 0 to 1. Outputs smooth values from 0 to 1
-    return (np.sin(p*np.pi+np.pi/2) / 2 + .5)*-1 + 1
 
 # only used by blender
 def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
