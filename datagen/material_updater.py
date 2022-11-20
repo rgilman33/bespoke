@@ -45,11 +45,13 @@ literally_all_normals = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/**/*_2K_Normal.j
 img_textures = glob.glob(f"{TEXTURES_ROOT}/*.jpg") 
 literally_all_albedos += img_textures
 
-rd_surface_keywords = ["gravel", "rock", "concrete", "soil", "mud", "asphalt", "sand", "road"]
+rd_surface_keywords = ["gravel", "rock", "concrete", "soil", "mud", "asphalt", "sand", "road"] #TODO put in snow sometimes
 
 rd_surfaces = [s for s in all_albedos if len([k for k in rd_surface_keywords if k in s])>0]
+snow_surfaces = [s for s in all_albedos if "snow" in s]
+rd_surfaces += snow_surfaces # These generally look good, no need to deal w separately. There were 14 of them vs 390 of others last time counted
 
-print(f"{len(all_albedos)} total surfaces. {len(rd_surfaces)} appropriate for rd surface")
+print(f"{len(all_albedos)} total surfaces. {len(rd_surfaces)} appropriate for rd surface. {len(snow_surfaces)} snow surfaces.")
 
 slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr"]
 # /home/beans/static/Megascans Library/Downloaded/3dplant/plants_3d_slfpffjr/Var4/Var4_LOD3.fbx
@@ -229,7 +231,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     # Terrain
     ######################
 
-    terrain_albedo = random.choice(all_albedos)
+    terrain_albedo = rd_img_albedo if random.random() < .3 else random.choice(all_albedos)
     get_node("terrain_img_albedo", dirt_gravel_nodes).image.filepath = terrain_albedo
     get_node("terrain_img_normal", dirt_gravel_nodes).image.filepath = terrain_albedo.replace("Albedo", "Normal")
 
