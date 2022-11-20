@@ -33,13 +33,13 @@ def get_next_possible_wps(prev_wp, all_start_wps):
     # if seg_id in illegal_connections.keys():
     #     all_start_wps = all_start_wps[all_start_wps.segment_id.isin(illegal_connections[seg_id]) == False]
 
-    all_start_wps = all_start_wps[(all_start_wps.way_id != prev_wp.way_id)]
+    all_start_wps = all_start_wps[(all_start_wps.way_id != prev_wp.way_id)] # no u-turns
 
     dist_to_prev_wp = ((all_start_wps.pos_x - prev_wp.pos_x)**2 + (all_start_wps.pos_y - prev_wp.pos_y)**2)**.5
     close_start_wps = all_start_wps[dist_to_prev_wp < threshold]
     return close_start_wps
 
-def _get_route(df, start_locs_df, route_len):
+def _get_route(df, start_locs_df, route_len, just_go_straight):
     # route_len is in meters
     segments = []
     start_wp = start_locs_df.sample(1).iloc[0] if start_locs_df is not None else df.sample(1).iloc[0]
@@ -47,6 +47,8 @@ def _get_route(df, start_locs_df, route_len):
     wps_segment_uid = start_wp.wps_segment_uid
 
     all_start_wps = df[(df.ix_in_curve==0) & (df.wp_no_go==False)]
+    if just_go_straight:
+        all_start_wps = all_start_wps[all_start_wps.wp_curve_id==2]
 
     n_wps = 0
     visited_sections = []
@@ -82,11 +84,11 @@ def _get_route(df, start_locs_df, route_len):
     route_wps = pd.concat(segments)
     return route_wps
 
-def get_route(wp_df, start_locs_df=None, route_len=2000):
+def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False):
     # route len in meters
     _route_len = 0
     while _route_len < route_len:
-        route = _get_route(wp_df, start_locs_df, route_len)
+        route = _get_route(wp_df, start_locs_df, route_len, just_go_straight)
         _route_len = len(route)*WP_SPACING
     return route
 
@@ -150,6 +152,10 @@ def get_wp_df(wps_holder_object):
     df["arm_id"] = [d.value for d in wps_holder_object.data.attributes["arm_id"].data]
     df["way_id"] = (df.intersection_id.astype(str) + df.arm_id.astype(str)).astype(int)
 
+    # longitudinal
+    df["wp_is_stop"] = [d.value for d in wps_holder_object.data.attributes["wp_is_stop"].data]
+
+
     return df
 ####################################
 
@@ -162,6 +168,25 @@ def update_ap_object(nodes, ap):
     get_node("pos_y", nodes).outputs["Value"].default_value = ap.current_pos[1]
     get_node("pos_z", nodes).outputs["Value"].default_value = ap.current_pos[2]
 
+
+def reset_npc_objects(bpy):
+    """
+    In blender, clears the existing copies of the master npc object. Makes MAX_N_NPCS copies of the master npc. 
+    To be run once at beginning to datagen to make sure npcs are up to date.
+    """
+    # remove old npcs
+    for o in bpy.data.objects:
+        if "npc." in o.name:
+            bpy.data.objects.remove(o, do_unlink=True)
+
+    # make n copies of master npc. Make the max num, we'll mute the others
+    for i in range(MAX_N_NPCS):
+        c = bpy.data.objects["npc"].copy()
+        c.data = c.data.copy()
+        c.modifiers["GeometryNodes"].node_group = c.modifiers["GeometryNodes"].node_group.copy()
+        bpy.context.collection.objects.link(c)
+        # we now have a copy of the form "npc.001" in the blender scene, which we'll grab and use later
+
 class NPC():
     def __init__(self, ap, nodes, blender_object):
         self.ap, self.nodes, self.blender_object = ap, nodes, blender_object
@@ -171,7 +196,6 @@ class NPC():
 class TrafficManager():
     def __init__(self, ego_ap, wp_df, is_highway=False):
         # self.npc_nodes, self.npc_aps, self.npc_objects = [], [], []
-        self.npcs = []
         self.is_highway = is_highway
         self.ego = ego_ap
         # npcs only start along the route, not randomly scattered on map
@@ -181,28 +205,31 @@ class TrafficManager():
         self.wp_df = wp_df
         self.start_locs_df = start_locs_df
 
-        # remove old npcs
-        for o in bpy.data.objects:
-            if "npc." in o.name:
-                bpy.data.objects.remove(o, do_unlink=True)
+        # existing blender_objects for npcs
+        self.existing_npc_objects = [o for o in bpy.data.objects if "npc." in o.name]
+        self.npcs = []
+
 
     def add_npcs(self, n_npcs):
+        # use existing objects rather than create from scratch. For perf bc don't want to be deleting and remaking all the time. And
+        # there was fear of buildup of things in blender behind the scenes (eg names were incrementing each time). It's simpler to clear and remake
+        # but we were also getting a substantial linear slowdown in datagen which is consistent with possible buildup. Reusing now to avoid that, despite
+        # the slightly more amount of complexity
+        for i,npc_object in enumerate(self.existing_npc_objects):
+            if i < n_npcs:
+                npc_object.hide_render = False
+                nodes = npc_object.modifiers["GeometryNodes"].node_group.nodes
 
-        for i in range(n_npcs):
-            c = bpy.data.objects["npc"].copy()
-            c.data = c.data.copy()
-            c.modifiers["GeometryNodes"].node_group = c.modifiers["GeometryNodes"].node_group.copy()
-            bpy.context.collection.objects.link(c)
-            nodes = c.modifiers["GeometryNodes"].node_group.nodes
+                npc_ap = Autopilot(is_highway=self.is_highway, ap_id=i, save_data=False, is_ego=False)
+                route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=500)
+                npc_ap.set_route(route)
 
-            npc_ap = Autopilot(is_highway=self.is_highway, ap_id=i, save_data=False, is_ego=False)
-            route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=500)
-            npc_ap.set_route(route)
+                update_ap_object(nodes, npc_ap)
 
-            update_ap_object(nodes, npc_ap)
-
-            npc = NPC(npc_ap, nodes, c)
-            self.npcs.append(npc)
+                npc = NPC(npc_ap, nodes, npc_object)
+                self.npcs.append(npc)
+            else:
+                npc_object.hide_render = True
 
     def step(self):
         self.ego.set_should_yield(False)
@@ -241,7 +268,7 @@ class TrafficManager():
 
 def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
                                 _is_highway=False, _is_lined=False, _pitch_perturbation=0, _yaw_perturbation=0,
-                                has_npcs=True):
+                                has_npcs=True, _is_single_rd=True):
     global ap, tm
     ap = Autopilot(is_highway=_is_highway, pitch_perturbation=_pitch_perturbation, yaw_perturbation=_yaw_perturbation, 
                         run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True)
@@ -256,18 +283,23 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
     wp_df = wp_df[wp_df.wps]
     print("get wp df", time.time() - t0)
 
-    route = get_route(wp_df, route_len=ROUTE_LEN_M)
+    # single-rd, only start at ends of rd len. Just go straight.
+    if _is_single_rd:
+        s = wp_df[(wp_df.ix_in_curve==0) & (wp_df.wp_curve_id==2)] # start wps, first lane (not turning)
+        s = s[((s.intersection_id==4) & (s.section_id==1)) | ((s.intersection_id==6) & (s.section_id==7))] # each tip of the rd len
+        route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True)
+    else: # start anywhere, turning allowed
+        route = get_route(wp_df, route_len=ROUTE_LEN_M)
+
     print("get route", time.time() - t0)
 
     ap.set_route(route)
-
     ap.set_nav_map(coarse_map_df)
-
     update_ap_object(make_vehicle_nodes, ap)
 
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, is_highway=_is_highway)
-    # if has_npcs:
-    #     tm.add_npcs(10)
+    if has_npcs:
+        tm.add_npcs(random.randint(2, MAX_N_NPCS))
 
     print("total setup time", time.time() - t0)
         

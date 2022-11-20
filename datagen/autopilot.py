@@ -53,6 +53,12 @@ class Autopilot():
         self.negotiation_traj = np.empty((N_NEGOTIATION_WPS, 3), dtype=np.float32)
         self.negotiation_traj_ixs = np.empty((N_NEGOTIATION_WPS), dtype=int)
 
+        self.draw_route = random.random() < .5
+
+        self.stopsign_state = "NONE"
+        self.stopped_counter = 0
+        self.stopped_at_ix = 0
+
 
     def set_route(self, route):
                                         
@@ -63,6 +69,8 @@ class Autopilot():
         # smoothing wp z and pitch bc we don't drive them, we just use them directly. 
         # Smoothing XY of pos and rots was I believe causing a bit of spazz, don't know for certain why but removal did the trick
         # no didn't remove it, but perhaps lessened freq
+
+        self.wp_is_stop = route.wp_is_stop.to_numpy()
         
         self.wp_normals = np.empty((len(route), 3), dtype="float64")
         self.wp_normals[:, 0] = route.normal_x.to_numpy()
@@ -82,6 +90,7 @@ class Autopilot():
         self.start_intersection_section_id = route.intersection_section_id.iloc[0]
         self.visited_intersections = list(route.intersection_id.unique())
 
+        # for drawing route wps on map
         ROUTE_WP_SPACING = 20 # meters
         wps_per_route_wp = int(ROUTE_WP_SPACING/WP_SPACING)
         is_route_wps = np.empty(len(route), dtype=bool)
@@ -92,12 +101,14 @@ class Autopilot():
     def set_nav_map(self, coarse_map_df):
         self.way_ids = coarse_map_df.way_id.to_numpy()
         self.lats, self.lons = coarse_map_df.pos_x.to_numpy(), coarse_map_df.pos_y.to_numpy()
-        # lats, lons, way_ids = add_noise_rds_to_map(lats, lons, way_ids)
+        # self.lats, self.lons, self.way_ids = add_noise_rds_to_map(self.lats, self.lons, self.way_ids)
+
         self.refresh_nav_map_freq = random.choice([3,4,5]) # alternatively, can use vehicle speed and heading to interpolate ala kalman TODO
         self.small_map = None # doesn't update every frame
 
         # global gps_tracker
         # gps_tracker = GPSTracker()
+
     def set_should_yield(self, should_yield):
         self.should_yield = should_yield
         
@@ -105,6 +116,7 @@ class Autopilot():
 
         sec_to_undagger = 2 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift
         meters_to_undagger = self.current_speed_mps * sec_to_undagger
+        meters_to_undagger = max(meters_to_undagger, 5)
 
         current_wp_ix = int(round(self.distance_along_loop / WP_SPACING, 0))
         cam_normal = self.wp_normals[current_wp_ix]
@@ -146,11 +158,13 @@ class Autopilot():
                 route_wps = self.waypoints[_min:_max]
                 is_route_wps_ixs = self.is_route_wps[_min:_max]
                 route_wps = route_wps[is_route_wps_ixs]
+
                 self.small_map = get_map(self.lats, self.lons, self.way_ids, route_wps,
                                     current_lat + self.maps_noise_position[self.overall_frame_counter], 
                                     current_lon + self.maps_noise_position[self.overall_frame_counter], #TODO refine this noising. Don't do same on x and y.
                                     self.current_rotation[2]+(np.pi)+self.maps_noise[self.overall_frame_counter], 
-                                    close_buffer)
+                                    close_buffer,
+                                    self.draw_route)
 
             # saving
             c = self.counter
@@ -206,7 +220,8 @@ class Autopilot():
         shift_x_max = cam_normal[0]*self.normal_shift
         shift_y_max = cam_normal[1]*self.normal_shift
 
-        if self.is_ego and (self.overall_frame_counter % self.DAGGER_FREQ == 0):
+        DAGGER_MIN_SPEED = mph_to_mps(12)
+        if self.is_ego and (self.overall_frame_counter % self.DAGGER_FREQ == 0) and (self.current_speed_mps > DAGGER_MIN_SPEED):
             self.is_doing_dagger = True
         if self.is_doing_dagger:
             self.dagger_counter += 1
@@ -223,9 +238,9 @@ class Autopilot():
         # speed limit and turn agg
         if self.overall_frame_counter % self.DRIVE_STYLE_CHANGE_IX: self.reset_drive_style()
 
-        fps = random.gauss(20, 2)
+        fps = np.clip(random.gauss(20, 2), 17, 23)
 
-        dist_car_travelled = self.current_speed_mps * (1 / fps)
+        dist_car_travelled = self.current_speed_mps * (1 / fps) if self.current_speed_mps>0 else 0
 
         # always using close wp for ap, to keep right on traj
         self.current_tire_angle = angle_to_target_wp_ap * self.lateral_kP # TODO should update this incrementally by kP?
@@ -233,9 +248,11 @@ class Autopilot():
         _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/_wheelbase) # rad/sec # we're using target wp angle as the tire_angle
         vehicle_heading_delta = _vehicle_turn_rate * (1/fps) # radians
 
+
         # we get slightly out of sync bc our wps are going along based on curve, but we're controlling cube like a vehicle. 
         # Keeping totally synced so wp angles remain perfect.
-        dist_car_travelled_corrected = dist_car_travelled + (MIN_WP_M - wp_dists_actual[0])*.25 # TODO don't like this
+        correction = (MIN_WP_M - wp_dists_actual[0])*.25 # TODO don't like this
+        dist_car_travelled_corrected = dist_car_travelled + correction
         self.distance_along_loop += dist_car_travelled_corrected
 
         _current_heading = self.current_rotation[2]+(np.pi/2) # TODO can rationalize this away
@@ -251,12 +268,66 @@ class Autopilot():
         self.current_pos[1] += delta_y
         self.current_pos[2] = self.waypoints[current_wp_ix][2] # Just setting this manually to the wp itself. Not "driving" it like XY
 
+        ###############
         # Update speed
+
+        # ccs
         curvature_constrained_speed = get_curve_constrained_speed_from_wp_angles(angles_to_wps, wp_dists_actual, self.current_speed_mps, max_accel=self.max_accel)
         curvature_constrained_speed *= self.curve_speed_mult
+        
+
+        # # stopsign constrained speed
+        # STOP_LOOKAHEAD_SEC = 10.0
+        # MIN_STOP_LOOKAHEAD_M = 12
+        # STOPSIGN_DECEL = 2.0
+        # EXTRA_STOP_BUFFER_M = 1.5
+        # STOPPED_SPEED = .9
+        # # n_advance_wps_for_stop = int((STOP_LOOKAHEAD_SEC * self.current_speed_mps) / WP_SPACING)
+        # # n_advance_wps_for_stop = max(n_advance_wps_for_stop, int(MIN_STOP_LOOKAHEAD_M/WP_SPACING))
+        # n_advance_wps_for_stop = int(100 / WP_SPACING)
+        # upcoming_wps_is_stop = self.wp_is_stop[current_wp_ix:current_wp_ix+n_advance_wps_for_stop]
+        # # NONE -> "APPROACHING_STOP" or "STOPPED"
+        # if True in upcoming_wps_is_stop and not self.stopsign_state=="LEAVING_STOP":
+        #     stop_ix = np.where(upcoming_wps_is_stop==True)[0][0]
+        #     stop_dist = abs(stop_ix * WP_SPACING - EXTRA_STOP_BUFFER_M)
+        #     stop_dist = stop_dist if stop_dist > .1 else 0
+        #     stop_sign_constrained_speed = np.sqrt(STOPSIGN_DECEL * stop_dist) 
+        #     # the fastest we can be going now in order to hit zero m/s in the given dist at given decel
+        #     self.stopsign_state = "APPROACHING_STOP" if self.current_speed_mps > STOPPED_SPEED else "STOPPED"
+        #     self.stop_dist = stop_dist
+        # else:
+        #     stop_sign_constrained_speed = 1e6
+        #     stop_dist = 1e6
+        
+        # # if stopped, increment counter
+        # # STOPPED -> LEAVING_STOP
+        # if self.stopsign_state=="STOPPED": 
+        #     # Once stopped at stopsign long enough, proceed
+        #     if self.stopped_counter >= (self.pause_at_stopsign_s * FPS):
+        #         self.stopsign_state = "LEAVING_STOP"
+        #         self.stopped_at_ix = current_wp_ix
+        #         self.stopped_counter = 0
+        #     else:
+        #         self.stopped_counter += 1
+
+        # # if recently stopped, but now leaving stop-zone, reset stopsign apparatus
+        # # LEAVING_STOP -> NONE
+        # RESET_STOPSIGN_M = 5
+        # if self.stopsign_state == "LEAVING_STOP" and (current_wp_ix-self.stopped_at_ix) > RESET_STOPSIGN_M/WP_SPACING:
+        #     self.stopsign_state = "NONE"
+
+        # if self.is_ego:
+        #     print(self.stopsign_state, stop_dist, current_wp_ix, self.stopped_at_ix, self.stopped_counter)
+
+        # target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
+
         target_speed = min(curvature_constrained_speed, self.speed_limit)
         target_speed = target_speed if not self.should_yield else 0
-        self.current_speed_mps += (target_speed - self.current_speed_mps)*self.long_kP
+
+        max_accel_frame = self.max_accel / FPS # 
+        delta = target_speed - self.current_speed_mps
+        delta = np.clip(delta, -max_accel_frame, max_accel_frame)
+        self.current_speed_mps += delta #(delta)*self.long_kP
 
         # negotiation traj
         m_per_wp = self.current_speed_mps * S_PER_WP
@@ -276,12 +347,13 @@ class Autopilot():
     def reset_drive_style(self):
         rr = random.random() 
         if self.is_highway:
-            self.speed_limit = random.uniform(16, 19) if rr<.05 else random.uniform(19, 25) if rr < .5 else random.uniform(25, 27)
+            self.speed_limit = random.uniform(16, 19) if rr<.1 else random.uniform(19, 25) if rr < .7 else random.uniform(25, 27)
         else:
-            self.speed_limit = random.uniform(8, 12) if rr < .05 else random.uniform(12, 18) if rr < .1 else random.uniform(18, 26) # mps
+            self.speed_limit = random.uniform(8, 12) if rr < .1 else random.uniform(12, 18) if rr < .2 else random.uniform(18, 26) # mps
 
-        self.lateral_kP = .95 #.85 #random.uniform(.75, .95)
-        self.long_kP = random.uniform(.02, .05)
+        self.lateral_kP = .9 #.85 #random.uniform(.75, .95)
+        # self.long_kP = .5 #random.uniform(.02, .05)
         self.curve_speed_mult = random.uniform(.7, 1.25)
         self.turn_slowdown_sec_before = random.uniform(.25, .75)
-        self.max_accel = random.uniform(1.0, 4.0)
+        self.max_accel = random.uniform(1.5, 4.5)
+        self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,4)

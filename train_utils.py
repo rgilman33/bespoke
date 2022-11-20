@@ -335,7 +335,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         t1 = t2
         
         # Manually keeping data consumption ratio down if training speed exceeds data gen speed
-        obs_generated_per_second = dataloader.get_obs_per_second()
+        obs_generated_per_second, slowest_runner_obs_per_sec = dataloader.get_obs_per_second()
         if obs_generated_per_second > 0:
             data_consumption_ratio = obs_consumed_per_second / obs_generated_per_second
             if data_consumption_ratio > DATA_CONSUMPTION_RATIO_LIMIT: 
@@ -344,6 +344,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                 train_pause -= .01
             train_pause = max(train_pause, 0)
             logger.log({"logistical/obs_generated_per_second":round(obs_generated_per_second),
+                        "logistical/slowest_runner_obs_per_sec":round(slowest_runner_obs_per_sec),
                         "logistical/data_consumption_ratio":data_consumption_ratio,
                         "logistical/manual_train_pause":train_pause,
                        })
@@ -492,7 +493,7 @@ GAMMA_MAX = 130
 
 transform = A.Compose([
     A.Blur(blur_limit=BLUR_LIMIT, p=.2),
-    A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=(-30, 20)),
+    A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=(-20, 30)),
     A.OneOf([
         A.GaussNoise(var_limit=GAUSS_NOISE_MAX, p=.2),
         A.ISONoise(intensity=(.2, ISO_NOISE_MAX), p=.2)

@@ -74,7 +74,7 @@ class BlenderDataloader():
             HAS_MAP_PROB = .85
             img_chunk[b,:,:,-MAP_WIDTH:,:] = maps[:,:,::-1,:] if random.random() < HAS_MAP_PROB else 0 # fliplr
                     
-        targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of their off by one
+        targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of they're off by one
         aux_chunk[:,:-1,:] = aux_chunk[:,1:,:] #TODO should maybe do this further upstream actually
 
 
@@ -120,9 +120,9 @@ class BlenderDataloader():
         to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
         to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
 
-        # ZERO_THRESH = .48 #.24
-        # zero_mask = torch.from_numpy((np.abs(wp_angles) < ZERO_THRESH).astype(np.float16)).to(device)
-        # to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
+        ZERO_THRESH = 1.0
+        zero_mask = torch.from_numpy((np.abs(wp_angles) < ZERO_THRESH).astype(np.float16)).to(device)
+        to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
 
         to_pred_mask = to_pred_mask * torch.from_numpy(speed_mask).to(device)
         #to_pred_mask = torch.from_numpy(speed_mask).to(device)

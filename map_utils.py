@@ -95,16 +95,17 @@ def draw_small_map(lats, lons, way_ids, route_lats=None, route_lons=None):
     return small_map
 
 
-def get_map(lats, lons, way_ids, route, current_lat, current_lon, vehicle_heading, close_buffer):
+def get_map(lats, lons, way_ids, route, current_lat, current_lon, vehicle_heading, close_buffer, draw_route=False):
     # helper, wrap the two big fns above
     # map
     lats, lons, way_ids = prepare_small_map_nodes(lats, lons, way_ids, current_lat, current_lon, vehicle_heading, close_buffer)
 
     # route
-    route_lats, route_lons, _ = prepare_small_map_nodes(route[:,0], route[:,1], np.ones(len(route)), current_lat, current_lon, vehicle_heading, close_buffer)
-
-    small_map = draw_small_map(lats, lons, way_ids, route_lats=route_lats, route_lons=route_lons)
-
+    if draw_route:
+        route_lats, route_lons, _ = prepare_small_map_nodes(route[:,0], route[:,1], np.ones(len(route)), current_lat, current_lon, vehicle_heading, close_buffer)
+        small_map = draw_small_map(lats, lons, way_ids, route_lats=route_lats, route_lons=route_lons)
+    else:
+        small_map = draw_small_map(lats, lons, way_ids)
 
     return small_map
 

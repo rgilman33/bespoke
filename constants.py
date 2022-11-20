@@ -85,6 +85,8 @@ device = 'cuda'
 FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
 BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
+#BLENDER_MEMBANK_ROOT = "/dev/shm/blender_membank"
+
 SEQ_LEN = 116 * 2
 EPISODE_LEN = SEQ_LEN * 5 #10
 RUNS_TO_STORE_PER_PROCESS = 30
@@ -106,10 +108,10 @@ def report_obs_per_sec(dataloader_root, obs_per_sec):
 def get_obs_per_sec():
     try:
         paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/**/obs_per_sec.npy", recursive=True)
-        obs_per_sec = np.array([np.load(p)[0] for p in paths]).sum()
-        return obs_per_sec
+        obs_per_sec_arr = np.array([np.load(p)[0] for p in paths])
+        return obs_per_sec_arr.sum(), obs_per_sec_arr.min()
     except:
-        return 0
+        return 0, 0
         
 def clear_obs_per_sec():
     paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/**/obs_per_sec.npy", recursive=True)
@@ -139,7 +141,7 @@ CRV_WIDTH = 1.85
 
 
 NORMAL_SHIFT_MAX = 1.0
-ROUTE_LEN_M = 1600 #TODO BEWARE UNDO MAYBE 2000
+ROUTE_LEN_M = 1700
 WP_SPACING = .1
 TRAJ_WP_IXS = np.round(np.array(TRAJ_WP_DISTS) / WP_SPACING).astype('int')
 
@@ -157,3 +159,6 @@ def linear_to_sin_decay(p):
 def linear_to_sin(p):
     # p is linear from 0 to 1. Outputs smooth values from 0 to 1
     return (np.sin(p*np.pi+np.pi/2) / 2 + .5)*-1 + 1
+
+
+MAX_N_NPCS = 10

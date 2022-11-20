@@ -258,7 +258,7 @@ def get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACC
 def get_angles_to(xs, ys, heading):
     # wps w respect to current pos, ie centered at zero, ie pos already subtracted out. Radians in and out.
     # current heading can be range 0 to 2*pi or -pi to pi
-    # replacing below function so 1) i can understand it and 2) is vectorized
+    # replacing below function "get_angle_to" so 1) i can understand it and 2) is vectorized
     
     angles = np.arctan2(xs, ys) # from -pi to pi, zero is up
     
@@ -266,13 +266,13 @@ def get_angles_to(xs, ys, heading):
     
     angles -= heading # subtract out current heading
     
-    angles[angles<-np.pi] += 2*np.pi # rotate into range -pi to pi
+    # rotate into range -pi to pi
+    angles[angles<-np.pi] += 2*np.pi 
     angles[angles>np.pi] -= 2*np.pi
     
     return angles
 
-
-def get_angle_to(pos, theta, target):
+def get_angle_to(pos, theta, target): #NOTE deprecated in favor of understandable one directly above
     theta = float(theta)
     pos = np.array(pos, dtype=np.float32)
     target = np.array(target, dtype=np.float32)

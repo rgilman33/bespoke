@@ -12,16 +12,19 @@ import bpy_handler
 import traj_utils
 import map_utils
 import autopilot
-
+  
 importlib.reload(constants)
 importlib.reload(traj_utils)
-importlib.reload(material_updater)
-importlib.reload(bpy_handler)
 importlib.reload(map_utils)
+importlib.reload(material_updater)
 importlib.reload(autopilot)
+importlib.reload(bpy_handler)
 
-is_highway, is_lined, pitch_perturbation, yaw_perturbation, has_npcs = material_updater.setup_map() 
-bpy_handler.set_frame_change_post_handler(bpy, has_npcs=has_npcs, save_data=False, _is_highway=is_highway, _is_lined=is_lined)
+
+
+bpy_handler.reset_npc_objects(bpy)
+is_highway, is_lined, pitch_perturbation, yaw_perturbation, has_npcs, is_single_rd = material_updater.setup_map() 
+bpy_handler.set_frame_change_post_handler(bpy, has_npcs=has_npcs, save_data=False, _is_highway=is_highway, _is_lined=is_lined, _is_single_rd=is_single_rd)
 
 
  

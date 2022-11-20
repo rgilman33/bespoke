@@ -5,7 +5,7 @@ import numpy as np
 sys.path.append('/home/beans/bespoke')
 sys.path.append('/home/beans/bespoke/datagen')
 from material_updater import setup_map
-from bpy_handler import set_frame_change_post_handler
+from bpy_handler import set_frame_change_post_handler, reset_npc_objects
 from constants import *
 
 argv = sys.argv
@@ -19,6 +19,11 @@ def random_uniform(_min, _max):
 bpy.app.driver_namespace['random_uniform'] = random_uniform
 
 if __name__ == "__main__":
+
+    print(f"Launching runner {dataloader_id}")
+    # Delete existing npc copies and make new ones. To ensure up to date w any changes made in master.
+    reset_npc_objects(bpy)
+
     for i in range(10_000_000):
         overall_frame_counter = 0
         run_counter = i % RUNS_TO_STORE_PER_PROCESS # Overwrite from beginning once reach membank limit
@@ -32,10 +37,11 @@ if __name__ == "__main__":
         if os.path.exists(next_targets_path):
             os.remove(next_targets_path)
 
-        is_highway, is_lined, pitch_perturbation, yaw_perturbation, has_npcs = setup_map()
+        is_highway, is_lined, pitch_perturbation, yaw_perturbation, has_npcs, is_single_rd = setup_map()
 
         set_frame_change_post_handler(bpy, save_data=True, run_root=run_root, _is_highway=is_highway, _is_lined=is_lined, 
-                                        _pitch_perturbation=pitch_perturbation, _yaw_perturbation=yaw_perturbation, has_npcs=has_npcs)
+                                        _pitch_perturbation=pitch_perturbation, _yaw_perturbation=yaw_perturbation, has_npcs=has_npcs, 
+                                        _is_single_rd=is_single_rd)
 
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
         bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
