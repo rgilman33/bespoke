@@ -91,7 +91,7 @@ class Autopilot():
         self.visited_intersections = list(route.intersection_id.unique())
 
         # for drawing route wps on map
-        ROUTE_WP_SPACING = 20 # meters
+        ROUTE_WP_SPACING = 4 #20 # meters
         wps_per_route_wp = int(ROUTE_WP_SPACING/WP_SPACING)
         is_route_wps = np.empty(len(route), dtype=bool)
         is_route_wps[:] = False
@@ -107,7 +107,7 @@ class Autopilot():
         self.small_map = None # doesn't update every frame
 
         # global gps_tracker
-        # gps_tracker = GPSTracker()
+        self.gps_tracker = GPSTracker()
 
     def set_should_yield(self, should_yield):
         self.should_yield = should_yield
@@ -149,7 +149,8 @@ class Autopilot():
             if self.overall_frame_counter % self.refresh_nav_map_freq == 0: # This always has to be called on first frame otherwise small_map is none
                 close_buffer = CLOSE_RADIUS
                 current_lat, current_lon = self.current_pos[0], self.current_pos[1]
-                #heading = gps_tracker.step(current_lat, current_lon, current_speed_mps)
+                heading_for_map = self.gps_tracker.step(current_lat, current_lon, self.current_speed_mps) # using same apparatus for rw and for trn
+                # heading_for_map = self.current_rotation[2]+(np.pi)
 
                 BEHIND_BUFFER_M = 30
                 FORWARD_BUFFER_M = 400
@@ -162,7 +163,7 @@ class Autopilot():
                 self.small_map = get_map(self.lats, self.lons, self.way_ids, route_wps,
                                     current_lat + self.maps_noise_position[self.overall_frame_counter], 
                                     current_lon + self.maps_noise_position[self.overall_frame_counter], #TODO refine this noising. Don't do same on x and y.
-                                    self.current_rotation[2]+(np.pi)+self.maps_noise[self.overall_frame_counter], 
+                                    heading_for_map + self.maps_noise[self.overall_frame_counter], 
                                     close_buffer,
                                     self.draw_route)
 
