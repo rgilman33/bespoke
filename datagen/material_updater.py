@@ -57,7 +57,7 @@ slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr"]
 # /home/beans/static/Megascans Library/Downloaded/3dplant/plants_3d_slfpffjr/Var4/Var4_LOD3.fbx
 
 plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
-plants_folders = [f for f in plants_folders if len([s for s in slow_grasses if s in f])>0]
+plants_folders = [f for f in plants_folders if len([s for s in slow_grasses if s in f])==0]
 
 
 def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=None, is_only_yellow_lined=False):
@@ -157,7 +157,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("rd_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .9)
     get_node("shoulder_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.6, 1.0)
 
-    get_node("rd_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.0, .03)
+    get_node("rd_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .7 else random.uniform(.0, .5)
 
     get_node("rd_overlay_mixer", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0.1, .8)
 
@@ -206,24 +206,28 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
 
 
     # tiremarks
-    HAS_TIREMARKS_PROB = .2 if rd_is_lined else .9
+    HAS_TIREMARKS_PROB = .1 if rd_is_lined else .4
     get_node("tiremarks_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
     get_node("tiremarks_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random()<.2 else random.uniform(.2, 1.)
     get_node("tiremarks_maskout_noise_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, .4)
-    get_node("wheel_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.5, .9) if rd_is_lined else random.uniform(.3, .7) # using dirtgravel as proxy for narrower, bc we want narrower tiremarks when narrow rd otherwise whole rd is worn out
+    get_node("wheel_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.4, .9) if rd_is_lined else random.uniform(.3, .5) # using dirtgravel as proxy for narrower, bc we want narrower tiremarks when narrow rd otherwise whole rd is worn out
     tiremarks_mult = random.uniform(.1 if rd_is_lined else .3, .8) if random.random() < HAS_TIREMARKS_PROB else 0
     get_node("tiremarks_mult", dirt_gravel_nodes).outputs["Value"].default_value = tiremarks_mult
 
-    # # Directionality NOTE was slowing down too much. The noise textures.
-    # get_node("directionality_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, .45)
+    # Directionality
+    HAS_DIRECTIONALITY_PROB = .1 if rd_is_lined else .6
+    get_node("directionality_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8) if random.random()<HAS_DIRECTIONALITY_PROB else 0
     # get_node("directionality_maskout_noise_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
-    # get_node("directionality_mod_1", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .8)
-    # get_node("directionality_mod_2", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .8)
-    # get_node("directionality_range_1", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.2, .5)
-    # get_node("directionality_range_2", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.2, .5)
-    # get_node("directionality_noise_mult_1", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.5, 1.8)
-    # get_node("directionality_noise_mult_2", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.5, 1.8)
-    # get_node("directionality_w", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(-1e6, 1e6)
+    get_node("d1_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.05, .2)
+    get_node("d2_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.05, .2)
+    get_node("d3_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.05, .2)
+    get_node("directionality_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .5)
+    get_node("directionality_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8)
+
+    # vertex spacing.
+    # Startup time perf very sensitive to this. Directionality lines only show up where are edges, so this strongly affects directionality appearance.
+    #TODO should depend on if rd is lined
+    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.4, .7)
 
 
 
@@ -388,14 +392,15 @@ def setup_map():
     get_node("loop_noise_mult_2", rd_noise_nodes).outputs["Value"].default_value = nm2
 
     # Z noise
+    z0_mult = 0 if random.random() < .2 else random.uniform(40, 200) if random.random() < .95 else random.uniform(200,300)
     z1_scale = .005 * 10**random.uniform(0, 1)
     z1_mult_max = np.interp(z1_scale, [.005, .01, .03, .05], [25, 18, 6, 3])
     get_node("loop_noise_scale_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_scale
     z1_mult = 0 if random.random() < .1 else random.uniform(0, z1_mult_max/2) if random.random() < .8 else random.uniform(z1_mult_max/2, z1_mult_max)
-
-    get_node("loop_noise_mult_z_0", rd_noise_nodes).outputs["Value"].default_value = random.uniform(0, 200) if random.random() < .95 else random.uniform(200,300)
+    z2_mult = 0 if random.random() < .5 else random.uniform(.01, .05) if rd_is_lined else random.uniform(.02, .1) # rd bumpiness
+    get_node("loop_noise_mult_z_0", rd_noise_nodes).outputs["Value"].default_value = z0_mult
     get_node("loop_noise_mult_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_mult
-    get_node("loop_noise_mult_z_2", rd_noise_nodes).outputs["Value"].default_value = random.uniform(.0, .06) if rd_is_lined else random.uniform(.0, .15)
+    get_node("loop_noise_mult_z_2", rd_noise_nodes).outputs["Value"].default_value = z2_mult
 
     get_node("rd_hump", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.2, .8) 
     get_node("rd_hump_rampup", z_adjustment_nodes).outputs["Value"].default_value = 16 #random.uniform(4, 10) 

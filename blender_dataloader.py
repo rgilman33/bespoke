@@ -72,7 +72,7 @@ class BlenderDataloader():
             
             # giving maps to the entire chunk, or not at all
             HAS_MAP_PROB = .85
-            img_chunk[b,:,:,-MAP_WIDTH:,:] = maps[:,:,::-1,:] if random.random() < HAS_MAP_PROB else 0 # fliplr
+            img_chunk[b,:,:,-MAP_WIDTH:,:] = maps if random.random() < HAS_MAP_PROB else 0 
                     
         targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of they're off by one
         aux_chunk[:,:-1,:] = aux_chunk[:,1:,:] #TODO should maybe do this further upstream actually

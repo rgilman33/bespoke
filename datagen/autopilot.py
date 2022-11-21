@@ -34,26 +34,27 @@ class Autopilot():
         ######
         # Noise for the map
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity. can go even lower here, eg to mimic bumpy gravel rd
-        ROLL_MAX_DEG = 5
+        ROLL_MAX_DEG = 4
         do_roll = random.random() < .2
         roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
         self.roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
 
         gps_bad = random.random() < .05
-        # noise for the map, heading
+        # noise for the map, heading. This is in addition to what we'll get from the noisy pos
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-        maps_noise_mult = np.radians(30) if gps_bad else random.uniform(.001, np.radians(5)) # radians
-        self.maps_noise = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+        maps_noise_mult = np.radians(20) if gps_bad else random.uniform(.001, np.radians(5)) # radians
+        self.maps_noise_heading = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
         # noise for the map, position
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-        maps_noise_mult = 50 if gps_bad else random.uniform(.001, 10) # meters
-        self.maps_noise_position = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+        maps_noise_mult = 40 if gps_bad else random.uniform(.001, 10) # meters
+        self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+        self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
         self.negotiation_traj = np.empty((N_NEGOTIATION_WPS, 3), dtype=np.float32)
         self.negotiation_traj_ixs = np.empty((N_NEGOTIATION_WPS), dtype=int)
 
-        self.draw_route = random.random() < .5
+        self.draw_route = random.random() < .8
 
         self.stopsign_state = "NONE"
         self.stopped_counter = 0
@@ -91,23 +92,23 @@ class Autopilot():
         self.visited_intersections = list(route.intersection_id.unique())
 
         # for drawing route wps on map
-        ROUTE_WP_SPACING = 4 #20 # meters
+        ROUTE_WP_SPACING = 6 #20 # meters
         wps_per_route_wp = int(ROUTE_WP_SPACING/WP_SPACING)
         is_route_wps = np.empty(len(route), dtype=bool)
         is_route_wps[:] = False
         is_route_wps[::wps_per_route_wp] = True
         self.is_route_wps = is_route_wps
+        self.route_x_offset, self.route_y_offset = random.uniform(-4,4), random.uniform(-4,4)
 
     def set_nav_map(self, coarse_map_df):
         self.way_ids = coarse_map_df.way_id.to_numpy()
-        self.lats, self.lons = coarse_map_df.pos_x.to_numpy(), coarse_map_df.pos_y.to_numpy()
+        self.map_xs, self.map_ys = coarse_map_df.pos_x.to_numpy(), coarse_map_df.pos_y.to_numpy()
         # self.lats, self.lons, self.way_ids = add_noise_rds_to_map(self.lats, self.lons, self.way_ids)
 
         self.refresh_nav_map_freq = random.choice([3,4,5]) # alternatively, can use vehicle speed and heading to interpolate ala kalman TODO
         self.small_map = None # doesn't update every frame
 
-        # global gps_tracker
-        self.gps_tracker = GPSTracker()
+        self.heading_tracker = HeadingTracker()
 
     def set_should_yield(self, should_yield):
         self.should_yield = should_yield
@@ -148,24 +149,31 @@ class Autopilot():
             # gps doesn't refresh as fast as do frames
             if self.overall_frame_counter % self.refresh_nav_map_freq == 0: # This always has to be called on first frame otherwise small_map is none
                 close_buffer = CLOSE_RADIUS
-                current_lat, current_lon = self.current_pos[0], self.current_pos[1]
-                heading_for_map = self.gps_tracker.step(current_lat, current_lon, self.current_speed_mps) # using same apparatus for rw and for trn
+                current_x = self.current_pos[0] + self.maps_noise_x[self.overall_frame_counter]
+                current_y = self.current_pos[1] + self.maps_noise_y[self.overall_frame_counter]
+                heading_for_map = self.heading_tracker.step(x=current_x, 
+                                                        y=current_y, 
+                                                        current_speed_mps=self.current_speed_mps) + self.maps_noise_heading[self.overall_frame_counter]                 
                 # heading_for_map = self.current_rotation[2]+(np.pi)
 
-                BEHIND_BUFFER_M = 30
-                FORWARD_BUFFER_M = 400
+                BEHIND_BUFFER_M, FORWARD_BUFFER_M = 30, 400
                 _min = max(0, current_wp_ix-int(BEHIND_BUFFER_M/WP_SPACING))
                 _max = current_wp_ix+int(FORWARD_BUFFER_M/WP_SPACING)
                 route_wps = self.waypoints[_min:_max]
                 is_route_wps_ixs = self.is_route_wps[_min:_max]
                 route_wps = route_wps[is_route_wps_ixs]
+                route_xs, route_ys = route_wps[:, 0]+self.route_x_offset, route_wps[:, 1]+self.route_y_offset
 
-                self.small_map = get_map(self.lats, self.lons, self.way_ids, route_wps,
-                                    current_lat + self.maps_noise_position[self.overall_frame_counter], 
-                                    current_lon + self.maps_noise_position[self.overall_frame_counter], #TODO refine this noising. Don't do same on x and y.
-                                    heading_for_map + self.maps_noise[self.overall_frame_counter], 
-                                    close_buffer,
-                                    self.draw_route)
+                self.small_map = get_map(self.map_xs, 
+                                        self.map_ys, 
+                                        self.way_ids, 
+                                        route_xs,
+                                        route_ys,
+                                        current_x, 
+                                        current_y,
+                                        heading_for_map,
+                                        close_buffer,
+                                        self.draw_route)
 
             # saving
             c = self.counter
