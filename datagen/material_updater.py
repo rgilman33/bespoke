@@ -205,18 +205,10 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("shadow_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95
 
 
-    # tiremarks
-    HAS_TIREMARKS_PROB = .1 if rd_is_lined else .4
-    get_node("tiremarks_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
-    get_node("tiremarks_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random()<.2 else random.uniform(.2, 1.)
-    get_node("tiremarks_maskout_noise_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, .4)
-    get_node("wheel_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.4, .9) if rd_is_lined else random.uniform(.3, .5) # using dirtgravel as proxy for narrower, bc we want narrower tiremarks when narrow rd otherwise whole rd is worn out
-    tiremarks_mult = random.uniform(.1 if rd_is_lined else .3, .8) if random.random() < HAS_TIREMARKS_PROB else 0
-    get_node("tiremarks_mult", dirt_gravel_nodes).outputs["Value"].default_value = tiremarks_mult
-
     # Directionality
-    HAS_DIRECTIONALITY_PROB = .1 if rd_is_lined else .6
-    get_node("directionality_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8) if random.random()<HAS_DIRECTIONALITY_PROB else 0
+    HAS_DIRECTIONALITY_PROB = .15 if rd_is_lined else .8 #.1 if rd_is_lined else .6
+    directionality_mult = random.uniform(.1, .8) if random.random()<HAS_DIRECTIONALITY_PROB else 0
+    get_node("directionality_mult", dirt_gravel_nodes).outputs["Value"].default_value = directionality_mult
     # get_node("directionality_maskout_noise_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
     get_node("d1_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.05, .2)
     get_node("d2_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.05, .2)
@@ -224,10 +216,20 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("directionality_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .5)
     get_node("directionality_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8)
 
+    # # tiremarks
+    # HAS_TIREMARKS_PROB = 0 if directionality_mult>0 else .1 if rd_is_lined else .4 # one or the other
+    # get_node("tiremarks_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
+    # get_node("tiremarks_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random()<.2 else random.uniform(.2, 1.)
+    # get_node("tiremarks_maskout_noise_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, .4)
+    # get_node("wheel_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.4, .9) if rd_is_lined else random.uniform(.3, .5) # using dirtgravel as proxy for narrower, bc we want narrower tiremarks when narrow rd otherwise whole rd is worn out
+    # tiremarks_mult = random.uniform(.1 if rd_is_lined else .3, .8) if random.random() < HAS_TIREMARKS_PROB else 0
+    # get_node("tiremarks_mult", dirt_gravel_nodes).outputs["Value"].default_value = tiremarks_mult
+
+
     # vertex spacing.
     # Startup time perf very sensitive to this. Directionality lines only show up where are edges, so this strongly affects directionality appearance.
     #TODO should depend on if rd is lined
-    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.4, .7)
+    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.5 if rd_is_lined else .4, .7)
 
 
 

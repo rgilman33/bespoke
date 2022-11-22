@@ -3,6 +3,10 @@ import xmltodict # using this instead of overpy to parse OSM data manually ourse
 import numpy as np
 
 OSM_DB_PATH = "/media/beans/ssd/osm/db"
+silverton_area_bbox_str = f'{str(44.85017681566702)},{-122.83272781942897},{45.07848012852752},{-122.49831789424171}'
+boulder_mtns_bbox_str = f'{str(39.9619)},{-105.5429},{40.0930},{-105.2961}'
+boulder_bbox_str = f'{str(39.9619)},{-105.5429},{40.0930},{-105.2143}'
+
 
 def get_big_map():
     # NOTE currently just returns map for silverton area
@@ -17,8 +21,9 @@ def get_big_map():
     bbox_angle = np.degrees(far_radius / EARTH_RADIUS)
     bbox_str = f'{str(lat - bbox_angle)},{str(lon - bbox_angle)},{str(lat + bbox_angle)},{str(lon + bbox_angle)}'"""
 
-    silverton_area_bbox_str = f'{str(44.85017681566702)},{-122.83272781942897},{45.07848012852752},{-122.49831789424171}'
-    bbox_str = silverton_area_bbox_str
+    #bbox_str = silverton_area_bbox_str
+    # bbox_str = boulder_mtns_bbox_str
+    bbox_str = boulder_bbox_str
     q = """
         way(""" + bbox_str + """)
           [highway]
