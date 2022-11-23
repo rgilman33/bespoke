@@ -372,7 +372,7 @@ class TorqueLimiter():
                                         BASELINE + max_angle_delta_bc_td)
         is_td_limited = td_limited_angle_deg != desired_tire_angle_deg
 
-        if is_td_limited or is_abs_torque_limited:
+        if (is_td_limited or is_abs_torque_limited):
             tire_angle_deg = td_limited_angle_deg if abs(td_limited_angle_deg)<abs(torque_limited_angle_deg) else torque_limited_angle_deg
         else:
             tire_angle_deg = desired_tire_angle_deg

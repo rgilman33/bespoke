@@ -164,3 +164,5 @@ def linear_to_sin(p):
 MAX_N_NPCS = 10
 
 GPS_HZ = 5
+
+ROUTES_DIR = "/media/beans/ssd/routes"
