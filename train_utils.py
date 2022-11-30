@@ -248,29 +248,6 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         has_lead_loss_no_reduce, has_lead_loss = mse_loss_no_reduce(aux_targets[:,:,3], sigmoid(aux_preds[:,:,3]))
         _, lead_dist_loss = mse_loss_no_reduce(aux_targets[:,:,4], aux_preds[:,:,4], mask=aux_targets[:,:,3])
 
-
-        # Find obs w worst loss
-        with torch.no_grad():
-            # wp angles loss
-            worst_control_loss, batch_worst_ix, bptt_worst_ix = get_worst(control_loss_no_reduce, has_three_dims=True) # has wp dim to also collapse
-            if worst_control_loss > worst_control_loss_all:
-                speed_mps = kph_to_mps(aux_model[batch_worst_ix, bptt_worst_ix, 2]*20) #TODO sloppy, this hardcoded denorm, and hardcoded speed ix
-                worst_control_loss_all_img = add_trajs_to_img(img[batch_worst_ix, bptt_worst_ix, :, :, :], 
-                                                                wp_angles_pred[batch_worst_ix, bptt_worst_ix, :], 
-                                                                wp_angles[batch_worst_ix, bptt_worst_ix, :],
-                                                                speed_mps=speed_mps)
-            # stopsigns
-            worst_approaching_stop_loss, batch_worst_ix, bptt_worst_ix = get_worst(approaching_stop_loss_no_reduce)
-            if worst_approaching_stop_loss > worst_approaching_stop_loss_all:
-                worst_approaching_stop_img = torch_to_np_img(img[batch_worst_ix, bptt_worst_ix, :,:,:])
-
-            worst_has_lead_loss, batch_worst_ix, bptt_worst_ix = get_worst(has_lead_loss_no_reduce)
-            if worst_has_lead_loss > worst_has_lead_loss_all:
-                worst_has_lead_img = torch_to_np_img(img[batch_worst_ix, bptt_worst_ix, :,:,:])
-
-
-        # print(stop_dist_loss, aux_targets[:,:,1], aux_preds[:,:,1],aux_targets[:,:,0])
-
         # calib loss
         pitch_loss = mse_loss(aux_calib[:,:,0], obs_net_out[:,:,0])
         yaw_loss = mse_loss(aux_calib[:,:,1], obs_net_out[:,:,1])
@@ -310,6 +287,21 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
 
         loss += ((pitch_loss + yaw_loss)/300)
 
+        if backwards:
+            scaler.scale(loss).backward() 
+            scaler.unscale_(opt)
+
+            CLIP_GRAD_NORM = 10
+            torch.nn.utils.clip_grad_norm_(model.fcs_1.parameters(), CLIP_GRAD_NORM)
+            torch.nn.utils.clip_grad_norm_(model._rnn.parameters(), CLIP_GRAD_NORM)
+            torch.nn.utils.clip_grad_norm_(model.fcs_2.parameters(), CLIP_GRAD_NORM)
+            
+            scaler.step(opt)
+            scaler.update() 
+            opt.zero_grad()
+            time.sleep(train_pause)
+
+        # Logging
         logger.log({f"lat_losses/{dataloader.path_stem}_control_loss": control_loss.item(),
                     f"lat_losses/{dataloader.path_stem}_headings_loss": headings_loss.item(),   
                     f"lat_losses/{dataloader.path_stem}_curvatures_loss": curvatures_loss.item(),   
@@ -325,25 +317,30 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                     # f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_loss":1 if has_torque_loss else 0,
                     f"consistency losses/{dataloader.path_stem}_%_updates_w_torque_delta_loss":1 if has_torque_delta_loss else 0,
                    })
-
         if has_torque_loss:
             logger.log({f"consistency losses/{dataloader.path_stem}_torque_loss":torque_loss.item()})
         if has_torque_delta_loss: 
             logger.log({f"consistency losses/{dataloader.path_stem}_torque_delta_loss":torque_delta_loss.item()})
 
-        if backwards:
-            scaler.scale(loss).backward() 
-            scaler.unscale_(opt)
+        # Obs w worst loss
+        with torch.no_grad():
+            # wp angles loss
+            worst_control_loss, batch_worst_ix, bptt_worst_ix = get_worst(control_loss_no_reduce, has_three_dims=True) # has wp dim to also collapse
+            if worst_control_loss > worst_control_loss_all:
+                speed_mps = kph_to_mps(aux_model[batch_worst_ix, bptt_worst_ix, 2]*20) #TODO sloppy, this hardcoded denorm, and hardcoded speed ix
+                worst_control_loss_all_img = add_trajs_to_img(img[batch_worst_ix, bptt_worst_ix, :, :, :], 
+                                                                wp_angles_pred[batch_worst_ix, bptt_worst_ix, :], 
+                                                                wp_angles[batch_worst_ix, bptt_worst_ix, :],
+                                                                speed_mps=speed_mps)
+            # stopsigns
+            worst_approaching_stop_loss, batch_worst_ix, bptt_worst_ix = get_worst(approaching_stop_loss_no_reduce)
+            if worst_approaching_stop_loss > worst_approaching_stop_loss_all:
+                worst_approaching_stop_img = torch_to_np_img(img[batch_worst_ix, bptt_worst_ix, :,:,:])
 
-            CLIP_GRAD_NORM = 10
-            torch.nn.utils.clip_grad_norm_(model.fcs_1.parameters(), CLIP_GRAD_NORM)
-            torch.nn.utils.clip_grad_norm_(model._rnn.parameters(), CLIP_GRAD_NORM)
-            torch.nn.utils.clip_grad_norm_(model.fcs_2.parameters(), CLIP_GRAD_NORM)
-            
-            scaler.step(opt)
-            scaler.update() 
-            opt.zero_grad()
-            time.sleep(train_pause)
+            # Lead car
+            worst_has_lead_loss, batch_worst_ix, bptt_worst_ix = get_worst(has_lead_loss_no_reduce)
+            if worst_has_lead_loss > worst_has_lead_loss_all:
+                worst_has_lead_img = torch_to_np_img(img[batch_worst_ix, bptt_worst_ix, :,:,:])
 
         # Periodic save and report
         if (update_counter+1)%log_cadence==0: 
@@ -352,7 +349,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             logger.log({"logistical/max_param": max_param,
                         "logistical/lr":opt.param_groups[0]['lr']})
             stats = logger.finish(); print(stats)
-            worst_control_loss_all = -np.inf
+            worst_control_loss_all, worst_approaching_stop_loss_all, worst_has_lead_loss_all = -np.inf, -np.inf, -np.inf
             if log_wandb: 
                 # random imgs to log
                 random_img_0 = add_trajs_to_img(img[0, 3, :,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :], speed_mps=kph_to_mps(aux_model[0,3,2]*20)) #TODO sloppy hardcoded denorm
@@ -365,7 +362,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
                 wandb.log({"imgs/worst_losses": wandb.Image(worst_imgs),
                             "imgs/random":three_randos,
                         })
-            
+
         # Timing
         t2 = time.time()
         n_obs_consumed = dataloader.bs * BPTT
