@@ -2,7 +2,6 @@ from constants import *
 from imports import *
 from train_utils import *
 from traj_utils import *
-from blender_dataloader import *
 
 # Camera matrix got from rw calib using the webcam. Notebook on old laptop?
 dist = np.float32([[0,0,0,0,0]])

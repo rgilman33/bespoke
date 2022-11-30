@@ -182,3 +182,23 @@ GPS_HZ = 5
 
 ROUTES_DIR = "/media/beans/ssd/routes"
 
+def get_auxs(aux):
+    bs, bptt, _ = aux.shape
+    # model in
+    aux_model = np.zeros((bs, bptt, N_AUX_MODEL_IN), dtype=np.float16)
+    aux_model[:,:,2] = aux[:,:,AUX_SPEED_IX]
+
+    # calib in
+    aux_calib = np.zeros((bs, bptt, N_AUX_CALIB_IN), dtype=np.float16)
+    aux_calib[:,:,0] = aux[:,:,AUX_PITCH_IX]
+    aux_calib[:,:,1] = aux[:,:,AUX_YAW_IX]
+
+    # aux targets
+    aux_targets = np.zeros((bs, bptt, N_AUX_TARGETS), dtype=np.float16)
+    aux_targets[:,:,0] = aux[:,:, AUX_APPROACHING_STOP_IX]
+    aux_targets[:,:,1] = aux[:,:, AUX_STOP_DIST_IX]
+    aux_targets[:,:,2] = aux[:,:, AUX_STOPPED_IX]
+    aux_targets[:,:,3] = aux[:,:, AUX_HAS_LEAD_IX]
+    aux_targets[:,:,4] = aux[:,:, AUX_LEAD_DIST_IX]
+
+    return aux_model, aux_calib, aux_targets

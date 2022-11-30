@@ -151,12 +151,19 @@ class Logger():
         self.tracker = {}
         return r
 
+
+def torch_to_np_img(img):
+    # takes in img as it was given to model. Denorms it, permutes back into np dims, puts on cpu and returns as np 0 to 255
+    img = img.permute(1,2,0).cpu().numpy()
+    img = denorm_img(img)
+    img = (img*255).astype(np.uint8)
+    return img
+
 def add_trajs_to_img(img, pred, targets, speed_mps=None):
     """ Takes img in as it was directly as fed into model. Preds and targets same, right into or out of the model """
+    img = torch_to_np_img(img)
+
     target_norm = TARGET_NORM[0,0,:].to('cuda') # squeezing what was unsqueezed
-    img = torch.clone(img)
-    img = denorm_img(img).permute(1,2,0).cpu().numpy()
-    img = (img*255).astype(np.uint8)
     trj = (pred * target_norm).detach().cpu().numpy()
     trj_targets = (targets * target_norm).detach().cpu().numpy()
     img = draw_wps(img, trj, speed_mps=speed_mps)
@@ -171,11 +178,25 @@ avg_td_loss = 15
 avg_torque_loss = 2000
 avg_te_loss = .02
 
+avg_approaching_stop_loss = .04
+avg_stop_dist_loss = .005
+avg_stopped_loss = .0002
+avg_has_lead_loss = .04
+avg_lead_dist_loss = .04
+
 # we're saying we don't care as much about the further wps, regardless of angle
 loss_weights = torch.from_numpy(pad(pad(np.concatenate([np.ones(20), np.linspace(1., .5, 10)]))).astype(np.float16)).to(device)
 
 sigmoid = torch.nn.Sigmoid()
 
+def get_worst(losses, has_three_dims=False):
+    if has_three_dims: # control loss has wp dim to also collapse ie (bs, bptt, n_wps). Others are just (bs, bptt)
+        losses,_ = losses.max(-1) # collapse the wp traj
+    a, bptt_worst_ixs = losses.max(-1) # collapse the bptt traj
+    worst_loss, batch_worst_ix = a.max(0)
+    bptt_worst_ix = bptt_worst_ixs[batch_worst_ix]
+    return worst_loss, batch_worst_ix, bptt_worst_ix
+    
 def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
               model, 
               opt=None, 
@@ -187,15 +208,16 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
               updates_per_epoch=5120,
               wandb=None):
     
-    global avg_control_loss, avg_td_loss, avg_torque_loss, avg_te_loss #TODO awkward
+    global avg_control_loss, avg_td_loss, avg_torque_loss, avg_te_loss, avg_approaching_stop_loss, avg_stop_dist_loss, avg_stopped_loss, avg_has_lead_loss, avg_lead_dist_loss
+    #TODO awkward
 
     model.train(train)
     logger = Logger()
     train_pause = 0 #seconds
     model.reset_hidden(dataloader.bs)
 
-    worst_control_loss_all = -np.inf
-    worst_control_loss_all_img = None
+    worst_control_loss_all, worst_approaching_stop_loss_all, worst_has_lead_loss_all = -np.inf, -np.inf, -np.inf
+    worst_control_loss_all_img, worst_approaching_stop_img, worst_has_lead_img = None, None, None
 
     for update_counter in range(updates_per_epoch):
         t1 = time.time()
@@ -215,25 +237,39 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
         _, headings_loss = mse_loss_no_reduce(wp_headings, wp_headings_pred, mask=to_pred_mask, weights=loss_weights)
         _, curvatures_loss = mse_loss_no_reduce(wp_curvatures, wp_curvatures_pred, mask=to_pred_mask, weights=loss_weights)
 
-        # Find obs w worst loss
-        with torch.no_grad():
-            a,_ = control_loss_no_reduce.max(-1) # collapse the wp traj
-            a, bptt_worst_ixs = a.max(-1) # collapse the bptt traj
-            control_loss_worst, ix_worst = a.max(0)
-            bptt_ix_worst = bptt_worst_ixs[ix_worst]
-            if control_loss_worst > worst_control_loss_all:
-                speed_mps = kph_to_mps(aux_model[ix_worst, bptt_ix_worst, 2]*20) #TODO sloppy, this hardcoded denorm, and hardcoded speed ix
-                worst_control_loss_all_img = add_trajs_to_img(img[ix_worst, bptt_ix_worst, :, :, :], 
-                                                                wp_angles_pred[ix_worst, bptt_ix_worst, :], 
-                                                                wp_angles[ix_worst, bptt_ix_worst, :],
-                                                                speed_mps=speed_mps) #TODO add speed_mps to this so it truncates excess traj
         # aux targets
-        approaching_stop_loss = mse_loss(aux_targets[:,:,0], sigmoid(aux_preds[:,:,0]))
-        stop_dist_loss = mse_loss_no_reduce(aux_targets[:,:,1], aux_preds[:,:,1], mask=aux_targets[:,:,0]) # dist only care about when approaching stop
+        aux_targets = torch.clip(aux_targets, -150, 150) #TODO just make this lower in datagen. Was getting overflow in halfs
+
+        approaching_stop_loss_no_reduce, approaching_stop_loss = mse_loss_no_reduce(aux_targets[:,:,0], sigmoid(aux_preds[:,:,0]))
+        stop_dist_loss_no_reduce, stop_dist_loss = mse_loss_no_reduce(aux_targets[:,:,1], aux_preds[:,:,1], mask=aux_targets[:,:,0]) # dist only care about when approaching stop
+        
         stopped_loss = mse_loss(aux_targets[:,:,2], sigmoid(aux_preds[:,:,2]))
 
-        has_lead_loss = mse_loss(aux_targets[:,:,3], sigmoid(aux_preds[:,:,3]))
-        lead_dist_loss = mse_loss_no_reduce(aux_targets[:,:,4], aux_preds[:,:,4], mask=aux_targets[:,:,3])
+        has_lead_loss_no_reduce, has_lead_loss = mse_loss_no_reduce(aux_targets[:,:,3], sigmoid(aux_preds[:,:,3]))
+        _, lead_dist_loss = mse_loss_no_reduce(aux_targets[:,:,4], aux_preds[:,:,4], mask=aux_targets[:,:,3])
+
+
+        # Find obs w worst loss
+        with torch.no_grad():
+            # wp angles loss
+            worst_control_loss, batch_worst_ix, bptt_worst_ix = get_worst(control_loss_no_reduce, has_three_dims=True) # has wp dim to also collapse
+            if worst_control_loss > worst_control_loss_all:
+                speed_mps = kph_to_mps(aux_model[batch_worst_ix, bptt_worst_ix, 2]*20) #TODO sloppy, this hardcoded denorm, and hardcoded speed ix
+                worst_control_loss_all_img = add_trajs_to_img(img[batch_worst_ix, bptt_worst_ix, :, :, :], 
+                                                                wp_angles_pred[batch_worst_ix, bptt_worst_ix, :], 
+                                                                wp_angles[batch_worst_ix, bptt_worst_ix, :],
+                                                                speed_mps=speed_mps)
+            # stopsigns
+            worst_approaching_stop_loss, batch_worst_ix, bptt_worst_ix = get_worst(approaching_stop_loss_no_reduce)
+            if worst_approaching_stop_loss > worst_approaching_stop_loss_all:
+                worst_approaching_stop_img = torch_to_np_img(img[batch_worst_ix, bptt_worst_ix, :,:,:])
+
+            worst_has_lead_loss, batch_worst_ix, bptt_worst_ix = get_worst(has_lead_loss_no_reduce)
+            if worst_has_lead_loss > worst_has_lead_loss_all:
+                worst_has_lead_img = torch_to_np_img(img[batch_worst_ix, bptt_worst_ix, :,:,:])
+
+
+        # print(stop_dist_loss, aux_targets[:,:,1], aux_preds[:,:,1],aux_targets[:,:,0])
 
         # calib loss
         pitch_loss = mse_loss(aux_calib[:,:,0], obs_net_out[:,:,0])
@@ -255,12 +291,22 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             avg_td_loss = avg_td_loss*LOSS_EPS + torque_delta_loss.item()*(1-LOSS_EPS)
         if has_torque_loss:
             avg_torque_loss = avg_torque_loss*LOSS_EPS + torque_loss.item()*(1-LOSS_EPS)
+        avg_approaching_stop_loss = avg_approaching_stop_loss*LOSS_EPS + approaching_stop_loss.item()*(1-LOSS_EPS)
+        avg_stop_dist_loss = avg_stop_dist_loss*LOSS_EPS + stop_dist_loss.item()*(1-LOSS_EPS)
+        avg_stopped_loss = avg_stopped_loss*LOSS_EPS + stopped_loss.item()*(1-LOSS_EPS)
+        avg_has_lead_loss = avg_has_lead_loss*LOSS_EPS + has_lead_loss.item()*(1-LOSS_EPS)
+        avg_lead_dist_loss = avg_lead_dist_loss*LOSS_EPS + lead_dist_loss.item()*(1-LOSS_EPS)
 
         # loss weights
-        TD_LOSS_WEIGHT = .03
         headings_loss /= 40
         curvatures_loss /= 2
-        loss = control_loss + headings_loss + curvatures_loss + torque_delta_loss*(TD_LOSS_WEIGHT*avg_control_loss/avg_td_loss)
+        loss = control_loss + headings_loss + curvatures_loss + torque_delta_loss*(.03*avg_control_loss/avg_td_loss)
+
+        loss += approaching_stop_loss*(.1*avg_control_loss/avg_approaching_stop_loss)
+        loss += stop_dist_loss*(.1*avg_control_loss/avg_stop_dist_loss)
+        loss += stopped_loss*(.03*avg_control_loss/avg_stopped_loss)
+        loss += has_lead_loss*(.1*avg_control_loss/avg_has_lead_loss)
+        loss += lead_dist_loss*(.1*avg_control_loss/avg_lead_dist_loss)
 
         loss += ((pitch_loss + yaw_loss)/300)
 
@@ -292,7 +338,7 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             CLIP_GRAD_NORM = 10
             torch.nn.utils.clip_grad_norm_(model.fcs_1.parameters(), CLIP_GRAD_NORM)
             torch.nn.utils.clip_grad_norm_(model._rnn.parameters(), CLIP_GRAD_NORM)
-            torch.nn.utils.clip_grad_norm_(model._fcs_2.parameters(), CLIP_GRAD_NORM)
+            torch.nn.utils.clip_grad_norm_(model.fcs_2.parameters(), CLIP_GRAD_NORM)
             
             scaler.step(opt)
             scaler.update() 
@@ -309,14 +355,14 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             worst_control_loss_all = -np.inf
             if log_wandb: 
                 # random imgs to log
-                random_img_0 = add_trajs_to_img(img[0, 3, :,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :], speed_mps=kph_to_mps(aux[0,3,2]*20)) #TODO sloppy hardcoded denorm
-                random_img_1 = add_trajs_to_img(img[1, -1, :,:,:], wp_angles_pred[1, -1, :], wp_angles[1, -1, :], speed_mps=kph_to_mps(aux[1,-1,2]*20))
-                random_img_2 = add_trajs_to_img(img[-1, 0, :,:,:], wp_angles_pred[-1, 0, :], wp_angles[-1, 0, :], speed_mps=kph_to_mps(aux[-1,0,2]*20))
+                random_img_0 = add_trajs_to_img(img[0, 3, :,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :], speed_mps=kph_to_mps(aux_model[0,3,2]*20)) #TODO sloppy hardcoded denorm
+                random_img_1 = add_trajs_to_img(img[1, -1, :,:,:], wp_angles_pred[1, -1, :], wp_angles[1, -1, :], speed_mps=kph_to_mps(aux_model[1,-1,2]*20))
+                random_img_2 = add_trajs_to_img(img[-1, 0, :,:,:], wp_angles_pred[-1, 0, :], wp_angles[-1, 0, :], speed_mps=kph_to_mps(aux_model[-1,0,2]*20))
 
                 three_randos = wandb.Image(np.concatenate([random_img_0, random_img_1, random_img_2], axis=0))
-
+                worst_imgs = np.concatenate([worst_control_loss_all_img, worst_approaching_stop_img, worst_has_lead_img], axis=0)
                 wandb.log(stats)
-                wandb.log({"imgs/worst_control_loss": wandb.Image(worst_control_loss_all_img),
+                wandb.log({"imgs/worst_losses": wandb.Image(worst_imgs),
                             "imgs/random":three_randos,
                         })
             
@@ -503,9 +549,9 @@ transform = A.Compose([
 
 def aug_imgs(img):
     bs, seqlen, _,_,_= img.shape # seqlen may be shorter than BPTT at the end of each seq
-    AUG_SEQ_PROB = .7 #.9
+    AUG_SEQ_PROB = .8
     AUTO_GAMMA_PROB = 0 #.1
-    SEQ_CONSTANT_AUG_PROB = .9 #.8
+    SEQ_CONSTANT_AUG_PROB = .7 #.8
     for b in range(bs):
         # Sometimes don't aug at all
         if random.random() > AUG_SEQ_PROB: continue

@@ -10,26 +10,6 @@ get_img_container = lambda bs : np.empty((bs, SEQ_LEN, IMG_HEIGHT, IMG_WIDTH, 3)
 get_aux_container = lambda bs : np.empty((bs, SEQ_LEN, N_AUX_TO_SAVE), dtype=np.float32)
 get_targets_container = lambda bs : np.empty((bs, SEQ_LEN, N_WPS*3), dtype=np.float32)
 
-def get_auxs(aux):
-    bs, bptt, _ = aux.shape
-    # model in
-    aux_model = np.zeros((bs, bptt, N_AUX_MODEL_IN), dtype=np.float16)
-    aux_model[:,:,2] = aux[:,:,AUX_SPEED_IX]
-
-    # calib in
-    aux_calib = np.zeros((bs, bptt, N_AUX_CALIB_IN), dtype=np.float16)
-    aux_calib[:,:,0] = aux[:,:,AUX_PITCH_IX]
-    aux_calib[:,:,1] = aux[:,:,AUX_YAW_IX]
-
-    # aux targets
-    aux_targets = np.zeros((bs, bptt, N_AUX_TARGETS), dtype=np.float16)
-    aux_targets[:,:,0] = aux[:,:, AUX_APPROACHING_STOP_IX]
-    aux_targets[:,:,1] = aux[:,:, AUX_STOP_DIST_IX]
-    aux_targets[:,:,2] = aux[:,:, AUX_STOPPED_IX]
-    aux_targets[:,:,3] = aux[:,:, AUX_HAS_LEAD_IX]
-    aux_targets[:,:,4] = aux[:,:, AUX_LEAD_DIST_IX]
-
-    return aux_model, aux_calib, aux_targets
 
 class BlenderDataloader():
 
@@ -67,7 +47,9 @@ class BlenderDataloader():
             # ie we grab a targets right before it's deleted, and imgs begin to be overwritten before we can grab them all. Also note this modulo
             # move is to keep sampling more even
             datagen_id = ("00"+str((b+_offset) % N_RUNNERS))[-2:] 
-            ts = glob.glob(f"{BLENDER_MEMBANK_ROOT}/dataloader_{datagen_id}/run_{random.randint(0, RUNS_TO_STORE_PER_PROCESS-1)}/targets_*.npy")
+            ts = []
+            while len(ts)==0: # So we can start sooner than ready
+                ts = glob.glob(f"{BLENDER_MEMBANK_ROOT}/dataloader_{datagen_id}/run_{random.randint(0, RUNS_TO_STORE_PER_PROCESS-1)}/targets_*.npy")
             t = random.choice(ts)
 
             t_split = t.split('/')
@@ -91,8 +73,10 @@ class BlenderDataloader():
 
             #maps[:-1,:,:,:] = maps[1:,:,:,:] This lines them up, without it we're actually off by one lagged
             
-            # giving maps to the entire chunk, or not at all
-            HAS_MAP_PROB = .85
+            episode_info = np.load(f"{t_stem}/episode_info.npy")
+            # giving maps to the entire chunk, or not at all. When have turns, must have maps
+            just_go_straight = bool(episode_info[0])
+            HAS_MAP_PROB = .5 if just_go_straight else 1.0
             img_chunk[b,:,:,-MAP_WIDTH:,:] = maps if random.random() < HAS_MAP_PROB else 0 
                     
         targets_chunk[:,:-1,:] = targets_chunk[:,1:,:] # moving targets forward by one bc of they're off by one

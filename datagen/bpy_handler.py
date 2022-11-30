@@ -292,8 +292,6 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
                                 _is_highway=False, _is_lined=False, _pitch_perturbation=0, _yaw_perturbation=0,
                                 has_npcs=True, _is_single_rd=True):
     global ap, tm
-    ap = Autopilot(is_highway=_is_highway, pitch_perturbation=_pitch_perturbation, yaw_perturbation=_yaw_perturbation, 
-                        run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True)
 
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
@@ -305,25 +303,31 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
     wp_df = wp_df[wp_df.wps]
     print("get wp df", time.time() - t0)
 
-    # single-rd, only start at ends of rd len. Just go straight.
+    # single-rd. Maybe just straight maybe turns ok.
+    JUST_GO_STRAIGHT_PROB = .2
+    just_go_straight = random.random()<JUST_GO_STRAIGHT_PROB
     if _is_single_rd:
         s = wp_df[(wp_df.ix_in_curve==0) & (wp_df.wp_curve_id==2)] # start wps, first lane (not turning)
-        s = s[((s.intersection_id==4) & (s.section_id.isin([1, 10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([7, 4, 10])))]
-        # route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True)
-        route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=False)
+        if just_go_straight:
+            s = s[((s.intersection_id==4) & (s.section_id.isin([1]))) | ((s.intersection_id==6) & (s.section_id.isin([7])))]
+            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True)
+        else:
+            s = s[((s.intersection_id==4) & (s.section_id.isin([1, 10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([7, 4, 10])))]
+            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=False)
     else: # start anywhere, turning allowed
         route = get_route(wp_df, route_len=ROUTE_LEN_M)
 
     print("get route", time.time() - t0)
+    ap = Autopilot(is_highway=_is_highway, pitch_perturbation=_pitch_perturbation, yaw_perturbation=_yaw_perturbation, 
+                        run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True, just_go_straight=just_go_straight)
 
     ap.set_route(route)
     ap.set_nav_map(coarse_map_df)
     update_ap_object(make_vehicle_nodes, ap)
 
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, is_highway=_is_highway)
-    if has_npcs:
-        tm.add_npcs(random.randint(6, MAX_N_NPCS))
-        #tm.add_npcs(16)
+
+    tm.add_npcs(random.randint(6, MAX_N_NPCS) if has_npcs else 0)
 
     print("total setup time", time.time() - t0)
         

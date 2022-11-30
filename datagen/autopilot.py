@@ -9,7 +9,8 @@ from map_utils import *
 
 
 class Autopilot():
-    def __init__(self, save_data=True, is_highway=False, pitch_perturbation=0, yaw_perturbation=0, run_root=None, ap_id=None, is_ego=False):
+    def __init__(self, save_data=True, is_highway=False, pitch_perturbation=0, yaw_perturbation=0, \
+                    run_root=None, ap_id=None, is_ego=False, just_go_straight=False):
         self.is_highway, self.save_data, self.run_root, self.ap_id, self.is_ego = is_highway, save_data, run_root, ap_id, is_ego
         self.reset_drive_style()
         self.counter, self.overall_frame_counter = 0, 0
@@ -22,6 +23,8 @@ class Autopilot():
         self.targets_container = np.zeros((SEQ_LEN, N_WPS*3), dtype=np.float32)
         self.aux_container = np.zeros((SEQ_LEN, N_AUX_TO_SAVE), dtype=np.float32)
         self.maps_container = np.zeros((SEQ_LEN, MAP_HEIGHT, MAP_WIDTH, 3), dtype='uint8')
+
+        self.episode_info = np.zeros(10, dtype=np.float32)
 
         self.pitch_perturbation, self.yaw_perturbation = pitch_perturbation, yaw_perturbation
         self.small_map = None
@@ -41,15 +44,16 @@ class Autopilot():
         roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
         self.roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
 
-        gps_bad = random.random() < .1
+        r = random.random()
+        gps_state = "BAD" if r < .05 else "MED" if r <.1 else "NORMAL"
         # noise for the map, heading. This is in addition to what we'll get from the noisy pos
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-        maps_noise_mult = np.radians(30) if gps_bad else random.uniform(.001, np.radians(5)) # radians
+        maps_noise_mult = np.radians(30) if gps_state=="BAD" else np.radians(10) if gps_state=="MED" else random.uniform(.001, np.radians(5)) # radians
         self.maps_noise_heading = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
         # noise for the map, position
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-        maps_noise_mult = 60 if gps_bad else random.uniform(.001, 10) # meters
+        maps_noise_mult = 60 if gps_state=="BAD" else 30 if gps_state=="MED" else random.uniform(.001, 10) # meters
         self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
         self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
@@ -57,7 +61,8 @@ class Autopilot():
         self.negotiation_traj_ixs = np.empty((self.N_NEGOTIATION_WPS), dtype=int)
         self.m_per_wp = 1
 
-        self.draw_route = random.random() < .8
+        NO_ROUTE_PROB = 1. # Only applied when just_go_straight
+        self.draw_route = False if (random.random() < NO_ROUTE_PROB and just_go_straight) else True
 
         # Stopsigns
         self.stopsign_state = "NONE"
@@ -68,6 +73,16 @@ class Autopilot():
         # Lead car. Set in TM
         self.has_lead = False
         self.lead_dist = 1e6
+
+        ######
+        # save episode info
+        self.episode_info[0] = just_go_straight
+        # add more when needed
+
+        if self.save_data:
+            np.save(f"{self.run_root}/episode_info.npy", self.episode_info)
+
+
 
 
     def set_route(self, route):
