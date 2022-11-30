@@ -116,7 +116,7 @@ def get_map(map_xs, map_ys, way_ids, route_xs, route_ys, current_x, current_y, v
 
 
 # only used by blender
-def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
+def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=15):
     for i in range(n_noise_rds):
         ix = random.randint(0, len(lats)-1)
         start_lat, start_lon = lats[ix], lons[ix]
@@ -136,10 +136,9 @@ def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=10):
         else:
             rd_lats = [start_lat+(end_lat_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
             rd_lons = [start_lon+(end_lon_add*p) for p in [0, .2, .4, .6, .8, 1.0]]
-        lats += rd_lats
-        lons += rd_lons
-        way_ids += ([i+300]* len(rd_lats)) # just making sure isn't same id as real rds HACK this whole fn is hacky. beware.
-
+        lats = np.concatenate([lats, rd_lats])
+        lons = np.concatenate([lons, rd_lons])
+        way_ids = np.concatenate([way_ids, ([i+300]* len(rd_lats))]) # just making sure isn't same id as real rds HACK this whole fn is hacky. beware.
     return lats, lons, way_ids
 
 # Distance btwn lon lines is a fn of lat. Mult rw lon values by this mult to make it approximately an xy grid eg as we get from blender

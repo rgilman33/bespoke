@@ -43,7 +43,6 @@ def _get_route(df, start_locs_df, route_len, just_go_straight):
     # route_len is in meters
     segments = []
     start_wp = start_locs_df.sample(1).iloc[0] if start_locs_df is not None else df.sample(1).iloc[0]
-    intersection_id = start_wp.intersection_id
     wps_segment_uid = start_wp.wps_segment_uid
 
     all_start_wps = df[(df.ix_in_curve==0) & (df.wp_no_go==False)]
@@ -82,6 +81,8 @@ def _get_route(df, start_locs_df, route_len, just_go_straight):
         wps_segment_uid = next_wp.wps_segment_uid
         
     route_wps = pd.concat(segments)
+    RANDOM_START_OFFSET_M_MAX = 30
+    route_wps = route_wps.iloc[random.randint(0, int(RANDOM_START_OFFSET_M_MAX/WP_SPACING)):-1]
     return route_wps
 
 def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False):
@@ -144,7 +145,13 @@ def get_wp_df(wps_holder_object):
                                 df.from_section.astype(str) + df.to_section.astype(str)).astype(int)
     # these last two properties necessary to differentiate slips within an intersection
 
+
     df["ix_in_curve"] = [d.value for d in wps_holder_object.data.attributes["ix_in_curve"].data]
+
+    # unique for each wp
+    df["wp_uid"] = (df.wps_segment_uid.astype(str) + df.ix_in_curve.astype(str)).astype("int64")
+    _df_wps = df[df.wps]
+    print("UNIQUE wps, len df", len(_df_wps.wp_uid.unique()), len(_df_wps))
 
     df["wps_connect"] = [d.value for d in wps_holder_object.data.attributes["wps_connect"].data]
 
@@ -197,7 +204,7 @@ class TrafficManager():
     def __init__(self, ego_ap, wp_df, is_highway=False):
         # self.npc_nodes, self.npc_aps, self.npc_objects = [], [], []
         self.is_highway = is_highway
-        self.ego = ego_ap
+        self.ego = ego_ap # this is ego.ap actually
         # npcs only start along the route, not randomly scattered on map
         start_locs_df = wp_df[wp_df.intersection_id.isin(ego_ap.visited_intersections)] 
         # no NPCs right next to ego at start
@@ -221,7 +228,7 @@ class TrafficManager():
                 nodes = npc_object.modifiers["GeometryNodes"].node_group.nodes
 
                 npc_ap = Autopilot(is_highway=self.is_highway, ap_id=i, save_data=False, is_ego=False)
-                route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=500)
+                route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=800)
                 npc_ap.set_route(route)
 
                 update_ap_object(nodes, npc_ap)
@@ -232,7 +239,10 @@ class TrafficManager():
                 npc_object.hide_render = True
 
     def step(self):
+
         self.ego.set_should_yield(False)
+        self.ego.has_lead = False
+        self.ego.lead_dist = 1e6
 
         for npc in self.npcs:
             if npc.ap.route_is_done:
@@ -242,21 +252,33 @@ class TrafficManager():
 
             npc.ap.set_should_yield(False)
 
-            if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < 90: # Only check detailed trajs if within distance TODO this dist should be dynamic based on the speeds of both parties
+            if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < TRAJ_WP_DISTS[-1]: # Only check detailed trajs if within distance TODO this dist should be dynamic based on the speeds of both parties
+                # Checking for collisions, setting yield states
                 ego_traj = self.ego.negotiation_traj[:, :2]
                 npc_traj = npc.ap.negotiation_traj[:, :2]
-
                 # Result is traj_len x traj_len matrix w dist btwn every point in A to every pt in B
-                result = (ego_traj[:, None, :] - npc_traj[None, :, :])**2 # padding + broadcasting is forcing np to give us the matrix we want. I don't fully understand why.
+                result = (ego_traj[:, None, :] - npc_traj[None, :, :])**2 # padding + broadcasting is forcing np to give us the matrix we want
                 result = np.sqrt(result[:,:,0] + result[:,:,1])
                 if result.min() < CRV_WIDTH * 1.2: 
                     argmin_ix_a, argmin_ix_b = np.unravel_index(result.argmin(), result.shape) # np magic to find argmin in 2d array. Don't fully understand.
                     ego_dist_to_collision = argmin_ix_a * self.ego.m_per_wp
                     npc_dist_to_collision = argmin_ix_b * npc.ap.m_per_wp
-                    if ego_dist_to_collision > npc_dist_to_collision:
-                        self.ego.set_should_yield(True)
+                    if (ego_dist_to_collision > npc_dist_to_collision) or self.ego.is_in_yield_zone:
+                        self.ego.set_should_yield(True)                        
                     else:
                         npc.ap.set_should_yield(True)
+
+                # lead car status
+                # overlap_ixs = np.where(self.ego.traj_wp_uids==npc.ap.current_wp_uid)[0] # Doesn't work bc wps overlaps, left right straight. 
+                dists = (self.ego.traj_granular - npc.ap.current_pos)**2
+                dists = np.sqrt(dists[:,0] + dists[:,1])
+                IS_LEAD_TRAJ_DIST_THRESH = .5
+                overlap_ixs = np.where(dists<IS_LEAD_TRAJ_DIST_THRESH)[0] # Not perfect, would fail if vehicle was directly oncoming. Should also taking into account heading
+                npc_is_ego_lead = len(overlap_ixs)>0
+                if npc_is_ego_lead:
+                    self.ego.has_lead = True
+                    lead_dist = overlap_ixs[0] * WP_SPACING
+                    self.ego.lead_dist = min(lead_dist, self.ego.lead_dist)
 
             # move if visible to ego
             if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < npc.dist_from_ego_start_go:
@@ -286,8 +308,9 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
     # single-rd, only start at ends of rd len. Just go straight.
     if _is_single_rd:
         s = wp_df[(wp_df.ix_in_curve==0) & (wp_df.wp_curve_id==2)] # start wps, first lane (not turning)
-        s = s[((s.intersection_id==4) & (s.section_id==1)) | ((s.intersection_id==6) & (s.section_id==7))] # each tip of the rd len
-        route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True)
+        s = s[((s.intersection_id==4) & (s.section_id.isin([1, 10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([7, 4, 10])))]
+        # route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True)
+        route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=False)
     else: # start anywhere, turning allowed
         route = get_route(wp_df, route_len=ROUTE_LEN_M)
 
@@ -299,7 +322,8 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
 
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, is_highway=_is_highway)
     if has_npcs:
-        tm.add_npcs(random.randint(2, MAX_N_NPCS))
+        tm.add_npcs(random.randint(6, MAX_N_NPCS))
+        #tm.add_npcs(16)
 
     print("total setup time", time.time() - t0)
         

@@ -1,5 +1,5 @@
 
-from input_prep import prep_inputs, pad
+from input_prep import prep_inputs, pad, prep_targets
 from train_utils import aug_imgs
 import threading
 from constants import *
@@ -7,8 +7,29 @@ from imports import *
 from traj_utils import *
 
 get_img_container = lambda bs : np.empty((bs, SEQ_LEN, IMG_HEIGHT, IMG_WIDTH, 3), dtype='uint8')
-get_aux_container = lambda bs : np.empty((bs, SEQ_LEN, N_AUX), dtype=np.float32)
+get_aux_container = lambda bs : np.empty((bs, SEQ_LEN, N_AUX_TO_SAVE), dtype=np.float32)
 get_targets_container = lambda bs : np.empty((bs, SEQ_LEN, N_WPS*3), dtype=np.float32)
+
+def get_auxs(aux):
+    bs, bptt, _ = aux.shape
+    # model in
+    aux_model = np.zeros((bs, bptt, N_AUX_MODEL_IN), dtype=np.float16)
+    aux_model[:,:,2] = aux[:,:,AUX_SPEED_IX]
+
+    # calib in
+    aux_calib = np.zeros((bs, bptt, N_AUX_CALIB_IN), dtype=np.float16)
+    aux_calib[:,:,0] = aux[:,:,AUX_PITCH_IX]
+    aux_calib[:,:,1] = aux[:,:,AUX_YAW_IX]
+
+    # aux targets
+    aux_targets = np.zeros((bs, bptt, N_AUX_TARGETS), dtype=np.float16)
+    aux_targets[:,:,0] = aux[:,:, AUX_APPROACHING_STOP_IX]
+    aux_targets[:,:,1] = aux[:,:, AUX_STOP_DIST_IX]
+    aux_targets[:,:,2] = aux[:,:, AUX_STOPPED_IX]
+    aux_targets[:,:,3] = aux[:,:, AUX_HAS_LEAD_IX]
+    aux_targets[:,:,4] = aux[:,:, AUX_LEAD_DIST_IX]
+
+    return aux_model, aux_calib, aux_targets
 
 class BlenderDataloader():
 
@@ -87,20 +108,9 @@ class BlenderDataloader():
 
         img = img_chunk[:, ix:ix+bptt, :, :, :].copy()
         
-        aux = aux_chunk[:, ix:ix+bptt, :].copy()
-        current_tire_angles_rad = aux[:,:,4].copy()
-        current_speeds_mps = kph_to_mps(aux[:,:,2])
-        pitch = aux[:,:,0].copy()
-        yaw = aux[:,:,1].copy()
-        aux[:,:,4] = 0.0
-        #aux[:,:,0] = 0.0
-        #aux[:,:,1] = 0.0
-        aux[:,:,3] = 0.0 # temporary HACK
-        
-        pitch = torch.HalfTensor(pitch).to('cuda')
-        current_tire_angles_rad = torch.FloatTensor(current_tire_angles_rad).to('cuda')
-        current_speeds_mps = torch.FloatTensor(current_speeds_mps).to('cuda')
-        yaw = torch.HalfTensor(yaw).to('cuda')
+        #########
+        # Aux
+        aux_model, aux_calib, aux_targets = get_auxs(aux_chunk[:, ix:ix+bptt, :])
 
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
         wp_angles, wp_dists, _ = np.split(targets, 3, axis=2)
@@ -113,8 +123,10 @@ class BlenderDataloader():
 
         wp_curvatures = get_curvatures_from_headings_batch(wp_headings)
 
+        ######
         # mask out loss for wps more than n seconds ahead
-        speed_mask = get_speed_mask(aux)
+
+        speed_mask = get_speed_mask(aux_model)
 
         MAX_ANGLE_TO_PRED = .48 #.36 #.18 #.16
         to_pred_mask = torch.from_numpy((np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)).to(device)
@@ -127,11 +139,18 @@ class BlenderDataloader():
         to_pred_mask = to_pred_mask * torch.from_numpy(speed_mask).to(device)
         #to_pred_mask = torch.from_numpy(speed_mask).to(device)
 
+
+        ########
+        # Prep for delivery
+
         img = aug_imgs(img) # is this still inefficient?
-        img, aux, wp_angles, wp_headings, wp_curvatures = prep_inputs(img, aux, targets=(wp_angles, wp_headings, wp_curvatures)) # is this also still slow?
+
+        img, aux_model, aux_calib  = prep_inputs(img, aux_model, aux_calib) # is this also still slow?
+        wp_angles, wp_headings, wp_curvatures, aux_targets = prep_targets(wp_angles, wp_headings, wp_curvatures, aux_targets)
 
         self.seq_ix += bptt
 
+        # If at the end of seq, move the backup into active position and grab a new backup
         if self.seq_ix > seq_len-bptt: 
             self.seq_ix = 0
 
@@ -143,15 +162,13 @@ class BlenderDataloader():
 
 
         self.queued_batches.append(((img, 
-                                    aux, 
+                                    aux_model,
+                                    aux_calib, 
                                     wp_angles,
                                     wp_headings,
                                     wp_curvatures,
-                                    to_pred_mask,
-                                    current_tire_angles_rad, # Extras
-                                    current_speeds_mps, 
-                                    pitch, 
-                                    yaw), 
+                                    aux_targets,
+                                    to_pred_mask), 
                                         is_first_in_seq))
 
     def get_batch(self):

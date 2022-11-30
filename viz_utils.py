@@ -2,6 +2,7 @@ from constants import *
 from imports import *
 from train_utils import *
 from traj_utils import *
+from blender_dataloader import *
 
 # Camera matrix got from rw calib using the webcam. Notebook on old laptop?
 dist = np.float32([[0,0,0,0,0]])
@@ -112,24 +113,19 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
 
     rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs = [], [], [], [], [], [], [], []
     chunk_len, ix = 48, 0 # 24, 0
-    counter = 0
 
     while ix < len(img):
-        # if counter%10==0:
-        #     m.reset_hidden(bs)
-        # counter+=1
-
         aux_ = pad(aux[ix:ix+chunk_len]) # current speed is important!!!
         img_ = pad(img[ix:ix+chunk_len])
-        #img_ = aug_imgs(img_) # this is useful for optimizing our img aug
+        aux_model, aux_calib, aux_targets = get_auxs(aux_)
 
-        speed_mask = get_speed_mask(pad(aux))
+        speed_mask = get_speed_mask(aux_model)
 
-        img_, aux_ = prep_inputs(img_, aux_)
+        img_, aux_model, aux_calib = prep_inputs(img_, aux_model, aux_calib)
 
         with torch.cuda.amp.autocast():
             m.zero_grad()
-            pred, obsnet_out = m(img_, aux_) 
+            pred, pred_aux, obsnet_out = m(img_, aux_model, aux_calib) 
             wp_angles, wp_headings, wp_curvatures = torch.chunk(pred, 3, -1)
             wp_angles_all.append(wp_angles[0,:,:].detach().cpu().numpy())
             wp_headings_all.append(wp_headings[0,:,:].detach().cpu().numpy())
@@ -139,8 +135,6 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
             if do_gradcam:
                 cnn_activations.append(m.activations.mean(1, keepdim=True).numpy()) # (24, 1, 13, 80), mean of channels
                 rnn_activations.append(m.rnn_activations[0].numpy()) #torch.Size([24, 512]), 
-                
-                #wp_angles[:,:,GRADCAM_WP_IX].sum().backward() # gradients w respect to lateral preds
 
                 (wp_angles * torch.from_numpy(speed_mask).to(device)).mean().backward()
                 
@@ -180,8 +174,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
 
 
 def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvatures_pred, img, aux, wp_angles_targets,
-             cnn_grads, cnn_activations, rnn_grads, rnn_activations,
-            temporal_error, add_charts):
+             cnn_grads, cnn_activations, rnn_grads, rnn_activations, add_charts):
     
     height, width, channels = img[0].shape
     w2, h2 = width//2, height//2
@@ -265,12 +258,6 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
             charts_fig = get_pts_and_headings_fig(traj, TRAJ_WP_DISTS, headings, curvatures)
             charts = fig_to_img(charts_fig, (IMG_HEIGHT, width, 3))
 
-        # te
-        if temporal_error is not None:
-            te = np.clip(temporal_error[i] / MAX_CLIP_TE_VIZ, 0, 1.0)
-            r[:25, :130, :] = 0
-            r[:20, :100, :] = 255*te
-
         r = np.clip(np.flip(r,-1), 0, 255)
 
         img_ = np.flip(get_rnn_gradcam(rnn_activations[i], rnn_grads[i], img[i]), -1) #DUMB catting on rnn grad just to match sz
@@ -282,19 +269,12 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
     video.release()
 
 
-def make_vid(run_id, model_stem, img, aux, targets=None, tire_angle_rad=None, add_charts=False):
+def make_vid(run_id, model_stem, img, aux, targets=None, add_charts=False):
     rollout_data = get_viz_rollout(model_stem, img, aux)
     wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = rollout_data
     print(wp_angles_all.shape, cnn_activations.shape, cnn_grads.shape)
 
-    temporal_error = None
-    if tire_angle_rad is not None:
-        speeds_mps = kph_to_mps(aux[:,2])
-        trajs = torch.FloatTensor(wp_angles_all[:,:N_WPS_TO_USE]).to('cuda')
-        traj_xs, traj_ys = get_trajs_world_space(trajs, speeds_mps, tire_angle_rad, CRV_WHEELBASE)
-        temporal_error = np.sqrt(get_temporal_error(traj_xs.cpu(), traj_ys.cpu(), speeds_mps))
-
-    _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, wp_curvatures_all, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, temporal_error, add_charts)
+    _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, wp_curvatures_all, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, add_charts)
     print("Made vid!")
     return rollout_data
 

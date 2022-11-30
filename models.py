@@ -12,7 +12,6 @@ class ObserverNet(nn.Module):
         return self.fcs(x)
 
 VIZ_IX = 5 # viz_ix from 3 (granular) to at least 5, maybe more?
-N_CALIB = 2
 
 def add_noise(activations, std=.1):
     noise = torch.randn(activations.shape, dtype=activations.dtype).to(device) * std
@@ -35,16 +34,14 @@ class EffNet(nn.Module):
 
         backbone_out = self.backbone.num_features #b3 is 1536
         act = nn.ReLU()
-        DROP = 0.2
-        not_drop = nn.Identity()
-        drop = nn.Dropout(DROP)
         self.inner_dim = 512
-        self.fcs_1 = nn.Sequential(nn.Linear(backbone_out + len(aux_properties), self.inner_dim), act, not_drop)
-        self.use_rnn = True
-        
+        self.n_fcs_2_out = 512
+
+        self.fcs_1 = nn.Sequential(nn.Linear(backbone_out + N_AUX_MODEL_IN, self.inner_dim), act)        
         self._rnn = nn.LSTM(self.inner_dim, self.inner_dim, 1, batch_first=True)
-        # self.fcs_2 = nn.Sequential(nn.Linear(self.inner_dim + self.inner_dim + N_CALIB, 512), act, not_drop, nn.Linear(512, N_TARGETS))
-        self._fcs_2 = nn.Sequential(nn.Linear(self.inner_dim + N_CALIB, 512), act, not_drop, nn.Linear(512, N_TARGETS))
+        self.fcs_2 = nn.Sequential(nn.Linear(self.inner_dim + N_AUX_CALIB_IN, self.n_fcs_2_out), act)
+        self.wps_head = nn.Linear(self.n_fcs_2_out, N_TARGETS)
+        self.aux_targets_head = nn.Linear(self.n_fcs_2_out, N_AUX_TARGETS)
 
 
         self.hidden_init = nn.Parameter(torch.randn((1,1,self.inner_dim))/10, requires_grad=True)
@@ -82,16 +79,12 @@ class EffNet(nn.Module):
                 mm.p = p
                 print(mm.p)
 
-    def forward(self, x, aux):
+    def forward(self, x, aux_model, aux_calib):
         # flatten batch and seq for CNNs
         bs, bptt, c, h, w = x.shape
         x = x.reshape(bs*bptt,c,h,w).contiguous() # contig required otherwise get error when using non-swarm dataloaders. "can;t something on something set w detach or .data"
         
-        pitch_yaw = torch.empty(bs,bptt,2).half().to(device)
-        pitch_yaw[:,:,:] = aux[:,:,:2]
-        aux[:,:,:2] = 0
-
-        aux = aux.reshape(bs*bptt,len(aux_properties))
+        aux_model = aux_model.reshape(bs*bptt,N_AUX_MODEL_IN)
 
         if self.is_for_viz:
             bb = self.backbone
@@ -115,7 +108,7 @@ class EffNet(nn.Module):
             x = self.backbone.global_pool(x)
             x = self.backbone.classifier(x)
 
-        x = torch.cat([x, aux], dim=-1)
+        x = torch.cat([x, aux_model], dim=-1)
         x_fcs1_out = self.fcs_1(x)
 
         # unpack seq and batch for rnn
@@ -144,9 +137,11 @@ class EffNet(nn.Module):
         obsnet_out = self.obsnet(x if self.is_for_viz else x.detach())
         #obsnet_out = self.obsnet(x)
 
-        # x = torch.cat([x, x_fcs1_out, pitch_yaw], dim=-1) # cat in calib params
-        x = torch.cat([x, pitch_yaw], dim=-1) # cat in calib params
+        x = torch.cat([x, aux_calib], dim=-1) # cat in calib params
 
+        x = self.fcs_2(x)
 
-        x = self._fcs_2(x)
-        return x, obsnet_out
+        wps_preds = self.wps_head(x)
+        aux_preds = self.aux_targets_head(x)
+
+        return wps_preds, aux_preds, obsnet_out

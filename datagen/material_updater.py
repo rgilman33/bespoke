@@ -29,9 +29,14 @@ background_hdri_nodes = bpy.context.scene.world.node_tree.nodes
 building_material = bpy.data.materials["buildings"].node_tree.nodes
 npc_material = bpy.data.materials["npc"].node_tree.nodes
 
+stopsign_material = bpy.data.materials["stopsign"].node_tree.nodes
+stopsign_nodes = bpy.data.node_groups['stopsign_nodes'].nodes
+
+
 grass_material = bpy.data.materials["rdside_grass_master"].node_tree.nodes
 
-cube_nodes = bpy.data.node_groups['CubeNodes'].nodes
+buildings_nodes = bpy.data.node_groups['buildings_nodes'].nodes
+npc_body_nodes = bpy.data.node_groups['npc_body_nodes'].nodes
 
 all_background_hdris = glob.glob(f"{HDRIS_ROOT}/*")
 all_background_hdris = [x for x in all_background_hdris if "night" not in x]
@@ -262,7 +267,29 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("shoulder_uv_scale", dirt_gravel_nodes).outputs["Value"].default_value  = 1 / 10**random.uniform(1,3)
     get_node("terrain_uv_scale", dirt_gravel_nodes).outputs["Value"].default_value  = 1 / 10**random.uniform(2,3)
 
-    
+    ######################
+    # Stopsigns
+    ######################
+    get_node("red_hue", stopsign_material).outputs["Value"].default_value  = random.uniform(-.1, .07)
+    get_node("red_sat", stopsign_material).outputs["Value"].default_value  = random.uniform(.7, 1.0)
+    get_node("red_val", stopsign_material).outputs["Value"].default_value  = random.uniform(.3, 1.0)
+    get_node("metallic", stopsign_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.0, 1.0)
+    get_node("roughness", stopsign_material).outputs["Value"].default_value = .5 if random.random()<.5 else random.uniform(.0, 1.0)
+    get_node("base_sat", stopsign_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.3, .8)
+    get_node("base_val", stopsign_material).outputs["Value"].default_value = random.uniform(.0, .2)
+
+    stopsign_radius = random.uniform(.25, .5)
+    text_max = np.interp(stopsign_radius, [.25, .5], [.19, .37])
+    get_node("stopsign_radius", stopsign_nodes).outputs["Value"].default_value = stopsign_radius
+    get_node("text_size", stopsign_nodes).outputs["Value"].default_value = random.uniform(text_max*.7, text_max)
+    get_node("stopsign_y_scale", stopsign_nodes).outputs["Value"].default_value = random.uniform(.8, 1.2)
+    get_node("rotation_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.2, .2)
+    get_node("rotation_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.2, .2)
+    get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.3, .0)
+    get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, 2)
+    get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-3, 1)
+    get_node("shift_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(1.5, 3.)
+
     ######################
     # Buildings
     ######################
@@ -277,6 +304,9 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("building_uv_scale", building_material).outputs["Value"].default_value = random.uniform(.5, 10)
     get_node("building_uv_rotation", building_material).outputs["Value"].default_value = random.uniform(0, 6)
 
+    get_node("buildings_seed", buildings_nodes).outputs["Value"].default_value = random.uniform(-1e-6, 1e6)
+    get_node("buildings_noise_mult", buildings_nodes).outputs["Value"].default_value = 0 if random.random() < .3 else random.uniform(.2, .6) #TODO make this so can go higher, need to prevent intersect w rd
+
     ######################
     # NPCs
     ######################
@@ -285,19 +315,67 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("npc_img_albedo", npc_material).image.filepath = random.choice(img_textures)
     get_node("npc_hue", npc_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("npc_brightness", npc_material).outputs["Value"].default_value = random.uniform(.5, 2)
-    get_node("npc_sat", npc_material).outputs["Value"].default_value = random.uniform(.5, 2)
+    get_node("npc_sat", npc_material).outputs["Value"].default_value = random.uniform(.1, 1)
 
     get_node("npc_overlay_h", npc_material).outputs["Value"].default_value = random.uniform(0, 1)
-    # get_node("npc_overlay_s", npc_material).outputs["Value"].default_value = random.uniform(0, 1)
+    get_node("npc_overlay_s", npc_material).outputs["Value"].default_value = random.uniform(0, 1)
     get_node("npc_overlay_v", npc_material).outputs["Value"].default_value = random.uniform(0, 1)
-    get_node("npc_overlay_mixer", npc_material).outputs["Value"].default_value = random.uniform(.0, 1)
+    get_node("npc_overlay_mixer", npc_material).outputs["Value"].default_value = 0 if random.random()<.3 else random.uniform(.0, 1)
+    get_node("npc_roughness", npc_material).outputs["Value"].default_value = random.uniform(0, 1)
+    get_node("npc_metallic", npc_material).outputs["Value"].default_value = random.uniform(.3, 1.)
+    get_node("npc_img_scale", npc_material).outputs["Value"].default_value = .01 * 10**random.uniform(0,2)
+    get_node("npc_img_shift_x", npc_material).outputs["Value"].default_value = random.uniform(-1000,1000)
+    get_node("npc_img_shift_y", npc_material).outputs["Value"].default_value = random.uniform(-1000,1000)
+    get_node("npc_img_rotation", npc_material).outputs["Value"].default_value = random.uniform(0,360)
 
-    get_node("npc_scale_x", npc_nodes).outputs["Value"].default_value = random.uniform(.8, 1.2)
-    get_node("npc_scale_y", npc_nodes).outputs["Value"].default_value = random.uniform(1, 5)
-    get_node("npc_scale_z", npc_nodes).outputs["Value"].default_value = random.uniform(.5, 3)
+    npc_body_width = random.uniform(.5, 1.1)
+    get_node("body_width", npc_body_nodes).outputs["Value"].default_value = npc_body_width 
+    get_node("cabin_width", npc_body_nodes).outputs["Value"].default_value = random.uniform(.5, .9)
+    get_node("cabin_height", npc_body_nodes).outputs["Value"].default_value = random.uniform(.4, 1.4)
+    get_node("body_height", npc_body_nodes).outputs["Value"].default_value = random.uniform(.4, 1.4)
 
-    # used for both npcs and buildings
-    get_node("cube_seed", cube_nodes).outputs["Value"].default_value = random.uniform(-1e-6, 1e6)
+    get_node("cabin_bottom_len", npc_body_nodes).outputs["Value"].default_value = random.uniform(1, 2)
+    get_node("cabin_top_mult", npc_body_nodes).outputs["Value"].default_value = random.uniform(.3, 1.1)
+
+    get_node("body_bottom_len", npc_body_nodes).outputs["Value"].default_value = random.uniform(3, 5)
+    get_node("body_top_mult", npc_body_nodes).outputs["Value"].default_value = random.uniform(.3, 1.2)
+
+    get_node("body_offset", npc_body_nodes).outputs["Value"].default_value = random.uniform(-.3, .3)
+    get_node("cabin_offset", npc_body_nodes).outputs["Value"].default_value = random.uniform(0, .7)
+
+    get_node("wheel_hspan", npc_body_nodes).outputs["Value"].default_value = npc_body_width * random.uniform(.7, 1.1)
+    get_node("back_axle_loc", npc_body_nodes).outputs["Value"].default_value = random.uniform(1.1, 1.8)
+    get_node("front_axle_shift", npc_body_nodes).outputs["Value"].default_value = random.uniform(2.4, 3)
+
+    get_node("wheel_hwidth", npc_body_nodes).outputs["Value"].default_value = random.uniform(.1, .2)
+    get_node("wheel_radius", npc_body_nodes).outputs["Value"].default_value = random.uniform(.35, .5)
+    get_node("wheel_thickness", npc_body_nodes).outputs["Value"].default_value = random.uniform(-.3, -.1)
+    get_node("hub_offset", npc_body_nodes).outputs["Value"].default_value = random.uniform(.5, 1.1)
+
+    # taillightsalso used for headlights
+    get_node("taillight_spacing", npc_body_nodes).outputs["Value"].default_value = random.uniform(.3, .9) 
+    get_node("taillight_noise_w", npc_body_nodes).outputs["Value"].default_value = random.uniform(-1e6, 1e6)
+    get_node("taillight_radius", npc_body_nodes).outputs["Value"].default_value = random.uniform(.1, .3)
+
+    get_node("license_plate_width", npc_body_nodes).outputs["Value"].default_value = random.uniform(.25, .35)
+    get_node("license_plate_height", npc_body_nodes).outputs["Value"].default_value = random.uniform(.12, .18)
+
+    get_node("taillight_hue", npc_material).outputs["Value"].default_value = random.uniform(.9, 1.1)
+    get_node("taillight_sat", npc_material).outputs["Value"].default_value = random.uniform(.5, 1.)
+    get_node("taillight_value", npc_material).outputs["Value"].default_value = random.uniform(.3, 1.)
+    get_node("taillight_emission_strength", npc_material).outputs["Value"].default_value = 20 if random.random()<.15 else 0
+
+
+    get_node("license_plate_hue", npc_material).outputs["Value"].default_value = random.uniform(0, 1)
+    get_node("license_plate_value", npc_material).outputs["Value"].default_value = random.uniform(.5, 1.)
+
+    get_node("headlights_emission_strength", npc_material).outputs["Value"].default_value = random.uniform(2, 30) if random.random()<.15 else 0
+
+
+
+
+
+
 
 
     
@@ -325,8 +403,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     bpy.ops.import_scene.fbx(filepath=grass_mesh_path)
     bpy.context.selected_objects[0].name = "grass_mesh"
 
-    grass_mesh = "grass_mesh"
-    get_node("grass_mesh", main_map_nodes).inputs[0].default_value = bpy.data.objects[grass_mesh]
+    get_node("grass_mesh", main_map_nodes).inputs[0].default_value = bpy.data.objects["grass_mesh"]
 
     bpy.data.images["GrassOpacity"].filepath = grass_opacity_img
     bpy.data.images["GrassAlbedo"].filepath = grass_opacity_img.replace("Opacity", "Albedo") if random.random() < .3 else random.choice(all_albedos)
@@ -342,7 +419,7 @@ def setup_map():
     """
     Changes the rd network. Is a targets-changing thing.
     """
-    is_single_rd = random.random() < 1 #TODO UNDO .5
+    is_single_rd = random.random() < 1 
     get_node("is_single_rd", get_variables_nodes).outputs["Value"].default_value = 1 if is_single_rd else 0
 
     HAS_LANELINES_PROB = .75

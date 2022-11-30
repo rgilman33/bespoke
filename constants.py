@@ -30,16 +30,31 @@ N_TARGETS = N_WPS*3 # currently is wp_angle, wp_heading, and _
 N_WPS_TO_USE = N_WPS
 traj_wp_dists = TRAJ_WP_DISTS
 
-aux_properties = [
-    'left_blinker', # pitch
-    'right_blinker', # yaw
-    'current_speed',
-    'speed_as_percent_of_limit',
-    'current_tire_angle_rad'
-]
-N_AUX = len(aux_properties)
+# aux_properties = [
+#     'left_blinker', # pitch
+#     'right_blinker', # yaw
+#     'current_speed',
+#     'speed_as_percent_of_limit',
+#     'current_tire_angle_rad'
+# ]
 
-aux_norm_constants = np.array([1., 1., 20., 1., 1.], dtype=np.float16)
+AUX_PITCH_IX = 0
+AUX_YAW_IX = 1
+AUX_SPEED_IX = 2
+AUX_TIRE_ANGLE_IX = 4
+AUX_APPROACHING_STOP_IX = 5
+AUX_STOPPED_IX = 6
+AUX_STOP_DIST_IX = 7
+AUX_HAS_LEAD_IX = 8
+AUX_LEAD_DIST_IX = 9
+AUX_SHOULD_YIELD_IX = 10
+
+N_AUX_TO_SAVE = 12
+
+N_AUX_MODEL_IN = 5
+N_AUX_CALIB_IN = 4
+
+N_AUX_TARGETS = 12
 
 STEER_RATIO = 16. # taken from OP, specific for crv-5g. Don't change this willy nilly
 
@@ -164,3 +179,6 @@ def linear_to_sin(p):
 MAX_N_NPCS = 10
 
 GPS_HZ = 5
+
+ROUTES_DIR = "/media/beans/ssd/routes"
+

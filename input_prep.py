@@ -1,9 +1,11 @@
 from constants import *
 from imports import *
 
-def norm_aux(aux):
-    aux = aux / torch.from_numpy(aux_norm_constants).to('cuda')
-    aux = aux.clip(-8,8) # TODO pay attn to this, we clipping anything important? 
+model_in_aux_norm_constants = np.ones(N_AUX_MODEL_IN, dtype=np.float16)
+model_in_aux_norm_constants[2] = 20
+
+def norm_aux_model(aux):
+    aux = aux / torch.from_numpy(model_in_aux_norm_constants).to('cuda')
     return aux
 
 pad = lambda x: np.expand_dims(x,0)
@@ -31,18 +33,22 @@ def norm_img(img):
 def denorm_img(img):
     return (img*IMG_NORM_STD) + IMG_NORM_MEAN
 
-def prep_inputs(image, aux, targets=None, is_single_obs=False):
+def prep_inputs(image, aux_model, aux_calib, is_single_obs=False):
     """ np to pytorch totally prepped for model in """
 
     image = image.astype(np.float16)
-    aux = aux.astype(np.float16)
+    aux_model = aux_model.astype(np.float16)
+    aux_calib = aux_calib.astype(np.float16)
 
     if is_single_obs:
         image = pad(pad(image))
-        aux = pad(pad(aux))
+        aux_model = pad(pad(aux_model))
+        aux_calib = pad(pad(aux_calib))
     
-    aux = torch.from_numpy(aux).to('cuda') # from_numpy matches dtype, uses same mem
-    aux = norm_aux(aux) 
+    aux_model = torch.from_numpy(aux_model).to('cuda') # from_numpy matches dtype, uses same mem
+    aux_calib = torch.from_numpy(aux_calib).to('cuda') # from_numpy matches dtype, uses same mem
+
+    aux_model = norm_aux_model(aux_model) 
 
     image = torch.from_numpy(image).to('cuda')
     image = image.permute(0,1,4,2,3)
@@ -51,24 +57,35 @@ def prep_inputs(image, aux, targets=None, is_single_obs=False):
     # img is from zero to one, now let's standardize. Could have just done it above
     image = norm_img(image)
 
-    if targets is not None:
-        wp_angles, wp_headings, wp_curvatures = targets
+    return (image, aux_model, aux_calib)
 
-        wp_angles = torch.from_numpy(wp_angles).to('cuda')
-        wp_angles = wp_angles / TARGET_NORM.to('cuda')
-        wp_angles = wp_angles.half()
+AUX_TARGET_NORM = np.ones(N_AUX_TARGETS)
+AUX_TARGET_NORM[0] = 1
+AUX_TARGET_NORM[1] = 30
+AUX_TARGET_NORM[2] = 1
+AUX_TARGET_NORM[3] = 1
+AUX_TARGET_NORM[4] = 30
 
-        wp_headings = torch.from_numpy(wp_headings).to('cuda')
-        wp_headings = wp_headings / TARGET_NORM_HEADINGS.to('cuda')
-        wp_headings = wp_headings.half()
+    
+def prep_targets(wp_angles, wp_headings, wp_curvatures, aux_targets):
 
-        wp_curvatures = torch.from_numpy(wp_curvatures).to('cuda')
-        wp_curvatures = wp_curvatures / TARGET_NORM_CURVATURES
-        wp_curvatures = wp_curvatures.half()
-        
-        return (image, aux, wp_angles, wp_headings, wp_curvatures)
+    wp_angles = torch.from_numpy(wp_angles).to('cuda')
+    wp_angles = wp_angles / TARGET_NORM.to('cuda')
+    wp_angles = wp_angles.half()
 
-    return (image, aux)
+    wp_headings = torch.from_numpy(wp_headings).to('cuda')
+    wp_headings = wp_headings / TARGET_NORM_HEADINGS.to('cuda')
+    wp_headings = wp_headings.half()
+
+    wp_curvatures = torch.from_numpy(wp_curvatures).to('cuda')
+    wp_curvatures = wp_curvatures / TARGET_NORM_CURVATURES
+    wp_curvatures = wp_curvatures.half()
+
+    aux_targets = torch.from_numpy(aux_targets).to('cuda')
+    aux_targets = aux_targets / torch.from_numpy(AUX_TARGET_NORM).to("cuda")
+    aux_targets = aux_targets.half()
+
+    return (wp_angles, wp_headings, wp_curvatures, aux_targets)
 
 
 from skimage.draw import line_aa
