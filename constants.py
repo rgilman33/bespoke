@@ -2,19 +2,39 @@ import numpy as np
 
 BESPOKE_ROOT = '/home/beans/bespoke'
 
-webcam_img_height = 480
-webcam_img_width = 640
-IMG_WIDTH = webcam_img_width
+# webcam_img_height = 480
+# webcam_img_width = 640
+# IMG_WIDTH = webcam_img_width
 
-BOTTOM_CHOP = 150
-TOP_CHOP = 150 + 60
+# BOTTOM_CHOP = 150
+# TOP_CHOP = 150 + 60
 
-IMG_HEIGHT = 120 #
+# IMG_HEIGHT = 120 #
+# assert IMG_HEIGHT == (webcam_img_height - TOP_CHOP - BOTTOM_CHOP)
+
+# OP_UI_BACKGROUND_WIDTH = 1164
+# OP_UI_BACKGROUND_HEIGHT = 874
+# OP_UI_MARGIN = 300
+
+webcam_img_height = 1080
+webcam_img_width = 1920
+
+SIDE_CHOP = 240 # cropping out an eigth on each side which we eyeballed to equal our prev frame, and gets rid of distortion and lens at edges
+IMG_WIDTH = webcam_img_width - SIDE_CHOP - SIDE_CHOP # 1440
+assert IMG_WIDTH == 1440
+
+BOTTOM_CHOP = 330 #360
+TOP_CHOP = 390 #360
+
+IMG_HEIGHT = 360
 assert IMG_HEIGHT == (webcam_img_height - TOP_CHOP - BOTTOM_CHOP)
 
 OP_UI_BACKGROUND_WIDTH = 1164
 OP_UI_BACKGROUND_HEIGHT = 874
 OP_UI_MARGIN = 300
+
+
+
 
 N_CHANNELS = 6 #3
 BPTT = 4 #8 #9
@@ -150,7 +170,7 @@ MAX_ACCEL = .6 #1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in te
 
 MAP_WIDTH = 80
 assert MAP_WIDTH%2==0
-MAP_HEIGHT = IMG_HEIGHT
+MAP_HEIGHT = 120 #IMG_HEIGHT
 
 GPS_HZ = 5
 
@@ -182,7 +202,8 @@ MAX_N_NPCS = 10
 
 GPS_HZ = 5
 
-ROUTES_DIR = "/media/beans/ssd/routes"
+# ROUTES_DIR = "/media/beans/ssd/routes"
+ROUTES_DIR = "/home/beans/openpilot/routes"
 
 def get_auxs(aux):
     bs, bptt, _ = aux.shape
