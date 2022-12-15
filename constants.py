@@ -16,8 +16,8 @@ OP_UI_BACKGROUND_WIDTH = 1164
 OP_UI_BACKGROUND_HEIGHT = 874
 OP_UI_MARGIN = 300
 
-N_CHANNELS = 3
-BPTT = 9 #8 #4 #8
+N_CHANNELS = 6 #3
+BPTT = 4 #8 #9
 
 DATA_CONSUMPTION_RATIO_LIMIT = 3 #1.
 
@@ -26,7 +26,7 @@ TRAJ_WP_DISTS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
 assert MIN_WP_M==TRAJ_WP_DISTS[0]
 N_WPS = len(TRAJ_WP_DISTS)
 
-N_TARGETS = N_WPS*3 # currently is wp_angle, wp_heading, and _
+N_TARGETS = N_WPS*5 # currently is wp_angle, curvature, heading, roll, z-delta
 N_WPS_TO_USE = N_WPS
 traj_wp_dists = TRAJ_WP_DISTS
 
@@ -47,9 +47,11 @@ AUX_STOPPED_IX = 6
 AUX_STOP_DIST_IX = 7
 AUX_HAS_LEAD_IX = 8
 AUX_LEAD_DIST_IX = 9
-AUX_SHOULD_YIELD_IX = 10
+AUX_LEAD_SPEED_IX = 10
+AUX_SHOULD_YIELD_IX = 11
 
-N_AUX_TO_SAVE = 12
+N_AUX_TO_SAVE = 20
+N_EPISODE_INFO = 10 
 
 N_AUX_MODEL_IN = 5
 N_AUX_CALIB_IN = 4
@@ -102,8 +104,8 @@ FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TO
 BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
 #BLENDER_MEMBANK_ROOT = "/dev/shm/blender_membank"
 
-SEQ_LEN = 116 * 2
-EPISODE_LEN = SEQ_LEN * 5 #10
+SEQ_LEN = 116 * 5
+EPISODE_LEN = SEQ_LEN * 2 #10
 RUNS_TO_STORE_PER_PROCESS = 30
 N_RUNNERS = 12
 
@@ -198,7 +200,86 @@ def get_auxs(aux):
     aux_targets[:,:,0] = aux[:,:, AUX_APPROACHING_STOP_IX]
     aux_targets[:,:,1] = aux[:,:, AUX_STOP_DIST_IX]
     aux_targets[:,:,2] = aux[:,:, AUX_STOPPED_IX]
+
     aux_targets[:,:,3] = aux[:,:, AUX_HAS_LEAD_IX]
     aux_targets[:,:,4] = aux[:,:, AUX_LEAD_DIST_IX]
+    aux_targets[:,:,5] = aux[:,:, AUX_LEAD_SPEED_IX]
 
     return aux_model, aux_calib, aux_targets
+
+DIST_NA_PLACEHOLDER = 150
+STOP_LOOKAHEAD_DIST = 60 #100 low res, just very hard to even see stopsigns. 
+LEAD_LOOKAHEAD_DIST = 100 # can be bigger than stop lookahead bc cars are bigger objects
+
+import time
+class Logger():
+    def __init__(self):
+        self.tracker = {}
+        
+    def log(self, to_log):
+        for k,v in to_log.items():
+            if k in self.tracker:
+                self.tracker[k].append(v)
+            else:
+                self.tracker[k] = [v]
+    
+    def finish(self):
+        r = self.tracker
+        for k in r: r[k] = np.round(np.nanmean(np.array(r[k])), 8)
+        self.tracker = {}
+        return r
+
+class Timer():
+    def __init__(self, timer_name):
+        self.init_time = time.time()
+        self.results = {}
+        self.last_milestone_time = self.init_time
+        self.timer_name = timer_name
+
+    def log(self, milestone):
+        t = time.time() 
+        self.results[f"timing/{milestone}"] = t - self.last_milestone_time
+        self.last_milestone_time = t
+    
+    def finish(self):
+        self.results[f"timing/{self.timer_name}"] = time.time() - self.init_time
+        return self.results
+
+# Img cat
+LOOKBEHIND = 10
+N_LOOKBEHINDS = 3
+SEQ_START_IX = LOOKBEHIND * N_LOOKBEHINDS
+
+
+def bwify_seq(_img):
+    return _img[:, :,:,:1]//3 + _img[:, :,:,1:2]//3 + _img[:, :,:,2:3]//3
+
+# def cat_imgs(imgs, imgs_bw):
+#     # bs, seqlen, h, w, c
+#     img = imgs[:, LOOKBEHIND*3:, :,:,:]
+#     img_1 = imgs_bw[:, LOOKBEHIND*2:-LOOKBEHIND, :,:,:]
+#     img_2 = imgs_bw[:, LOOKBEHIND:-LOOKBEHIND*2, :,:,:]
+#     img_3 = imgs_bw[:, :-LOOKBEHIND*3, :,:,:]
+    
+#     img = np.concatenate([img, img_1, img_2, img_3], axis=-1)
+#     return img
+
+def cat_imgs(imgs, imgs_bw):
+    # bs, seqlen, h, w, c
+    img = imgs[:, LOOKBEHIND*3:, :,:,:] # same ixs, these two
+    img_bw = imgs_bw[:, LOOKBEHIND*3:, :,:,:]
+    DIFF_1_N, DIFF_2_N, DIFF_3_N = 1, 2, 3
+    img_1_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_1_N:-DIFF_1_N, :,:,:]
+    img_2_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_2_N:-DIFF_2_N, :,:,:]
+    img_3_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_3_N:-DIFF_3_N, :,:,:]
+    diff = img_bw - img_1_bw
+
+    # img_1 = imgs_bw[:, LOOKBEHIND*2:-LOOKBEHIND, :,:,:]
+    img_2 = imgs_bw[:, LOOKBEHIND:-LOOKBEHIND*2, :,:,:]
+    img_3 = imgs_bw[:, :-LOOKBEHIND*3, :,:,:]
+    
+    # img = np.concatenate([img, img_1, img_2, img_3], axis=-1)
+    # img = np.concatenate([img, diff, img_2, img_3], axis=-1)
+    img = np.concatenate([img, img_1_bw, img_2_bw, img_3_bw], axis=-1)
+
+    return img

@@ -39,7 +39,7 @@ def get_next_possible_wps(prev_wp, all_start_wps):
     close_start_wps = all_start_wps[dist_to_prev_wp < threshold]
     return close_start_wps
 
-def _get_route(df, start_locs_df, route_len, just_go_straight):
+def _get_route(df, start_locs_df, route_len, just_go_straight, is_ego):
     # route_len is in meters
     segments = []
     start_wp = start_locs_df.sample(1).iloc[0] if start_locs_df is not None else df.sample(1).iloc[0]
@@ -49,9 +49,11 @@ def _get_route(df, start_locs_df, route_len, just_go_straight):
     if just_go_straight:
         all_start_wps = all_start_wps[all_start_wps.wp_curve_id==2]
 
+    RANDOM_START_OFFSET_M_MAX = 50 if is_ego else 200
+    front_chop = random.randint(0, int(RANDOM_START_OFFSET_M_MAX/WP_SPACING))
     n_wps = 0
     visited_sections = []
-    while n_wps < (route_len/WP_SPACING):
+    while n_wps < ((route_len/WP_SPACING)+front_chop):
         
         segment_df = df[df.wps_segment_uid == wps_segment_uid]
         segment_df = segment_df.sort_values("ix_in_curve")
@@ -81,16 +83,20 @@ def _get_route(df, start_locs_df, route_len, just_go_straight):
         wps_segment_uid = next_wp.wps_segment_uid
         
     route_wps = pd.concat(segments)
-    RANDOM_START_OFFSET_M_MAX = 30
-    route_wps = route_wps.iloc[random.randint(0, int(RANDOM_START_OFFSET_M_MAX/WP_SPACING)):-1]
+    route_wps = route_wps.iloc[front_chop:-1]
     return route_wps
 
-def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False):
+def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False, is_ego=False):
     # route len in meters
     _route_len = 0
+    counter = 0
     while _route_len < route_len:
-        route = _get_route(wp_df, start_locs_df, route_len, just_go_straight)
+        route = _get_route(wp_df, start_locs_df, route_len, just_go_straight, is_ego)
         _route_len = len(route)*WP_SPACING
+        counter += 1
+        if counter>100: 
+            print("wtf can't seem to get route of sufficient length?")
+            return None
     return route
 
 def get_wp_df(wps_holder_object):
@@ -124,6 +130,8 @@ def get_wp_df(wps_holder_object):
     df["curve_roll"] = [d[1] for d in rotations]
     df["curve_heading"] = [d[2] for d in rotations]
 
+    df["rd_roll"] = [d.value for d in wps_holder_object.data.attributes["rd_roll"].data]
+
     df["intersection_id"] = [d.value for d in wps_holder_object.data.attributes["intersection_id"].data] # .06 sec
     df["section_id"] = [d.value for d in wps_holder_object.data.attributes["section_id"].data]
     df["intersection_section_id"] = (df.intersection_id.astype(str) + df.section_id.astype(str)).astype(str)
@@ -143,6 +151,8 @@ def get_wp_df(wps_holder_object):
 
     df["wps_segment_uid"] = (df.intersection_id.astype(str) + df.section_id.astype(str) + df.wp_curve_id.astype(str) + \
                                 df.from_section.astype(str) + df.to_section.astype(str)).astype(int)
+
+    df["wps_section_id"] = (df.intersection_id.astype(str) + df.section_id.astype(str)).astype(int)
     # these last two properties necessary to differentiate slips within an intersection
 
 
@@ -197,7 +207,7 @@ def reset_npc_objects(bpy):
 class NPC():
     def __init__(self, ap, nodes, blender_object):
         self.ap, self.nodes, self.blender_object = ap, nodes, blender_object
-        self.dist_from_ego_start_go = random.uniform(100, 200)
+        self.dist_from_ego_start_go = random.uniform(LEAD_LOOKAHEAD_DIST*1.05, LEAD_LOOKAHEAD_DIST*1.5)
         self.is_done = False
 
 class TrafficManager():
@@ -208,9 +218,20 @@ class TrafficManager():
         # npcs only start along the route, not randomly scattered on map
         start_locs_df = wp_df[wp_df.intersection_id.isin(ego_ap.visited_intersections)] 
         # no NPCs right next to ego at start
-        start_locs_df = start_locs_df[(start_locs_df.intersection_section_id != ego_ap.start_intersection_section_id)]
+        start_locs_df = start_locs_df[(start_locs_df.wps_section_id != ego_ap.start_section_id)]
+        if ego_ap.start_section_id==41:
+            oncoming_sections = [62, 57,52, 47,42]
+        elif ego_ap.start_section_id==67:  
+            oncoming_sections = [48, 51, 58, 61, 68]
+        else:
+            assert False # wtf ego start loc should be section 41 or 67
+
+        start_locs_df_oncoming = start_locs_df[start_locs_df.wps_section_id.isin(oncoming_sections)]
+
         self.wp_df = wp_df
-        self.start_locs_df = start_locs_df
+        ONLY_ONCOMING_NPCS_PROB = .33
+        self.npcs_only_oncoming = random.random() < ONLY_ONCOMING_NPCS_PROB
+        self.start_locs_df = start_locs_df_oncoming if self.npcs_only_oncoming else start_locs_df
 
         # existing blender_objects for npcs
         self.existing_npc_objects = [o for o in bpy.data.objects if "npc." in o.name]
@@ -228,7 +249,7 @@ class TrafficManager():
                 nodes = npc_object.modifiers["GeometryNodes"].node_group.nodes
 
                 npc_ap = Autopilot(is_highway=self.is_highway, ap_id=i, save_data=False, is_ego=False)
-                route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=800)
+                route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=200 if self.npcs_only_oncoming else 700)
                 npc_ap.set_route(route)
 
                 update_ap_object(nodes, npc_ap)
@@ -242,7 +263,7 @@ class TrafficManager():
 
         self.ego.set_should_yield(False)
         self.ego.has_lead = False
-        self.ego.lead_dist = 1e6
+        self.ego.lead_dist = DIST_NA_PLACEHOLDER
 
         for npc in self.npcs:
             if npc.ap.route_is_done:
@@ -278,7 +299,9 @@ class TrafficManager():
                 if npc_is_ego_lead:
                     self.ego.has_lead = True
                     lead_dist = overlap_ixs[0] * WP_SPACING
-                    self.ego.lead_dist = min(lead_dist, self.ego.lead_dist)
+                    if lead_dist < self.ego.lead_dist:
+                        self.ego.lead_dist = lead_dist
+                        self.ego.lead_relative_speed = npc.ap.current_speed_mps - self.ego.current_speed_mps
 
             # move if visible to ego
             if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < npc.dist_from_ego_start_go:
@@ -292,6 +315,7 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
                                 _is_highway=False, _is_lined=False, _pitch_perturbation=0, _yaw_perturbation=0,
                                 has_npcs=True, _is_single_rd=True):
     global ap, tm
+    bpy.app.handlers.frame_change_post.clear()
 
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
@@ -304,18 +328,21 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
     print("get wp df", time.time() - t0)
 
     # single-rd. Maybe just straight maybe turns ok.
-    JUST_GO_STRAIGHT_PROB = .2
+    JUST_GO_STRAIGHT_PROB = 1 # .3
     just_go_straight = random.random()<JUST_GO_STRAIGHT_PROB
     if _is_single_rd:
         s = wp_df[(wp_df.ix_in_curve==0) & (wp_df.wp_curve_id==2)] # start wps, first lane (not turning)
         if just_go_straight:
             s = s[((s.intersection_id==4) & (s.section_id.isin([1]))) | ((s.intersection_id==6) & (s.section_id.isin([7])))]
-            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True)
+            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True, is_ego=True)
         else:
             s = s[((s.intersection_id==4) & (s.section_id.isin([1, 10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([7, 4, 10])))]
-            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=False)
+            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=False, is_ego=True)
     else: # start anywhere, turning allowed
-        route = get_route(wp_df, route_len=ROUTE_LEN_M)
+        route = get_route(wp_df, route_len=ROUTE_LEN_M, is_ego=True)
+
+    if route is None: # when can't get route of sufficient len. Don't know if this safeguard is ever tripped
+        return False
 
     print("get route", time.time() - t0)
     ap = Autopilot(is_highway=_is_highway, pitch_perturbation=_pitch_perturbation, yaw_perturbation=_yaw_perturbation, 
@@ -354,10 +381,8 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
 
         tm.step()
 
-
-
-
-    bpy.app.handlers.frame_change_post.clear()
     bpy.app.handlers.frame_change_post.append(frame_change_post)
+
+    return True
 
 

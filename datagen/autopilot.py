@@ -8,6 +8,7 @@ from traj_utils import *
 from map_utils import *
 
 
+
 class Autopilot():
     def __init__(self, save_data=True, is_highway=False, pitch_perturbation=0, yaw_perturbation=0, \
                     run_root=None, ap_id=None, is_ego=False, just_go_straight=False):
@@ -20,11 +21,11 @@ class Autopilot():
         self.DAGGER_FREQ = random.randint(400, 1000)
         self.reset_dagger()
 
-        self.targets_container = np.zeros((SEQ_LEN, N_WPS*3), dtype=np.float32)
+        self.targets_container = np.zeros((SEQ_LEN, N_WPS*4), dtype=np.float32) # angles, dists, rolls, z deltas
         self.aux_container = np.zeros((SEQ_LEN, N_AUX_TO_SAVE), dtype=np.float32)
         self.maps_container = np.zeros((SEQ_LEN, MAP_HEIGHT, MAP_WIDTH, 3), dtype='uint8')
 
-        self.episode_info = np.zeros(10, dtype=np.float32)
+        self.episode_info = np.zeros(N_EPISODE_INFO, dtype=np.float32)
 
         self.pitch_perturbation, self.yaw_perturbation = pitch_perturbation, yaw_perturbation
         self.small_map = None
@@ -32,28 +33,30 @@ class Autopilot():
         self.route_is_done = False
 
         self.N_NEGOTIATION_WPS = 100
-        NEGOTIATION_TRAJ_LEN_SEC = random.uniform(2.5, 3.5) # follow dist. TODO uncouple follow dist and negotiation traj
+        NEGOTIATION_TRAJ_LEN_SEC = random.uniform(2.0, 3.5) # follow dist. TODO uncouple follow dist and negotiation traj
         self.S_PER_WP = NEGOTIATION_TRAJ_LEN_SEC / self.N_NEGOTIATION_WPS
 
+        NO_ROUTE_PROB = .4 # Only applied when just_go_straight TODO update this when doing turns again
+        self.draw_route = False if (random.random() < NO_ROUTE_PROB and just_go_straight) else True
 
         ######
         # Noise for the map
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity. can go even lower here, eg to mimic bumpy gravel rd
-        ROLL_MAX_DEG = 4
+        ROLL_MAX_DEG = 1.2
         do_roll = random.random() < .2
         roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
         self.roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
 
         r = random.random()
-        gps_state = "BAD" if r < .05 else "MED" if r <.1 else "NORMAL"
+        gps_state = "BAD" if (r < .05 and just_go_straight) else "MED" if r <.1 else "NORMAL" #TODO update these probs when doing turns again
         # noise for the map, heading. This is in addition to what we'll get from the noisy pos
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-        maps_noise_mult = np.radians(30) if gps_state=="BAD" else np.radians(10) if gps_state=="MED" else random.uniform(.001, np.radians(5)) # radians
+        maps_noise_mult = np.radians(10) if gps_state=="BAD" else np.radians(5) if gps_state=="MED" else random.uniform(.001, np.radians(3)) # radians
         self.maps_noise_heading = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
         # noise for the map, position
         num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-        maps_noise_mult = 60 if gps_state=="BAD" else 30 if gps_state=="MED" else random.uniform(.001, 10) # meters
+        maps_noise_mult = 60 if gps_state=="BAD" else 30 if gps_state=="MED" else random.uniform(.001, 10) # meters NOTE this is for each of x and y, so actual will be higher
         self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
         self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
@@ -61,18 +64,17 @@ class Autopilot():
         self.negotiation_traj_ixs = np.empty((self.N_NEGOTIATION_WPS), dtype=int)
         self.m_per_wp = 1
 
-        NO_ROUTE_PROB = 1. # Only applied when just_go_straight
-        self.draw_route = False if (random.random() < NO_ROUTE_PROB and just_go_straight) else True
-
         # Stopsigns
         self.stopsign_state = "NONE"
         self.stopped_counter = 0
         self.stopped_at_ix = 0
-        self.stop_dist = 1e6
+        self.stop_dist = DIST_NA_PLACEHOLDER
+
 
         # Lead car. Set in TM
         self.has_lead = False
-        self.lead_dist = 1e6
+        self.lead_dist = DIST_NA_PLACEHOLDER
+        self.lead_relative_speed = 100
 
         ######
         # save episode info
@@ -81,8 +83,6 @@ class Autopilot():
 
         if self.save_data:
             np.save(f"{self.run_root}/episode_info.npy", self.episode_info)
-
-
 
 
     def set_route(self, route):
@@ -104,8 +104,9 @@ class Autopilot():
 
         self.wp_rotations = np.empty((len(route), 3), dtype="float64") # pitch, roll, yaw
         self.wp_rotations[:, 0] = moving_average(route.curve_pitch.to_numpy(), 40) ## pitch
-        self.wp_rotations[:, 1] = route.curve_roll.to_numpy() ## roll
+        self.wp_rotations[:, 1] = moving_average(route.rd_roll.to_numpy(), 20) #route.curve_roll.to_numpy() ## roll
         self.wp_rotations[:, 2] = route.curve_heading.to_numpy() # yaw
+
 
         START_IX = 30
         self.current_pos = self.waypoints[START_IX]
@@ -117,7 +118,7 @@ class Autopilot():
         # self.current_wp_uid =  self.wp_uids[START_IX]
         self.traj_granular = self.waypoints[START_IX:START_IX+1]
 
-        self.start_intersection_section_id = route.intersection_section_id.iloc[0]
+        self.start_section_id = route.wps_section_id.iloc[0]
         self.visited_intersections = list(route.intersection_id.unique())
 
         # for drawing route wps on map
@@ -163,7 +164,6 @@ class Autopilot():
 
         # # storing info for traffic manager to use in determining lead car, other
         # self.current_wp_uid = self.wp_uids[current_wp_ix]
-        LEAD_LOOKAHEAD_DIST = 100
         # if self.is_ego: # doing this for perf. NPCs don't need this.
         #     self.traj_wp_uids = self.wp_uids[current_wp_ix:current_wp_ix+int(LEAD_LOOKAHEAD_DIST/WP_SPACING)] # filled-out version of what we're using for targets. First wp is car loc.
         if self.is_ego: # doing this for perf. NPCs don't need this.
@@ -182,9 +182,7 @@ class Autopilot():
         angles_to_wps = get_angles_to(xs, ys, -self.current_rotation[2])
         wp_dists_actual = np.sqrt(xs**2 + ys**2)
 
-
         if self.save_data:
-
             # Navmap
             # gps doesn't refresh as fast as do frames
             if self.overall_frame_counter % self.refresh_nav_map_freq == 0: # This always has to be called on first frame otherwise small_map is none
@@ -214,13 +212,16 @@ class Autopilot():
                                         close_buffer,
                                         self.draw_route)
 
+            wp_rolls = self.wp_rotations[wp_ixs, 1]
+
             # saving
             c = self.counter
             self.maps_container[c,:,:,:] = self.small_map
 
             self.targets_container[c, :N_WPS] = angles_to_wps
             self.targets_container[c, N_WPS:N_WPS*2] = wp_dists_actual
-            self.targets_container[c, N_WPS*2:] = deltas[:,2]
+            self.targets_container[c, N_WPS*2:N_WPS*3] = wp_rolls
+            self.targets_container[c, N_WPS*3:] = deltas[:,2] # z delta w respect to ego
 
             # aux
             self.aux_container[c, AUX_PITCH_IX] = self.pitch_perturbation
@@ -234,6 +235,7 @@ class Autopilot():
 
             self.aux_container[c, AUX_HAS_LEAD_IX] = self.has_lead
             self.aux_container[c, AUX_LEAD_DIST_IX] = self.lead_dist
+            self.aux_container[c, AUX_LEAD_SPEED_IX] = self.lead_relative_speed
 
             self.aux_container[c, AUX_SHOULD_YIELD_IX] = self.should_yield
 
@@ -244,7 +246,7 @@ class Autopilot():
 
                 next_seq_path = f"{self.run_root}/targets_{self.overall_frame_counter+SEQ_LEN}.npy"
                 if os.path.exists(next_seq_path):
-                        os.remove(next_seq_path)
+                    os.remove(next_seq_path)
 
                 self.targets_container[:,:] = 0.0 # TODO shouldn't need this, but it's for safety?
                 self.aux_container[:,:] = 0.0
@@ -319,7 +321,7 @@ class Autopilot():
         delta_y = (dist_car_travelled*np.sin(angle_to_future_vehicle_loc))
 
         self.current_rotation[0] = self.wp_rotations[current_wp_ix][0] # Setting pitch manually based on wps, ie not 'driving' it
-        self.current_rotation[1] = self.roll_noise[current_wp_ix] #self.wp_rotations[current_wp_ix][1] # roll of rd is zero, so just adding our noise
+        self.current_rotation[1] = self.wp_rotations[current_wp_ix][1] + self.roll_noise[current_wp_ix]
         self.current_rotation[2] -= vehicle_heading_delta
 
         self.current_pos[0] += delta_x
@@ -335,14 +337,15 @@ class Autopilot():
         
 
         # stopsign constrained speed
-        STOP_LOOKAHEAD_M = 120
         STOPSIGN_DECEL = 2.0
         EXTRA_STOP_BUFFER_M = 1.5
         STOPPED_SPEED = mph_to_mps(1.6)
         # n_advance_wps_for_stop = int((STOP_LOOKAHEAD_SEC * self.current_speed_mps) / WP_SPACING)
         # n_advance_wps_for_stop = max(n_advance_wps_for_stop, int(MIN_STOP_LOOKAHEAD_M/WP_SPACING))
-        n_advance_wps_for_stop = int(STOP_LOOKAHEAD_M / WP_SPACING) # always looking 100 m ahead
+        n_advance_wps_for_stop = int(STOP_LOOKAHEAD_DIST / WP_SPACING) # always looking 100 m ahead
         upcoming_wps_is_stop = self.wp_is_stop[current_wp_ix:current_wp_ix+n_advance_wps_for_stop]
+
+        # Normal stopsign logic
         # NONE -> "APPROACHING_STOP" or "STOPPED"
         if True in upcoming_wps_is_stop and not self.stopsign_state=="LEAVING_STOP":
             stop_ix = np.where(upcoming_wps_is_stop==True)[0][0]
@@ -354,7 +357,7 @@ class Autopilot():
             self.stop_dist = stop_dist
         else:
             stop_sign_constrained_speed = 1e6
-            stop_dist = 1e6
+            stop_dist = DIST_NA_PLACEHOLDER
         
         # if stopped, increment counter
         # STOPPED -> LEAVING_STOP
@@ -376,12 +379,25 @@ class Autopilot():
         if self.stopsign_state in ["APPROACHING_STOP", "STOPPED"]: 
             self.is_in_yield_zone = True
 
-        # if self.is_ego:
-        #     print(self.has_lead, self.lead_dist)
-        #     print(self.stopsign_state, stop_dist, current_wp_ix, self.stopped_at_ix, self.stopped_counter)
+        # if ego runs the stopsign, above apparatus doesn't work, so just reset to NONE
+        if True not in upcoming_wps_is_stop:
+            self.stopsign_state = "NONE"
+            stop_sign_constrained_speed = 1e6
+            self.stop_dist = DIST_NA_PLACEHOLDER
+            self.stopped_counter = 0
+            self.stopped_at_ix = None
 
-        target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
-        #target_speed = min(curvature_constrained_speed, self.speed_limit)
+        # if self.is_ego:
+        #     if self.has_lead:
+        #         print(f"Lead dist {round(self.lead_dist, 2)} speed {round(self.lead_relative_speed, 2)}")
+        #     if self.stopsign_state != "NONE":
+        #         print(self.stopsign_state, round(stop_dist, 2))
+
+
+        if self.obeys_stops:
+            target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
+        else:
+            target_speed = min(curvature_constrained_speed, self.speed_limit)
 
         target_speed = target_speed if not self.should_yield else 0
 
@@ -421,3 +437,6 @@ class Autopilot():
         self.turn_slowdown_sec_before = random.uniform(.25, .75)
         self.max_accel = random.uniform(1.5, 4.5)
         self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,4)
+
+        OBEYS_STOPS_PROB = .1
+        self.obeys_stops = random.random()<OBEYS_STOPS_PROB

@@ -335,6 +335,7 @@ def get_speed_mask(aux):
     MAX_PRED_S = 6.0
     avg_speeds_mps = kph_to_mps(aux[:,:,2:3].mean(axis=1, keepdims=True))
     max_pred_dists_m = avg_speeds_mps * MAX_PRED_S
+    max_pred_dists_m = np.clip(max_pred_dists_m, 10, np.inf) # always pred out to at least 12m
     speed_mask = pad(pad(np.array(TRAJ_WP_DISTS, dtype=np.float16)))
     speed_mask = (speed_mask <= max_pred_dists_m).astype(np.float16) 
     # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj.

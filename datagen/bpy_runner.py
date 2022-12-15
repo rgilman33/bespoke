@@ -37,11 +37,21 @@ if __name__ == "__main__":
         if os.path.exists(next_targets_path):
             os.remove(next_targets_path)
 
-        is_highway, is_lined, pitch_perturbation, yaw_perturbation, has_npcs, is_single_rd = setup_map()
+        # currently only route of insufficient len causes fail. 
+        successful = False
+        failed_counter = -1
+        while not successful:
+            is_highway, is_lined, pitch_perturbation, yaw_perturbation, has_npcs, is_single_rd = setup_map()
 
-        set_frame_change_post_handler(bpy, save_data=True, run_root=run_root, _is_highway=is_highway, _is_lined=is_lined, 
-                                        _pitch_perturbation=pitch_perturbation, _yaw_perturbation=yaw_perturbation, has_npcs=has_npcs, 
-                                        _is_single_rd=is_single_rd)
+            successful = set_frame_change_post_handler(bpy, save_data=True, run_root=run_root, _is_highway=is_highway, _is_lined=is_lined, 
+                                            _pitch_perturbation=pitch_perturbation, _yaw_perturbation=yaw_perturbation, has_npcs=has_npcs, 
+                                            _is_single_rd=is_single_rd)
+            failed_counter += 1
+            if failed_counter==3:
+                print("wtf couldn't get good map? Killing runner")
+                np.save(f"{run_root}/failed_to_get_map.npy", np.array(1))
+                break
+        if not successful: break
 
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
         bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk

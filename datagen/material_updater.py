@@ -32,6 +32,8 @@ npc_material = bpy.data.materials["npc"].node_tree.nodes
 stopsign_material = bpy.data.materials["stopsign"].node_tree.nodes
 stopsign_nodes = bpy.data.node_groups['stopsign_nodes'].nodes
 
+rdsigns_material = bpy.data.materials["rdsigns"].node_tree.nodes
+rdsigns_nodes = bpy.data.node_groups['rdsigns_nodes'].nodes
 
 grass_material = bpy.data.materials["rdside_grass_master"].node_tree.nodes
 
@@ -117,7 +119,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     ######################
 
     rd_img_albedo = random.choice(rd_surfaces)
-    shoulder_img_albedo = random.choice(rd_surfaces)
+    shoulder_img_albedo = rd_img_albedo if random.random()<.2 else random.choice(rd_surfaces)
 
     get_node("rd_img_albedo", dirt_gravel_nodes).image.filepath = rd_img_albedo
     get_node("shoulder_img_albedo", dirt_gravel_nodes).image.filepath = shoulder_img_albedo #rd_img_albedo if random.random() < SHOULDER_SAME_ALBEDO_AS_RD_PROB else random.choice(all_albedos)
@@ -242,7 +244,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     # Terrain
     ######################
 
-    terrain_albedo = rd_img_albedo if random.random() < .3 else random.choice(all_albedos)
+    terrain_albedo = rd_img_albedo if random.random() < .6 else random.choice(all_albedos)
     get_node("terrain_img_albedo", dirt_gravel_nodes).image.filepath = terrain_albedo
     get_node("terrain_img_normal", dirt_gravel_nodes).image.filepath = terrain_albedo.replace("Albedo", "Normal")
 
@@ -278,17 +280,61 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("base_sat", stopsign_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.3, .8)
     get_node("base_val", stopsign_material).outputs["Value"].default_value = random.uniform(.0, .2)
 
-    stopsign_radius = random.uniform(.25, .5)
+    stopsign_radius = random.uniform(.4, .6) # 30 - 36 inches is rw, we're going a bit bigger here
     text_max = np.interp(stopsign_radius, [.25, .5], [.19, .37])
     get_node("stopsign_radius", stopsign_nodes).outputs["Value"].default_value = stopsign_radius
-    get_node("text_size", stopsign_nodes).outputs["Value"].default_value = random.uniform(text_max*.7, text_max)
+    get_node("text_size", stopsign_nodes).outputs["Value"].default_value = random.uniform(text_max*.75, text_max)
     get_node("stopsign_y_scale", stopsign_nodes).outputs["Value"].default_value = random.uniform(.8, 1.2)
-    get_node("rotation_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.2, .2)
-    get_node("rotation_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.2, .2)
+    get_node("rotation_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
+    get_node("rotation_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
     get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.3, .0)
-    get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, 2)
-    get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-3, 1)
+    # get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, 2) TODO dr these once model is catching them at all. Have to fit before can overfit.
+    # get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-3, 1)
+    # don't shift in stopsign object itself, do so aftewards, otherwise was keeping origin of obj as center, stopsign itself was in rd
     get_node("shift_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(1.5, 3.)
+
+    ######################
+    # Rdsigns
+    ######################
+    get_node("front_hue", rdsigns_material).outputs["Value"].default_value  = random.uniform(.1, .9)
+    if random.random()<.2: # white sign black text
+        sat = 0
+        val = random.uniform(1,3)
+        text_val = 0
+    else:
+        sat, val, text_val = random.uniform(.7, 1.0), random.uniform(.3, 1.0), 1.0
+    get_node("front_sat", rdsigns_material).outputs["Value"].default_value  = sat
+    get_node("front_val", rdsigns_material).outputs["Value"].default_value  = val
+    get_node("text_val", rdsigns_material).outputs["Value"].default_value  = text_val
+
+    get_node("metallic", rdsigns_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.0, 1.0)
+    get_node("roughness", rdsigns_material).outputs["Value"].default_value = .5 if random.random()<.5 else random.uniform(.0, 1.0)
+    get_node("base_sat", rdsigns_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.3, .8)
+    get_node("base_val", rdsigns_material).outputs["Value"].default_value = random.uniform(.0, .2)
+
+    radius = random.uniform(.2, .5) 
+    get_node("radius", rdsigns_nodes).outputs["Value"].default_value = radius
+    n_vertices = 30 if random.random()<.05 else random.randint(3,4)
+    get_node("n_vertices", rdsigns_nodes).outputs["Value"].default_value = n_vertices
+    if n_vertices==3:
+        rotation = random.choice([np.pi/2, -np.pi/2])
+    elif n_vertices==4:
+        rotation = random.choice([0, np.pi/4])
+    else:
+        rotation = 0
+    get_node("rotation", rdsigns_nodes).outputs["Value"].default_value = rotation
+
+    x_scale = random.uniform(1, 2)
+    get_node("x_scale", rdsigns_nodes).outputs["Value"].default_value = x_scale
+    get_node("y_scale", rdsigns_nodes).outputs["Value"].default_value = random.uniform(1, 2)
+
+    random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+    sign_text = "".join([random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(random.randint(0, 4))])
+    bpy.data.node_groups["rdsigns_nodes"].nodes["String"].string = sign_text
+    text_max = np.interp(radius*x_scale, [.25, .5, 1], [.19, .37, .8])
+    get_node("text_size", rdsigns_nodes).outputs["Value"].default_value = random.uniform(text_max*.7, text_max)
+
+
 
     ######################
     # Buildings
@@ -360,23 +406,16 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     get_node("license_plate_width", npc_body_nodes).outputs["Value"].default_value = random.uniform(.25, .35)
     get_node("license_plate_height", npc_body_nodes).outputs["Value"].default_value = random.uniform(.12, .18)
 
-    get_node("taillight_hue", npc_material).outputs["Value"].default_value = random.uniform(.9, 1.1)
-    get_node("taillight_sat", npc_material).outputs["Value"].default_value = random.uniform(.5, 1.)
+    get_node("taillight_hue", npc_material).outputs["Value"].default_value = random.uniform(.96, 1.04) % 1.0
+    get_node("taillight_sat", npc_material).outputs["Value"].default_value = random.uniform(.9, 1.1)
     get_node("taillight_value", npc_material).outputs["Value"].default_value = random.uniform(.3, 1.)
-    get_node("taillight_emission_strength", npc_material).outputs["Value"].default_value = 20 if random.random()<.15 else 0
+    get_node("taillight_emission_strength", npc_material).outputs["Value"].default_value = 3 if random.random()<.15 else 0
 
 
     get_node("license_plate_hue", npc_material).outputs["Value"].default_value = random.uniform(0, 1)
     get_node("license_plate_value", npc_material).outputs["Value"].default_value = random.uniform(.5, 1.)
 
     get_node("headlights_emission_strength", npc_material).outputs["Value"].default_value = random.uniform(2, 30) if random.random()<.15 else 0
-
-
-
-
-
-
-
 
     
     print("Done randomizing")
@@ -402,6 +441,7 @@ def randomize_appearance(rd_is_lined=True, lane_width=None, wide_shoulder_add=No
     print("Using grass mesh ", grass_mesh_path)
     bpy.ops.import_scene.fbx(filepath=grass_mesh_path)
     bpy.context.selected_objects[0].name = "grass_mesh"
+    bpy.context.selected_objects[0].hide_render = True
 
     get_node("grass_mesh", main_map_nodes).inputs[0].default_value = bpy.data.objects["grass_mesh"]
 
@@ -422,13 +462,19 @@ def setup_map():
     is_single_rd = random.random() < 1 
     get_node("is_single_rd", get_variables_nodes).outputs["Value"].default_value = 1 if is_single_rd else 0
 
-    HAS_LANELINES_PROB = .75
+    HAS_LANELINES_PROB = .8
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
-    is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, less curvy
+    is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, no bumps, more often banked, no smaller-scale XY noise
     wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0
 
     is_just_straight = random.random()<.01
+
+    RD_IS_BANKED_PROB = 0 if (not rd_is_lined or is_just_straight) else .7 if is_highway else .4
+    rd_is_banked = random.random()<RD_IS_BANKED_PROB
+    get_node("max_roll_at_this_curvature", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.08, .16)
+    get_node("rd_is_banked", z_adjustment_nodes).outputs["Value"].default_value = 1 if rd_is_banked else 0
+
 
     left_shift = 0
     if rd_is_lined:
@@ -447,7 +493,7 @@ def setup_map():
 
     IS_COUNTRY_MTN_PROB = .2 # interspersed very curvy with totally straight. Train slowdowns and sharp curves.
     is_country_mtn = random.random() < IS_COUNTRY_MTN_PROB and lane_width < 3.6 and not (is_highway or is_just_straight)
-
+    # NOTE prob don't do country_mtn when doing intersection turning. There is sometimes some extreme curves, which overlap sometimes at high noise levels.
     # CRV is 1.85m wide. 
     # dist from back wheel to cam loc is 1.78m
     # i believe cam was ~1.45m from the ground, should measure again. These values are hardcoded in the blendfile. Cam is also hardcoded to
@@ -460,30 +506,45 @@ def setup_map():
     get_node("loop_random_seed_z", rd_noise_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
 
     # XY noise scale one
-    get_node("loop_noise_scale_1", rd_noise_nodes).outputs["Value"].default_value = random.uniform(.0045, .0055)
-    nm1 = 0 if (is_just_straight or is_country_mtn) else random.uniform(70, (150 if is_wide_laned else 250))
+    noise_scale_1 = random.uniform(.15, .45) # /= 100 in blender
+    noise_mult_1_max = np.interp(noise_scale_1, [.15, .45], [1000, 500])
+    get_node("loop_noise_scale_1", rd_noise_nodes).outputs["Value"].default_value = noise_scale_1
+    nm1 = 0 if (is_just_straight or is_country_mtn) else noise_mult_1_max*random.uniform((.7 if rd_is_banked else .3), 1)
     get_node("loop_noise_mult_1", rd_noise_nodes).outputs["Value"].default_value = nm1
 
     # XY noise scale two
-    get_node("loop_noise_scale_2", rd_noise_nodes).outputs["Value"].default_value = random.uniform(.006, .011) if is_country_mtn else random.uniform(.01, .015) 
+    noise_scale_2 = random.uniform(.6, 1.1) #  /= 100 in blender
+    get_node("loop_noise_scale_2", rd_noise_nodes).outputs["Value"].default_value = noise_scale_2
     nm2_r = random.random()
-    nm2 = random.uniform(100,200) if is_country_mtn else 0 if (nm2_r<.7 or is_highway or is_wide_laned or is_just_straight) else random.uniform(20, 60) if nm2_r<.9 else random.uniform(60, 100)
+    no_noise_2 = (nm2_r<.7 or is_highway or is_wide_laned or is_just_straight)
+    nm2 = random.uniform(100,200) if is_country_mtn else 0 if no_noise_2 else random.uniform(20, 60) if nm2_r<.9 else random.uniform(60, 100)
     get_node("loop_noise_mult_2", rd_noise_nodes).outputs["Value"].default_value = nm2
 
     # Z noise
-    z0_mult = 0 if random.random() < .2 else random.uniform(40, 200) if random.random() < .95 else random.uniform(200,300)
-    z1_scale = .005 * 10**random.uniform(0, 1)
-    z1_mult_max = np.interp(z1_scale, [.005, .01, .03, .05], [25, 18, 6, 3])
+
+    # large hills
+    r = random.random()
+    z0_mult = 0 if r < .2 else random.uniform(10, 100) if r < .95 else random.uniform(100,200)
+    get_node("loop_noise_mult_z_0", rd_noise_nodes).outputs["Value"].default_value = z0_mult
+
+    # small rises
+    z1_scale = .5 * 10**random.uniform(0, 1) # /= 100 in blender
+    z1_mult_max = np.interp(z1_scale, [.5, 1, 3, 5], [25, 18, 6, 3]) * .8 #manually bringing down a bit, too intense
+    z1_mult_max = z1_mult_max*.3 if rd_is_banked else z1_mult_max # small scale hills w banking isn't realistic, i don't think. Pay attn. 
     get_node("loop_noise_scale_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_scale
     z1_mult = 0 if random.random() < .1 else random.uniform(0, z1_mult_max/2) if random.random() < .8 else random.uniform(z1_mult_max/2, z1_mult_max)
-    z2_mult = 0 if random.random() < .5 else random.uniform(.01, .05) if rd_is_lined else random.uniform(.02, .1) # rd bumpiness
-    get_node("loop_noise_mult_z_0", rd_noise_nodes).outputs["Value"].default_value = z0_mult
     get_node("loop_noise_mult_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_mult
+
+    # rd bumpiness
+    z2_mult = 0 if (random.random() < .5 or is_highway or rd_is_banked) else random.uniform(.01, .05) if rd_is_lined else random.uniform(.02, .1) # rd bumpiness
     get_node("loop_noise_mult_z_2", rd_noise_nodes).outputs["Value"].default_value = z2_mult
 
-    get_node("rd_hump", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.2, .8) 
+    # Rd hump
+    rd_hump = random.uniform(.2, .8) 
+    get_node("rd_hump", z_adjustment_nodes).outputs["Value"].default_value = rd_hump
     get_node("rd_hump_rampup", z_adjustment_nodes).outputs["Value"].default_value = 16 #random.uniform(4, 10) 
 
+    # rdside hills
     get_node("rdside_hills_falloff_add", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 5) + wide_shoulder_add*1.2
     get_node("rdside_hills_falloff_range", main_map_nodes).outputs["Value"].default_value = random.uniform(1.5, 10)
     get_node("rdside_hills_noise_scale", main_map_nodes).outputs["Value"].default_value = .03 * 10**random.uniform(0, 1)
@@ -496,7 +557,6 @@ def setup_map():
     get_node("buildings_group_center_modulo", main_map_nodes).outputs["Value"].default_value = buildings_group_center_modulo
     get_node("buildings_group_size", main_map_nodes).outputs["Value"].default_value = buildings_group_center_modulo * random.uniform(.1, .9)
     get_node("buildings_density", main_map_nodes).outputs["Value"].default_value = random.uniform(.003, .03)
-
 
     grass_group_center_modulo = random.uniform(50, 300)
     get_node("grass_group_center_modulo", main_map_nodes).outputs["Value"].default_value = grass_group_center_modulo
@@ -576,7 +636,7 @@ def setup_map():
         set_intersection_property_all(rd, "v_right_has_l2", False)
         set_intersection_property_all(rd, "v_right_has_l3", False)
         set_intersection_property_all(rd, "v_lane_width", lane_width)
-        set_intersection_property_all(rd, "v_yellow_spacing", yellow_spacing_hwidth) 
+        set_intersection_property_all(rd, "v_yellow_spacing", yellow_spacing_hwidth*2) # this refers to the full width
         set_intersection_property_all(rd, "v_yellow_is_double", yellow_is_double)
         set_intersection_property_all(rd, "v_yellow_top_is_dashed", yellow_is_dashed)
         set_intersection_property_all(rd, "left_shift", left_shift) # Used for dirtgravel. Shifts lane markings and wps to the left, creates overlap in the middle.
@@ -589,7 +649,7 @@ def setup_map():
         set_intersection_property_all(rd, "h_bottom_has_l2", False)
         set_intersection_property_all(rd, "h_bottom_has_l3", False)
         set_intersection_property_all(rd, "h_lane_width", lane_width)
-        set_intersection_property_all(rd, "h_yellow_spacing", yellow_spacing_hwidth) #NOTE must be zero when dirtgravel
+        set_intersection_property_all(rd, "h_yellow_spacing", yellow_spacing_hwidth*2) #NOTE must be zero when dirtgravel
         set_intersection_property_all(rd, "h_yellow_is_double", yellow_is_double) # can only be single when yellow_spacing is zero. Must be single when dirtgravel
         set_intersection_property_all(rd, "h_yellow_top_is_dashed", yellow_is_dashed)
         set_intersection_property_all(rd, "left_shift", left_shift)

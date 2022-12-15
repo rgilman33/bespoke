@@ -42,30 +42,18 @@ def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0)
     return image
 
 
-
-def combine_img_cam(act_grad, img, cutoff):
+def combine_img_cam(act_grad, img, cutoff, color=[255, 0, 0]):
     """ act_grad np float, just the salmap*gradients. img np out of 255"""
     
     # resize to same as img
     act_grad = cv2.resize(act_grad, (img.shape[1],img.shape[0]))
-    
-    # Get mask for zeroing out
-    mask = np.where(act_grad, (abs(act_grad)>(cutoff)), 0)
-    mask = np.expand_dims(mask, -1)
+        
+    act_grad = (abs(act_grad)>(cutoff)).astype(int)
+    act_grad_mask = np.expand_dims(act_grad, -1)
 
-    # -1 to 1, centered at zero 
-    # TODO this is wrong, shouldn't be normalizing each img separately
-    m = max(act_grad.max(), abs(act_grad.min()))
-    act_grad = act_grad/m
+    act_grad = (act_grad_mask * np.array(color)).astype(np.uint8)
 
-    # 0 to 255, centered at 127.5. COLORMAP_JET. Positive is red, negative gradients blue, green in middle
-    act_grad = ((act_grad*127.5)+127.5).astype(np.uint8)
-    
-    # Get heatmap and zero out the boring middle ground
-    heatmap = cv2.applyColorMap(act_grad, cv2.COLORMAP_JET)
-    heatmap = (heatmap*mask)
-     
-    cam = heatmap/2 + img*np.clip(mask*-1 + 1.5, 0, 1)
+    cam = act_grad*.5 + img*((act_grad_mask*-1+1)*.5+.5)
     cam = np.clip(cam, 0, 255).astype('uint8')
     
     return cam
@@ -101,7 +89,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         cudnn_was_enabled = torch.backends.cudnn.enabled
         torch.backends.cudnn.enabled=False # otherwise can't do backward through RNN w cudnn
 
-    m = EffNet(model_arch="efficientnet_b3", is_for_viz=do_gradcam).to(device)
+    m = EffNet(is_for_viz=do_gradcam).to(device)
     m.load_state_dict(torch.load(f"{BESPOKE_ROOT}/models/m_{model_stem}.torch"), strict=False)
     m.eval()
     bs = 1
@@ -110,10 +98,17 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     if do_gradcam:
         m.convert_backbone_to_sequential() # required for the viz version of the model
 
-    rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs = [], [], [], [], [], [], [], []
+    rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, pred_aux_all = [], [], [], [], [], [], [], [], []
+    stop_cnn_grads, lead_cnn_grads =[], []
     chunk_len, ix = 48, 0 # 24, 0
+    counter = 0
 
     while ix < len(img):
+        # # wipe hidden state to see effects
+        # if counter%10==0: #NOTE TODO UNDO beware of this
+        #     m.reset_hidden(bs)
+        # counter+=1
+
         aux_ = pad(aux[ix:ix+chunk_len]) # current speed is important!!!
         img_ = pad(img[ix:ix+chunk_len])
         aux_model, aux_calib, aux_targets = get_auxs(aux_)
@@ -125,21 +120,32 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
         with torch.cuda.amp.autocast():
             m.zero_grad()
             pred, pred_aux, obsnet_out = m(img_, aux_model, aux_calib) 
-            wp_angles, wp_headings, wp_curvatures = torch.chunk(pred, 3, -1)
+            wp_angles, wp_headings, wp_curvatures, wp_rolls, wp_zs = torch.chunk(pred, 5, -1)
             wp_angles_all.append(wp_angles[0,:,:].detach().cpu().numpy())
             wp_headings_all.append(wp_headings[0,:,:].detach().cpu().numpy())
             wp_curvatures_all.append(wp_curvatures[0,:,:].detach().cpu().numpy())
             obsnet_outs.append(obsnet_out[0,:,:].detach().cpu().numpy())
+            pred_aux_all.append(pred_aux[0,:,:].detach().cpu().numpy())
             
             if do_gradcam:
                 cnn_activations.append(m.activations.mean(1, keepdim=True).numpy()) # (24, 1, 13, 80), mean of channels
                 rnn_activations.append(m.rnn_activations[0].numpy()) #torch.Size([24, 512]), 
 
-                (wp_angles * torch.from_numpy(speed_mask).to(device)).mean().backward()
-                
+                (wp_angles * torch.from_numpy(speed_mask).to(device)).sum().backward(retain_graph=True) #sum() gives lots more actgrad than mean()
                 cnn_grads.append(m.gradients.mean(1, keepdim=True).numpy())
                 rnn_grads.append(m.rnn_gradients[0].numpy()) #torch.Size([24, 512])
-                
+
+                # lead car
+                m.zero_grad()
+                # (pred_aux[0,:,3]).mean().backward(retain_graph=True) # has lead
+                (pred_aux[0,:,3]).mean().backward() # has lead
+                lead_cnn_grads.append(m.gradients.mean(1, keepdim=True).numpy())
+
+                # Stopsign TODO UNDO Let back in when useful 
+                # m.zero_grad() 
+                # (pred_aux[0,:,0]).mean().backward() # Approaching stop
+                stop_cnn_grads.append(m.gradients.mean(1, keepdim=True).numpy())
+
             del wp_angles
 
         ix += chunk_len
@@ -148,19 +154,23 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     wp_headings_all = np.concatenate(wp_headings_all)
     wp_curvatures_all = np.concatenate(wp_curvatures_all)
     obsnet_outs = np.concatenate(obsnet_outs)
+    pred_aux_all = np.concatenate(pred_aux_all)
 
     if do_gradcam:
         cnn_activations, cnn_grads = np.concatenate(cnn_activations, axis=0), np.concatenate(cnn_grads, axis=0)
         rnn_activations, rnn_grads = np.concatenate(rnn_activations, axis=0), np.concatenate(rnn_grads, axis=0)
+
+        stop_cnn_grads = np.concatenate(stop_cnn_grads, axis=0)
+        lead_cnn_grads = np.concatenate(lead_cnn_grads, axis=0)
         
         seqlen, n_acts = rnn_activations.shape
         rnn_activations = rnn_activations.reshape(seqlen, 32, 16) # splitting rnn hidden vector into a rectangle for viewing
         rnn_grads = rnn_grads.reshape(seqlen, 32, 16)
 
     # a bit dumb, have to pad before denorming
-    wp_angles_all = np.expand_dims(wp_angles_all,0) * TARGET_NORM.cpu().numpy()
+    wp_angles_all = np.expand_dims(wp_angles_all,0) * TARGET_NORM
     wp_angles_all = wp_angles_all[0] 
-    wp_headings_all = np.expand_dims(wp_headings_all,0) * TARGET_NORM_HEADINGS.cpu().numpy()
+    wp_headings_all = np.expand_dims(wp_headings_all,0) * TARGET_NORM_HEADINGS
     wp_headings_all = wp_headings_all[0] 
     wp_curvatures_all = np.expand_dims(wp_curvatures_all,0) * TARGET_NORM_CURVATURES
     wp_curvatures_all = wp_curvatures_all[0] 
@@ -168,32 +178,54 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
     if do_gradcam:
         torch.backends.cudnn.enabled = cudnn_was_enabled
 
-    return wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads
+    return wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, pred_aux_all, cnn_activations, cnn_grads, \
+                    rnn_activations, rnn_grads, stop_cnn_grads, lead_cnn_grads
 
+def sigmoid_python(x):
+    return 1.0 / (1.0 + np.exp(-x))
 
+def draw_aux_targets(img, targets, preds):
+    r, a, p = img, targets, preds
+    approaching_stop_target, stop_dist_target, _, has_lead_target, lead_dist_target, lead_speed_target = a[0], a[1], a[2], a[3], a[4], a[5]
+    approaching_stop, stop_dist, stopped, has_lead, lead_dist, lead_speed = p[0], p[1], p[2], p[3], p[4], p[5]
+    r = cv2.putText(r, f"stop: {round(sigmoid_python(approaching_stop), 2)}, {approaching_stop_target}", (560, 8), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
+    r = cv2.putText(r, f"stop dist: {round(stop_dist)}, {round(stop_dist_target)}", (560, 16), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
+    r = cv2.putText(r, f"lead: {round(sigmoid_python(has_lead), 2)}, {has_lead_target}", (560, 24), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
+    r = cv2.putText(r, f"lead dist: {round(lead_dist)}, {round(lead_dist_target)}", (560, 32), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
+    r = cv2.putText(r, f"lead speed: {round(lead_speed)}, {round(lead_speed_target)}", (560, 40), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
+    return r
 
-def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvatures_pred, img, aux, wp_angles_targets,
-             cnn_grads, cnn_activations, rnn_grads, rnn_activations, add_charts):
+red =  (255, 100, 100)
+white = (255, 255, 255)
+
+def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvatures_pred, pred_aux_all, img, aux, wp_angles_targets,
+             cnn_grads, cnn_activations, stop_cnn_grads, lead_cnn_grads, rnn_grads, rnn_activations, add_charts):
     
     height, width, channels = img[0].shape
     w2, h2 = width//2, height//2
     height*= 3 if add_charts else 2 # stacking two, and charts
     width += 50 # for rnn gradcam
     fps = 20
-    cutoff = 2.4e-8 #2.4e-6 # adjust this manually when necessary
-    MAX_CLIP_TE_VIZ = .2 # viz will be white at this point
     print(height, width, channels)
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{run_id}_m_{model_stem}_gradcam.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
     curve_constrained_speed_calculator = CurveConstrainedSpeedCalculator()
     torque_limiter = TorqueLimiter()
     torques_hist, tds_hist, steers_hist = [], [], []
+    _, _, aux_targets = get_auxs(pad(aux))
+    aux_targets = aux_targets[0]
 
     for i in range(len(img)-1):
 
         # Gradcam
         g = cnn_grads[i][0].astype(np.float32)
+        g = abs(g) # for lateral, want both left and right but don't care to differentiate, as they were all mixed together anyways
+        sg = np.clip(stop_cnn_grads[i][0].astype(np.float32), 0, np.inf) # for stopsigns and lead car detection, only want positive hits
+        lg = np.clip(lead_cnn_grads[i][0].astype(np.float32), 0, np.inf) 
+
         s = cnn_activations[i][0].astype(np.float32)
-        r = combine_img_cam(s*g, img[i], cutoff=cutoff) # this could also be on the processed img
+        r = combine_img_cam(s*g, img[i], cutoff=6e-5, color=[0,0,255]) 
+        #r = combine_img_cam(s*sg, r, cutoff=1e-6, color=[255,0,0]) 
+        r = combine_img_cam(s*lg, r, cutoff=2e-6, color=[0,255,0])
 
         speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this max() necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
 
@@ -228,8 +260,7 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
         # Torque
         target_wp_angle_deg = np.degrees(target_wp_angle)
         tire_angle_deg, is_abs_torque_limited, is_td_limited, commanded_torque, commanded_td = torque_limiter.step(target_wp_angle_deg, mps_to_kph(speed_mps))
-        red =  (255, 100, 100)
-        white = (255, 255, 255)
+
         torques_hist.append(round(abs(commanded_torque)))
         tds_hist.append(round(abs(commanded_td)))
         M = 7
@@ -243,6 +274,14 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
         display_steer = sum(steers_hist[-M:])/M
         r = cv2.putText(r, f"angle: {round(display_steer, 2)}", (0, 70), cv2.FONT_HERSHEY_SIMPLEX, .5, white, 1)
         
+        ###
+        # aux preds
+        p = pred_aux_all[i]
+        p *= AUX_TARGET_NORM
+        a = aux_targets[i]
+
+        r = draw_aux_targets(r, a, p)
+
         ####
 
         # Guidelines
@@ -269,11 +308,24 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
 
 
 def make_vid(run_id, model_stem, img, aux, targets=None, add_charts=False):
-    rollout_data = get_viz_rollout(model_stem, img, aux)
-    wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, cnn_activations, cnn_grads, rnn_activations, rnn_grads = rollout_data
+
+    img_bw = bwify_seq(img)
+    img_cat = cat_imgs(img[None, ...], img_bw[None, ...])[0]
+    l = len(img_cat)
+    img = img[-l:]
+    aux = aux[-l:]
+    if targets is not None:
+        targets = targets[-l:]
+
+    rollout_data = get_viz_rollout(model_stem, img_cat, aux)
+
+    wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, pred_aux_all, cnn_activations, cnn_grads, \
+            rnn_activations, rnn_grads, stop_cnn_grads, lead_cnn_grads = rollout_data
     print(wp_angles_all.shape, cnn_activations.shape, cnn_grads.shape)
 
-    _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, wp_curvatures_all, img, aux, targets, cnn_grads, cnn_activations, rnn_grads, rnn_activations, add_charts)
+    _make_vid(model_stem, run_id, wp_angles_all, wp_headings_all, wp_curvatures_all, pred_aux_all, img, aux, targets, \
+         cnn_grads, cnn_activations, stop_cnn_grads, lead_cnn_grads, rnn_grads, rnn_activations, add_charts)
+
     print("Made vid!")
     return rollout_data
 

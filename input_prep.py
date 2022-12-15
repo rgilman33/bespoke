@@ -13,19 +13,17 @@ pad = lambda x: np.expand_dims(x,0)
 IMG_NORM_MEAN = .5
 IMG_NORM_STD = .25
 
-#wp_ix_norm = torch.from_numpy(np.linspace(1, 4.27, num=N_WPS_TO_USE).astype('float16')) # this was when pred 22 out
-wp_ix_norm = torch.from_numpy(np.linspace(1, 5.5, num=N_WPS).astype('float32')) 
-wp_ix_norm = wp_ix_norm.unsqueeze(0).unsqueeze(0)#.to('cuda')
-# TARGET_NORM = .035 * wp_ix_norm 
-TARGET_NORM = .015 * wp_ix_norm 
+wp_ix_norm = np.linspace(1, 10, num=N_WPS).astype('float32')
+wp_ix_norm = pad(pad(wp_ix_norm))
+TARGET_NORM = .02 * wp_ix_norm 
 
-wp_ix_norm_headings = torch.from_numpy(np.linspace(1, 5.5, num=N_WPS).astype('float32')) 
-wp_ix_norm_headings = wp_ix_norm_headings.unsqueeze(0).unsqueeze(0)#.to('cuda')
-# TARGET_NORM = .035 * wp_ix_norm 
-TARGET_NORM_HEADINGS = .025 * wp_ix_norm_headings
+wp_ix_norm_headings = np.linspace(1, 10, num=N_WPS).astype('float32')
+wp_ix_norm_headings = pad(pad(wp_ix_norm_headings))
+TARGET_NORM_HEADINGS = .04 * wp_ix_norm_headings
 
-TARGET_NORM_CURVATURES = .015 
-
+TARGET_NORM_CURVATURES = .006
+TARGET_NORM_ROLL = .02
+TARGET_NORM_Z = 3.
 
 def norm_img(img):
     return (img-IMG_NORM_MEAN) / IMG_NORM_STD
@@ -48,7 +46,7 @@ def prep_inputs(image, aux_model, aux_calib, is_single_obs=False):
     aux_model = torch.from_numpy(aux_model).to('cuda') # from_numpy matches dtype, uses same mem
     aux_calib = torch.from_numpy(aux_calib).to('cuda') # from_numpy matches dtype, uses same mem
 
-    aux_model = norm_aux_model(aux_model) 
+    aux_model = norm_aux_model(aux_model) #TODO norm in float32
 
     image = torch.from_numpy(image).to('cuda')
     image = image.permute(0,1,4,2,3)
@@ -60,32 +58,52 @@ def prep_inputs(image, aux_model, aux_calib, is_single_obs=False):
     return (image, aux_model, aux_calib)
 
 AUX_TARGET_NORM = np.ones(N_AUX_TARGETS)
+
 AUX_TARGET_NORM[0] = 1
 AUX_TARGET_NORM[1] = 30
 AUX_TARGET_NORM[2] = 1
 AUX_TARGET_NORM[3] = 1
 AUX_TARGET_NORM[4] = 30
+AUX_TARGET_NORM[5] = 1 # lead speed
 
-    
-def prep_targets(wp_angles, wp_headings, wp_curvatures, aux_targets):
+def prep_targets(wp_angles, wp_headings, wp_curvatures, wp_rolls, wp_zs, aux_targets):
 
+    wp_angles = wp_angles / TARGET_NORM # should still be float32 at this point. 
+    wp_angles = wp_angles.astype(np.float16)
     wp_angles = torch.from_numpy(wp_angles).to('cuda')
-    wp_angles = wp_angles / TARGET_NORM.to('cuda')
-    wp_angles = wp_angles.half()
+    # wp_angles = wp_angles.half()
+    # wp_angles = torch.clip(wp_angles, -ANGLE_MAX, ANGLE_MAX) NOTE HOLY FUCK i'm an idiot. Clipping AFTER norming??? 
 
+    wp_headings = wp_headings / TARGET_NORM_HEADINGS
+    wp_headings = wp_headings.astype(np.float16)
     wp_headings = torch.from_numpy(wp_headings).to('cuda')
-    wp_headings = wp_headings / TARGET_NORM_HEADINGS.to('cuda')
-    wp_headings = wp_headings.half()
+    # wp_headings = wp_headings.half()
+    # wp_headings = torch.clip(wp_headings, -HEADING_MAX, HEADING_MAX)
 
-    wp_curvatures = torch.from_numpy(wp_curvatures).to('cuda')
     wp_curvatures = wp_curvatures / TARGET_NORM_CURVATURES
-    wp_curvatures = wp_curvatures.half()
+    wp_curvatures = wp_curvatures.astype(np.float16)
+    wp_curvatures = torch.from_numpy(wp_curvatures).to('cuda')
+    # wp_curvatures = wp_curvatures.half()
+    # wp_curvatures = torch.clip(wp_curvatures, -CURVATURE_MAX, CURVATURE_MAX)
 
+    wp_rolls = wp_rolls / TARGET_NORM_ROLL
+    wp_rolls = wp_rolls.astype(np.float16)
+    wp_rolls = torch.from_numpy(wp_rolls).to('cuda')
+    # wp_rolls = wp_rolls.half()
+    # wp_rolls = torch.clip(wp_rolls, -ROLL_MAX, ROLL_MAX)
+
+    wp_zs = wp_zs / TARGET_NORM_Z
+    wp_zs = wp_zs.astype(np.float16)
+    wp_zs = torch.from_numpy(wp_zs).to('cuda')
+    # wp_zs = wp_zs.half()
+    # wp_zs = torch.clip(wp_zs, -Z_MAX, Z_MAX)
+
+    aux_targets = aux_targets / AUX_TARGET_NORM
+    aux_targets = aux_targets.astype(np.float16)
     aux_targets = torch.from_numpy(aux_targets).to('cuda')
-    aux_targets = aux_targets / torch.from_numpy(AUX_TARGET_NORM).to("cuda")
-    aux_targets = aux_targets.half()
+    # aux_targets = aux_targets.half()
 
-    return (wp_angles, wp_headings, wp_curvatures, aux_targets)
+    return (wp_angles, wp_headings, wp_curvatures, wp_rolls, wp_zs, aux_targets)
 
 
 from skimage.draw import line_aa
