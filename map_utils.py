@@ -5,7 +5,7 @@ from constants import *
 EARTH_RADIUS = 6373000.0  # approximate radius of earth in meters
 CLOSE_RADIUS = 400 #200 # meters
 CLOSE_BUFFER = np.degrees(CLOSE_RADIUS / EARTH_RADIUS)
-MAP_SZ_PX = 400 # we'll crop out of this
+MAP_SZ_PX = 600 #400 # we'll crop out of this
 assert MAP_SZ_PX%2==0
 
 # filtering down the FAR_RADIUS chunk of map data into the CLOSE_RADIUS. We'll draw this entire close area 
@@ -93,7 +93,7 @@ def draw_small_map(xs, ys, way_ids, route_xs=None, route_ys=None):
     # # now we crop the square down to the rect we want. 
     small_map = np.flipud(small_map) # bc cv2 origin is top left rather than bottom left
     w2 = MAP_WIDTH // 2
-    top_start = 90 # Want ego close to bottom but not fully at bottom
+    top_start = 130 #90 # Want ego close to bottom but not fully at bottom. Eyeballed
     small_map = small_map[top_start:top_start+MAP_HEIGHT, h-w2:h+w2, :]
     
     return small_map

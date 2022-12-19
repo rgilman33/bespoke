@@ -397,8 +397,11 @@ def run_epoch(dataloader, #TODO prob put this in own file, it's a big one
             worst_control_loss_all, worst_approaching_stop_loss_all, worst_has_lead_loss_all = -np.inf, -np.inf, -np.inf
             if log_wandb: 
                 # random imgs to log
-                random_img_0 = add_trajs_to_img(img[0, 3, :3,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :], speed_mps=kph_to_mps(aux_model[0,3,2]*20)) #TODO sloppy hardcoded denorm
-                random_img_1 = add_trajs_to_img(img[1, -1, :3,:,:], wp_angles_pred[1, -1, :], wp_angles[1, -1, :], speed_mps=kph_to_mps(aux_model[1,-1,2]*20))
+                # random_img_0 = add_trajs_to_img(img[0, 3, :3,:,:], wp_angles_pred[0, 3, :], wp_angles[0, 3, :], speed_mps=kph_to_mps(aux_model[0,3,2]*20)) #TODO sloppy hardcoded denorm
+                # random_img_1 = add_trajs_to_img(img[1, -1, :3,:,:], wp_angles_pred[1, -1, :], wp_angles[1, -1, :], speed_mps=kph_to_mps(aux_model[1,-1,2]*20))
+                # random_img_2 = add_trajs_to_img(img[-1, 0, :3,:,:], wp_angles_pred[-1, 0, :], wp_angles[-1, 0, :], speed_mps=kph_to_mps(aux_model[-1,0,2]*20))
+                random_img_0 = add_trajs_to_img(img[0, 0, :3,:,:], wp_angles_pred[0, 0, :], wp_angles[0, 0, :], speed_mps=kph_to_mps(aux_model[0,0,2]*20)) #TODO sloppy hardcoded denorm
+                random_img_1 = add_trajs_to_img(img[1, 0, :3,:,:], wp_angles_pred[1, 0, :], wp_angles[1, 0, :], speed_mps=kph_to_mps(aux_model[1,0,2]*20))
                 random_img_2 = add_trajs_to_img(img[-1, 0, :3,:,:], wp_angles_pred[-1, 0, :], wp_angles[-1, 0, :], speed_mps=kph_to_mps(aux_model[-1,0,2]*20))
 
                 three_randos = wandb.Image(np.concatenate([random_img_0, random_img_1, random_img_2], axis=0))
@@ -582,7 +585,7 @@ transform = A.Compose([
         A.GaussNoise(var_limit=GAUSS_NOISE_MAX, p=.2),
         A.ISONoise(intensity=(.2, ISO_NOISE_MAX), p=.2)
     ]),
-    A.Cutout(max_h_size=90, max_w_size=60, num_holes=2, p=.1),
+    A.Cutout(max_h_size=int(IMG_HEIGHT*.7), max_w_size=int(IMG_HEIGHT*.4), num_holes=2, p=.1),
     A.OneOf([
         A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=0, p=.2),
         A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=1, p=.2),

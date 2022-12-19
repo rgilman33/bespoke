@@ -205,9 +205,9 @@ def reset_npc_objects(bpy):
         # we now have a copy of the form "npc.001" in the blender scene, which we'll grab and use later
 
 class NPC():
-    def __init__(self, ap, nodes, blender_object):
+    def __init__(self, ap, nodes, blender_object, dist_from_ego_start_go):
         self.ap, self.nodes, self.blender_object = ap, nodes, blender_object
-        self.dist_from_ego_start_go = random.uniform(LEAD_LOOKAHEAD_DIST*1.05, LEAD_LOOKAHEAD_DIST*1.5)
+        self.dist_from_ego_start_go = dist_from_ego_start_go
         self.is_done = False
 
 class TrafficManager():
@@ -253,8 +253,8 @@ class TrafficManager():
                 npc_ap.set_route(route)
 
                 update_ap_object(nodes, npc_ap)
-
-                npc = NPC(npc_ap, nodes, npc_object)
+                dist_from_ego_start_go = 200 if self.npcs_only_oncoming else random.uniform(110, 160)
+                npc = NPC(npc_ap, nodes, npc_object, dist_from_ego_start_go)
                 self.npcs.append(npc)
             else:
                 npc_object.hide_render = True

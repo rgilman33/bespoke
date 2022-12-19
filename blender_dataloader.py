@@ -105,7 +105,7 @@ class BlenderDataloader():
 
             just_go_straight = bool(_episode_info[0])
             HAS_MAPS_PROB = .8 if just_go_straight else 1.0
-            img_chunk[b,:, :,-MAP_WIDTH:,:] = maps if random.random()<HAS_MAPS_PROB else 0
+            img_chunk[b,:, -MAP_HEIGHT:,-MAP_WIDTH:,:] = maps if random.random()<HAS_MAPS_PROB else 0
 
             episode_info[b,:] = _episode_info
             timer.log("add maps")

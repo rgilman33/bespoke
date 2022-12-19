@@ -11,10 +11,21 @@ tvec = np.float32([[0],[0],[0]])
 #                  [0, 389, 240],
 #                  [0, 0, 1.]])
 
-# the new arducam. 75 deg horizontal
-mtx = np.float32([[420, 0, 320], #
-                 [0, 420, 240],
+# # the new arducam. 75 deg horizontal, 640 x 480
+# mtx = np.float32([[420, 0, 320], #
+#                  [0, 420, 240],
+#                  [0, 0, 1.]])
+
+# the new arducam. 75 deg horizontal, 1440 x 360
+mtx = np.float32([[945, 0, 1440//2], # TODO this still isn't quite right
+                 [0, 945, 1080//2],
                  [0, 0, 1.]])
+
+# [focal_len_px, 0, x_mid]
+# [0, focal_len_px, y_mid]
+# [0, 0, 0]
+# We're using non-distorted ie square px, so fx and fy are the same. I believe doubling res should double focal len. 
+# Just using img center as cam center
 
 def xz_from_angles_and_distances(angles, wp_dists):
     wp_xs = np.sin(angles) * wp_dists
@@ -38,7 +49,7 @@ def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0)
 
     for i in range(len(wps_2d)):
         wp = tuple(wps_2d[i][0].astype(int))
-        image = cv2.circle(image, wp, radius=3, color=color, thickness=thickness) #-1 fills the circle
+        image = cv2.circle(image, wp, radius=4, color=color, thickness=thickness) #-1 fills the circle
     return image
 
 
@@ -100,7 +111,7 @@ def get_viz_rollout(model_stem, img, aux, do_gradcam=True, GRADCAM_WP_IX=10):
 
     rnn_activations, rnn_grads, cnn_activations, cnn_grads, wp_angles_all, wp_headings_all, wp_curvatures_all, obsnet_outs, pred_aux_all = [], [], [], [], [], [], [], [], []
     stop_cnn_grads, lead_cnn_grads =[], []
-    chunk_len, ix = 48, 0 # 24, 0
+    chunk_len, ix = 12, 0 #48, 0 # 24, 0
     counter = 0
 
     while ix < len(img):
@@ -185,14 +196,19 @@ def sigmoid_python(x):
     return 1.0 / (1.0 + np.exp(-x))
 
 def draw_aux_targets(img, targets, preds):
+    l = IMG_WIDTH - 120
     r, a, p = img, targets, preds
     approaching_stop_target, stop_dist_target, _, has_lead_target, lead_dist_target, lead_speed_target = a[0], a[1], a[2], a[3], a[4], a[5]
     approaching_stop, stop_dist, stopped, has_lead, lead_dist, lead_speed = p[0], p[1], p[2], p[3], p[4], p[5]
-    r = cv2.putText(r, f"stop: {round(sigmoid_python(approaching_stop), 2)}, {approaching_stop_target}", (560, 8), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
-    r = cv2.putText(r, f"stop dist: {round(stop_dist)}, {round(stop_dist_target)}", (560, 16), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
-    r = cv2.putText(r, f"lead: {round(sigmoid_python(has_lead), 2)}, {has_lead_target}", (560, 24), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
-    r = cv2.putText(r, f"lead dist: {round(lead_dist)}, {round(lead_dist_target)}", (560, 32), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
-    r = cv2.putText(r, f"lead speed: {round(lead_speed)}, {round(lead_speed_target)}", (560, 40), cv2.FONT_HERSHEY_SIMPLEX, .25, white, 1)
+    f = 12 # font mult
+    s = .33 # font scale
+    ff = cv2.FONT_HERSHEY_SIMPLEX # font family
+    img[:80,l-10:,:] = 0
+    r = cv2.putText(r, f"stop: {round(sigmoid_python(approaching_stop), 2)}, {approaching_stop_target}", (l, f), ff, s, white, 1)
+    r = cv2.putText(r, f"stop dist: {round(stop_dist)}, {round(stop_dist_target)}", (l, f*2), ff, s, white, 1)
+    r = cv2.putText(r, f"lead: {round(sigmoid_python(has_lead), 2)}, {has_lead_target}", (l, f*3), ff, s, white, 1)
+    r = cv2.putText(r, f"lead dist: {round(lead_dist)}, {round(lead_dist_target)}", (l, f*4), ff, s, white, 1)
+    r = cv2.putText(r, f"lead speed: {round(lead_speed)}, {round(lead_speed_target)}", (l, f*5), ff, s, white, 1)
     return r
 
 red =  (255, 100, 100)
@@ -223,9 +239,9 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
         lg = np.clip(lead_cnn_grads[i][0].astype(np.float32), 0, np.inf) 
 
         s = cnn_activations[i][0].astype(np.float32)
-        r = combine_img_cam(s*g, img[i], cutoff=6e-5, color=[0,0,255]) 
+        r = combine_img_cam(s*g, img[i], cutoff=4e-5, color=[100,100,255]) 
         #r = combine_img_cam(s*sg, r, cutoff=1e-6, color=[255,0,0]) 
-        r = combine_img_cam(s*lg, r, cutoff=2e-6, color=[0,255,0])
+        r = combine_img_cam(s*lg, r, cutoff=3e-6, color=[0,255,0])
 
         speed_mps = max(0, kph_to_mps(aux[i, 2])) # TODO why is this max() necessary? why would speed be coming in negative here, even if only slightly? neg values here were breaking draw_wp apparatus
 
@@ -306,6 +322,19 @@ def _make_vid(model_stem, run_id, wp_angles_pred, wp_headings_pred, wp_curvature
 
     video.release()
 
+def make_simple_vid(img, run_id):
+    # just write the frames to a vid, no actgrad or anything
+    img = img[:,:,:,::-1]
+    
+    height, width, channels = img[0].shape
+    fps = 20
+    video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{run_id}_simple.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
+
+    for i in range(len(img)-1):
+
+        video.write(img[i])
+
+    video.release()
 
 def make_vid(run_id, model_stem, img, aux, targets=None, add_charts=False):
 

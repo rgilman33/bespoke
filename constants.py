@@ -37,7 +37,7 @@ OP_UI_MARGIN = 300
 
 
 N_CHANNELS = 6 #3
-BPTT = 4 #8 #9
+BPTT = 1 #4 #8 #9
 
 DATA_CONSUMPTION_RATIO_LIMIT = 3 #1.
 
@@ -124,8 +124,8 @@ FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TO
 BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
 #BLENDER_MEMBANK_ROOT = "/dev/shm/blender_membank"
 
-SEQ_LEN = 116 * 5
-EPISODE_LEN = SEQ_LEN * 2 #10
+SEQ_LEN = 116 * 1
+EPISODE_LEN = SEQ_LEN * 10
 RUNS_TO_STORE_PER_PROCESS = 30
 N_RUNNERS = 12
 
@@ -168,9 +168,9 @@ CURVE_PREP_SLOWDOWN_S_MIN, CURVE_PREP_SLOWDOWN_S_MAX = 6., 6. #2.5, 3.5 TODO thi
 
 MAX_ACCEL = .6 #1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
 
-MAP_WIDTH = 80
+MAP_WIDTH = 120 #80
 assert MAP_WIDTH%2==0
-MAP_HEIGHT = 120 #IMG_HEIGHT
+MAP_HEIGHT = 180 #120 #IMG_HEIGHT
 
 GPS_HZ = 5
 
@@ -267,7 +267,7 @@ class Timer():
         return self.results
 
 # Img cat
-LOOKBEHIND = 10
+LOOKBEHIND = 1
 N_LOOKBEHINDS = 3
 SEQ_START_IX = LOOKBEHIND * N_LOOKBEHINDS
 
@@ -275,32 +275,32 @@ SEQ_START_IX = LOOKBEHIND * N_LOOKBEHINDS
 def bwify_seq(_img):
     return _img[:, :,:,:1]//3 + _img[:, :,:,1:2]//3 + _img[:, :,:,2:3]//3
 
-# def cat_imgs(imgs, imgs_bw):
-#     # bs, seqlen, h, w, c
-#     img = imgs[:, LOOKBEHIND*3:, :,:,:]
-#     img_1 = imgs_bw[:, LOOKBEHIND*2:-LOOKBEHIND, :,:,:]
-#     img_2 = imgs_bw[:, LOOKBEHIND:-LOOKBEHIND*2, :,:,:]
-#     img_3 = imgs_bw[:, :-LOOKBEHIND*3, :,:,:]
-    
-#     img = np.concatenate([img, img_1, img_2, img_3], axis=-1)
-#     return img
-
 def cat_imgs(imgs, imgs_bw):
     # bs, seqlen, h, w, c
-    img = imgs[:, LOOKBEHIND*3:, :,:,:] # same ixs, these two
-    img_bw = imgs_bw[:, LOOKBEHIND*3:, :,:,:]
-    DIFF_1_N, DIFF_2_N, DIFF_3_N = 1, 2, 3
-    img_1_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_1_N:-DIFF_1_N, :,:,:]
-    img_2_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_2_N:-DIFF_2_N, :,:,:]
-    img_3_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_3_N:-DIFF_3_N, :,:,:]
-    diff = img_bw - img_1_bw
-
-    # img_1 = imgs_bw[:, LOOKBEHIND*2:-LOOKBEHIND, :,:,:]
+    img = imgs[:, LOOKBEHIND*3:, :,:,:]
+    img_1 = imgs_bw[:, LOOKBEHIND*2:-LOOKBEHIND, :,:,:]
     img_2 = imgs_bw[:, LOOKBEHIND:-LOOKBEHIND*2, :,:,:]
     img_3 = imgs_bw[:, :-LOOKBEHIND*3, :,:,:]
     
-    # img = np.concatenate([img, img_1, img_2, img_3], axis=-1)
-    # img = np.concatenate([img, diff, img_2, img_3], axis=-1)
-    img = np.concatenate([img, img_1_bw, img_2_bw, img_3_bw], axis=-1)
-
+    img = np.concatenate([img, img_1, img_2, img_3], axis=-1)
     return img
+
+# def cat_imgs(imgs, imgs_bw):
+#     # bs, seqlen, h, w, c
+#     img = imgs[:, LOOKBEHIND*3:, :,:,:] # same ixs, these two
+#     img_bw = imgs_bw[:, LOOKBEHIND*3:, :,:,:]
+#     DIFF_1_N, DIFF_2_N, DIFF_3_N = 1, 2, 3
+#     img_1_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_1_N:-DIFF_1_N, :,:,:]
+#     img_2_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_2_N:-DIFF_2_N, :,:,:]
+#     img_3_bw = imgs_bw[:, LOOKBEHIND*3-DIFF_3_N:-DIFF_3_N, :,:,:]
+#     diff = img_bw - img_1_bw
+
+#     # img_1 = imgs_bw[:, LOOKBEHIND*2:-LOOKBEHIND, :,:,:]
+#     img_2 = imgs_bw[:, LOOKBEHIND:-LOOKBEHIND*2, :,:,:]
+#     img_3 = imgs_bw[:, :-LOOKBEHIND*3, :,:,:]
+    
+#     # img = np.concatenate([img, img_1, img_2, img_3], axis=-1)
+#     # img = np.concatenate([img, diff, img_2, img_3], axis=-1)
+#     img = np.concatenate([img, img_1_bw, img_2_bw, img_3_bw], axis=-1)
+
+#     return img

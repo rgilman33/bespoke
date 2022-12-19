@@ -60,6 +60,10 @@ if __name__ == "__main__":
         bpy.data.scenes["Scene"].render.filepath = f"{run_root}/imgs/" #f"{run_root}/imgs.avi"
         bpy.data.scenes["Scene"].frame_end = EPISODE_LEN
         bpy.data.scenes["Scene"].render.fps = 20
+        # bpy.data.scenes["Scene"].render.resolution_x = 640 # just hardcoded in the blendfile
+        # bpy.data.scenes["Scene"].render.resolution_y = 120
+        # bpy.data.scenes["Scene"].render.resolution_x = 1440
+        # bpy.data.scenes["Scene"].render.resolution_y = 360
 
         bpy.ops.render.render(animation=True)
         #bpy.ops.render.opengl(animation=True) # can't do this headless

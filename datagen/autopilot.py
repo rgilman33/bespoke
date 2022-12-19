@@ -49,15 +49,16 @@ class Autopilot():
 
         r = random.random()
         gps_state = "BAD" if (r < .05 and just_go_straight) else "MED" if r <.1 else "NORMAL" #TODO update these probs when doing turns again
-        # noise for the map, heading. This is in addition to what we'll get from the noisy pos
-        num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
-        maps_noise_mult = np.radians(10) if gps_state=="BAD" else np.radians(5) if gps_state=="MED" else random.uniform(.001, np.radians(3)) # radians
-        self.maps_noise_heading = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+        # # noise for the map, heading. This is in addition to what we'll get from the noisy pos
+        # num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
+        # maps_noise_mult = np.radians(10) if gps_state=="BAD" else np.radians(5) if gps_state=="MED" else random.uniform(.001, np.radians(3)) # radians
+        # self.maps_noise_heading = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
         # noise for the map, position
-        num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
         maps_noise_mult = 60 if gps_state=="BAD" else 30 if gps_state=="MED" else random.uniform(.001, 10) # meters NOTE this is for each of x and y, so actual will be higher
-        self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+        min_num_passes_exp = np.interp(maps_noise_mult, [0, 10, 60], [1, 2, 3])
+        num_passes = int(3 * 10**random.uniform(min_num_passes_exp, 3)) # more passes makes for longer periodocity
+        self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult # actually a bit time-consuming at higher num_passes
         self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
 
         self.negotiation_traj = np.empty((self.N_NEGOTIATION_WPS, 3), dtype=np.float32)
@@ -69,7 +70,6 @@ class Autopilot():
         self.stopped_counter = 0
         self.stopped_at_ix = 0
         self.stop_dist = DIST_NA_PLACEHOLDER
-
 
         # Lead car. Set in TM
         self.has_lead = False
@@ -96,6 +96,9 @@ class Autopilot():
         # no didn't remove it, but perhaps lessened freq
 
         self.wp_is_stop = route.wp_is_stop.to_numpy()
+        STOP_MOVE_BACK_M = 5.
+        STOP_MOVE_BACK = int(STOP_MOVE_BACK_M / WP_SPACING)
+        self.wp_is_stop[:-STOP_MOVE_BACK] = self.wp_is_stop[STOP_MOVE_BACK:]
         
         self.wp_normals = np.empty((len(route), 3), dtype="float64")
         self.wp_normals[:, 0] = route.normal_x.to_numpy()
@@ -191,7 +194,7 @@ class Autopilot():
                 current_y = self.current_pos[1] + self.maps_noise_y[self.overall_frame_counter]
                 heading_for_map = self.heading_tracker.step(x=current_x, 
                                                         y=current_y, 
-                                                        current_speed_mps=self.current_speed_mps) + self.maps_noise_heading[self.overall_frame_counter]                 
+                                                        current_speed_mps=self.current_speed_mps) #+ self.maps_noise_heading[self.overall_frame_counter]                 
 
                 BEHIND_BUFFER_M, FORWARD_BUFFER_M = 30, 400
                 _min = max(0, current_wp_ix-int(BEHIND_BUFFER_M/WP_SPACING))
@@ -338,7 +341,6 @@ class Autopilot():
 
         # stopsign constrained speed
         STOPSIGN_DECEL = 2.0
-        EXTRA_STOP_BUFFER_M = 1.5
         STOPPED_SPEED = mph_to_mps(1.6)
         # n_advance_wps_for_stop = int((STOP_LOOKAHEAD_SEC * self.current_speed_mps) / WP_SPACING)
         # n_advance_wps_for_stop = max(n_advance_wps_for_stop, int(MIN_STOP_LOOKAHEAD_M/WP_SPACING))
@@ -349,7 +351,7 @@ class Autopilot():
         # NONE -> "APPROACHING_STOP" or "STOPPED"
         if True in upcoming_wps_is_stop and not self.stopsign_state=="LEAVING_STOP":
             stop_ix = np.where(upcoming_wps_is_stop==True)[0][0]
-            stop_dist = abs(stop_ix * WP_SPACING - EXTRA_STOP_BUFFER_M)
+            stop_dist = abs(stop_ix * WP_SPACING)
             stop_dist = stop_dist if stop_dist > .1 else 0
             stop_sign_constrained_speed = np.sqrt(STOPSIGN_DECEL * stop_dist) 
             # the fastest we can be going now in order to hit zero m/s in the given dist at given decel
@@ -391,8 +393,7 @@ class Autopilot():
         #     if self.has_lead:
         #         print(f"Lead dist {round(self.lead_dist, 2)} speed {round(self.lead_relative_speed, 2)}")
         #     if self.stopsign_state != "NONE":
-        #         print(self.stopsign_state, round(stop_dist, 2))
-
+        #         print(self.stopsign_state, round(stop_dist, 2), round(stop_sign_constrained_speed, 2))
 
         if self.obeys_stops:
             target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
