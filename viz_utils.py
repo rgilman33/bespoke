@@ -339,7 +339,7 @@ def make_simple_vid(img, run_id):
 def make_vid(run_id, model_stem, img, aux, targets=None, add_charts=False):
 
     img_bw = bwify_seq(img)
-    img_cat = cat_imgs(img[None, ...], img_bw[None, ...])[0]
+    img_cat = cat_imgs(img[None, ...], img_bw[None, ...])[0] #TODO this is actually wrong, it's putting the map in the historical frames as well, not how we trained
     l = len(img_cat)
     img = img[-l:]
     aux = aux[-l:]

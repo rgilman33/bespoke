@@ -23,8 +23,8 @@ SIDE_CHOP = 240 # cropping out an eigth on each side which we eyeballed to equal
 IMG_WIDTH = webcam_img_width - SIDE_CHOP - SIDE_CHOP # 1440
 assert IMG_WIDTH == 1440
 
-BOTTOM_CHOP = 330 #360
-TOP_CHOP = 390 #360
+BOTTOM_CHOP = 310 #330 #360
+TOP_CHOP = 410 #390 #360
 
 IMG_HEIGHT = 360
 assert IMG_HEIGHT == (webcam_img_height - TOP_CHOP - BOTTOM_CHOP)
@@ -49,14 +49,6 @@ N_WPS = len(TRAJ_WP_DISTS)
 N_TARGETS = N_WPS*5 # currently is wp_angle, curvature, heading, roll, z-delta
 N_WPS_TO_USE = N_WPS
 traj_wp_dists = TRAJ_WP_DISTS
-
-# aux_properties = [
-#     'left_blinker', # pitch
-#     'right_blinker', # yaw
-#     'current_speed',
-#     'speed_as_percent_of_limit',
-#     'current_tire_angle_rad'
-# ]
 
 AUX_PITCH_IX = 0
 AUX_YAW_IX = 1
@@ -275,8 +267,12 @@ SEQ_START_IX = LOOKBEHIND * N_LOOKBEHINDS
 def bwify_seq(_img):
     return _img[:, :,:,:1]//3 + _img[:, :,:,1:2]//3 + _img[:, :,:,2:3]//3
 
+def bwify_img(_img):
+    return bwify_seq(_img[None, ...])[0]
+
 def cat_imgs(imgs, imgs_bw):
     # bs, seqlen, h, w, c
+    # seq ends w current img, and goes back SEQ_START_IX into the past
     img = imgs[:, LOOKBEHIND*3:, :,:,:]
     img_1 = imgs_bw[:, LOOKBEHIND*2:-LOOKBEHIND, :,:,:]
     img_2 = imgs_bw[:, LOOKBEHIND:-LOOKBEHIND*2, :,:,:]
