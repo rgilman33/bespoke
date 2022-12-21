@@ -147,7 +147,7 @@ def side_crop(img, crop=20):
     _,_,_, H, W = img.shape
     img = img[0,:, :, :, :-crop]
     #img = img[0,:, :, :, crop:]
-    img = torchvision.transforms.Resize((H, W))(img)
+    #img = torchvision.transforms.Resize((H, W))(img) # commented out torchvision bc of cuda version incompatability. Can bring back in if reinstall
     img = img.unsqueeze(0)
     return img
 
