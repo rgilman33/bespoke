@@ -3,5 +3,6 @@ nb/.ipynb_checkpoints/*
 __pycache__/*
 datagen/__pycache__/*
 models/*
+trt_models/*
 wandb/*
 nb/wandb/*
