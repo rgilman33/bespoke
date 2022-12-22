@@ -16,6 +16,7 @@ def dropout_no_rescale(activations, p=.2):
 # b4 is 1792 features, 21M params
 # b5 is 2048 features, 32M params, don't seem to be any weights for models this size and above, actually there are, under the 'tf' prefix
 
+
 class EffNet(nn.Module):
     def __init__(self, is_for_viz=False):
         super(EffNet, self).__init__()
@@ -34,7 +35,14 @@ class EffNet(nn.Module):
         self.rnn_activations = None
         self.rnn_gradients = None
 
+        self.backbone_is_trt = False
+
         self.is_for_viz = is_for_viz
+
+    def load_trt_backbone(self):
+        import torch_tensorrt
+        self.trt_backbone = torch.jit.load(TRT_MODEL_PATH).to(device)
+        self.backbone_is_trt = True
 
     def reset_hidden(self, bs):
         pass
@@ -51,6 +59,7 @@ class EffNet(nn.Module):
         x = x.reshape(bs*bptt,c,h,w).contiguous() 
         
         if self.is_for_viz:
+            # viz
             bb = self.backbone
             x = bb[:VIZ_IX](x)
             x = bb[VIZ_IX](x)
@@ -61,7 +70,11 @@ class EffNet(nn.Module):
             x = activations
 
             x = bb[VIZ_IX+1:](x)
-        else:
+        elif self.backbone_is_trt:
+            # inference
+            x = self.trt_backbone(x)
+        else: 
+            # trn
             x = self.backbone.conv_stem(x)
             x = self.backbone.bn1(x)
             x = self.backbone.act1(x)

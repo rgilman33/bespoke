@@ -31,12 +31,14 @@ def norm_img(img):
 def denorm_img(img):
     return (img*IMG_NORM_STD) + IMG_NORM_MEAN
 
-def prep_inputs(image, aux_model, aux_calib, is_single_obs=False):
+def prep_inputs(image, aux_model, aux_calib, is_single_obs=False, is_for_trt=False):
     """ np to pytorch totally prepped for model in """
 
-    image = image.astype(np.float16)
-    aux_model = aux_model.astype(np.float16)
-    aux_calib = aux_calib.astype(np.float16)
+    if not is_for_trt:
+        # trt keeps as full float inputs, but will change them to halves itself
+        image = image.astype(np.float16)
+        aux_model = aux_model.astype(np.float16)
+        aux_calib = aux_calib.astype(np.float16)
 
     if is_single_obs:
         image = pad(pad(image))

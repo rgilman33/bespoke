@@ -300,3 +300,5 @@ def cat_imgs(imgs, imgs_bw):
 #     img = np.concatenate([img, img_1_bw, img_2_bw, img_3_bw], axis=-1)
 
 #     return img
+
+TRT_MODEL_PATH = f"{BESPOKE_ROOT}/trt_models/backbone_trt.jit.pt"
