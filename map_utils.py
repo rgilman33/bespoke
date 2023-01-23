@@ -3,7 +3,7 @@ import cv2, random
 from constants import *
 
 EARTH_RADIUS = 6373000.0  # approximate radius of earth in meters
-CLOSE_RADIUS = 400 #200 # meters
+CLOSE_RADIUS = 600 #400 #200 # meters
 CLOSE_BUFFER = np.degrees(CLOSE_RADIUS / EARTH_RADIUS)
 MAP_SZ_PX = 600 #400 # we'll crop out of this
 assert MAP_SZ_PX%2==0
@@ -29,7 +29,7 @@ def prepare_small_map_nodes(xs, ys, way_ids, current_x, current_y, vehicle_headi
     in preparation for drawing.
     heading in radians, clockwise positive, -pi to pi, zero is up
     conceptually, origin is bottom left. Lons are xs, lats are ys. Real-world data, lons should have been scaled already.
-    Mapping conceptually all in x-y space.
+    Mapping conceptually all in euclidean x-y space no geodesics.
     """
     xs, ys, way_ids = filter_pts(xs, ys, way_ids, current_x, current_y, close_buffer)
     
@@ -73,7 +73,7 @@ def draw_small_map(xs, ys, way_ids, route_xs=None, route_ys=None):
     # Drawing
     isClosed = False
     color = (255, 0, 0)
-    thickness = 2
+    thickness = 3
 
     for i in range(len(ixs_of_last_nodes_on_ways)-1):
         start_ix, end_ix = ixs_of_last_nodes_on_ways[i], ixs_of_last_nodes_on_ways[i+1]
@@ -93,7 +93,7 @@ def draw_small_map(xs, ys, way_ids, route_xs=None, route_ys=None):
     # # now we crop the square down to the rect we want. 
     small_map = np.flipud(small_map) # bc cv2 origin is top left rather than bottom left
     w2 = MAP_WIDTH // 2
-    top_start = 130 #90 # Want ego close to bottom but not fully at bottom. Eyeballed
+    top_start = 150 #90 # Want ego close to bottom but not fully at bottom. Eyeballed
     small_map = small_map[top_start:top_start+MAP_HEIGHT, h-w2:h+w2, :]
     
     return small_map
@@ -101,6 +101,7 @@ def draw_small_map(xs, ys, way_ids, route_xs=None, route_ys=None):
 
 def get_map(map_xs, map_ys, way_ids, route_xs, route_ys, current_x, current_y, vehicle_heading, close_buffer, draw_route=False):
     # helper, wrap the two big fns above
+
     # background map, filtered down and rotated
     xs, ys, way_ids = prepare_small_map_nodes(map_xs, map_ys, way_ids, current_x, current_y, vehicle_heading, close_buffer)
 
@@ -112,7 +113,6 @@ def get_map(map_xs, map_ys, way_ids, route_xs, route_ys, current_x, current_y, v
         small_map = draw_small_map(xs, ys, way_ids)
 
     return small_map
-
 
 
 # only used by blender
@@ -148,28 +148,24 @@ def get_lon_mult(lat_deg):
     return np.cos(np.radians(lat_deg))
 
 
-HEADING_ESTIMATION_M = 10.
+HEADING_ESTIMATION_M = 20.
 
-# import pyproj
 import math
 class HeadingTracker():
     def __init__(self):
-        self.xs_hist = [0]
-        self.ys_hist = [0]
-        # self.geodesic = pyproj.Geod(ellps='WGS84')
+        self.xs_hist = []
+        self.ys_hist = []
         self.heading = 0 # zero is up, -pi to pi
 
     def step(self, x=None, y=None, current_speed_mps=None):
 
-        if current_speed_mps > 2.0: # only update heading if moving faster than threshold
+        if current_speed_mps > 2.0 and len(self.xs_hist)>0: # only update heading if moving faster than threshold. Don't update on first step.
 
             headings_estimation_seconds_lookback = HEADING_ESTIMATION_M / current_speed_mps
             headings_estimation_ix_lookback = int(math.ceil(GPS_HZ * headings_estimation_seconds_lookback))
             headings_estimation_ix_lookback = min(len(self.xs_hist), headings_estimation_ix_lookback)
             prev_x, prev_y = self.xs_hist[-headings_estimation_ix_lookback], self.ys_hist[-headings_estimation_ix_lookback]
 
-            # fwd_azimuth, back_azimuth, distance = self.geodesic.inv(prev_lon, prev_lat, current_lon, current_lat) # using real latlon to compute heading, though could just use our fixed up xy pseudo latlons
-            # self.heading = np.radians(fwd_azimuth)
             self.heading = np.arctan2(x-prev_x, y-prev_y) # -pi to pi
 
         self.xs_hist.append(x)
@@ -178,3 +174,111 @@ class HeadingTracker():
         return self.heading
 
 
+
+def get_maps(aux):
+    # redraws in accordance w latest apparatus, which may have changed since rw gather. Used in rollouts to update maps from rw runs
+    # so don't have to regather rw each time update maps
+    print("Redrawing maps using latest apparatus")
+
+    big_map_lats, big_map_lons, way_ids = get_big_map()
+    LOCAL_LON_MULT = get_lon_mult(big_map_lats.mean())
+    big_map_xs, big_map_ys = big_map_lons*LOCAL_LON_MULT, big_map_lats
+    heading_tracker = HeadingTracker()
+
+    # route_name = "home_to_end_rr" # this actually goes to cold springs?
+    route_name = "home_to_po"
+    route = np.load(f"{ROUTES_DIR}/{route_name}.npy")
+    draw_route = True
+    route_xs = route[:,0]*LOCAL_LON_MULT
+    route_ys = route[:,1]
+    lons, lats = aux[:,'pos_x'], aux[:,'pos_y']
+    maps = np.empty((len(lats), MAP_HEIGHT, MAP_WIDTH, 3), dtype='uint8')
+
+    for i in range(len(lats)):
+        if i % 1000 == 0: print(i)
+        current_x, current_y = lons[i]*LOCAL_LON_MULT, lats[i]
+        current_speed_mps = aux[i,'speed']
+        if i%4==0: vehicle_heading = heading_tracker.step(current_x, current_y, current_speed_mps) # map updates at 5hz, frames are at 20hz
+
+        small_map = get_map(big_map_xs, 
+                            big_map_ys, 
+                            way_ids, 
+                            route_xs,
+                            route_ys,
+                            current_x, 
+                            current_y, 
+                            vehicle_heading, 
+                            CLOSE_BUFFER,
+                            draw_route)
+        maps[i] = small_map
+
+    return maps
+
+
+
+################################
+# Big maps
+################################
+
+
+import subprocess
+
+OSM_DB_PATH = "/media/beans/ssd/osm/db"
+silverton_area_bbox_str = f'{str(44.85017681566702)},{-122.83272781942897},{45.07848012852752},{-122.49831789424171}'
+boulder_mtns_bbox_str = f'{str(39.9619)},{-105.5429},{40.0930},{-105.2961}'
+boulder_bbox_str = f'{str(39.9619)},{-105.5429},{40.0930},{-105.2143}'
+
+
+def get_big_map():
+    import xmltodict # using this instead of overpy to parse OSM data manually ourselves
+
+    # We'll call this once in the beginning. Just keep loaded in memory. When venturing further out, 
+    # we'll need to refresh this every so often.
+    # total process of fetching 10 - 20 km radius in each direction will be a couple hundred milliseconds
+    # in production version, this will probably be running every minute or so. We have time to keep a healthy buffer
+
+    """far_radius = 40_000 #10_000
+    lat, lon = 45.023867, -122.741862
+    bbox_angle = np.degrees(far_radius / EARTH_RADIUS)
+    bbox_str = f'{str(lat - bbox_angle)},{str(lon - bbox_angle)},{str(lat + bbox_angle)},{str(lon + bbox_angle)}'"""
+
+    #bbox_str = silverton_area_bbox_str
+    # bbox_str = boulder_mtns_bbox_str
+    bbox_str = boulder_bbox_str
+    q = """
+        way(""" + bbox_str + """)
+          [highway]
+          [highway!~"^(footway|path|corridor|bridleway|steps|cycleway|construction|bus_guideway|escape|service|track)$"];
+        (._;>;);
+        out;
+        """
+
+    # grabbing osm data from our local db. Could also grab this from online, if wanted eg big dump of certain area, could then
+    # store that offline and not need to deal w local db at all
+    completion = subprocess.run(["/home/beans/osm-3s_v0.7.56.9/bin/osm3s_query", f"--db-dir={OSM_DB_PATH}", f'--request={q}'], 
+                                                                    check=True, capture_output=True)
+    
+    # Manual parsing of osm data, which is just xml after all
+    osm_db_out = xmltodict.parse(completion.stdout)
+
+    # Rearranging our data in a flat way so we can filter quickly based on node distance from ego, THEN group by way
+    # this cell and the next outputs flat tabular style data w three properties: way_id, lat, lon
+    # prep nodes_dict for faster lookup below
+    ways = osm_db_out['osm']['way']
+    nodes = osm_db_out['osm']['node']
+    nodes_dict = {}
+    for n in nodes:
+        nodes_dict[n['@id']] = (float(n["@lat"]), float(n["@lon"]))
+    # create the flattened data, nodes are in order bc we're arranging using the 'nd' attribute
+    way_ids, lats, lons = [], [], []
+    for way in (ways if type(ways)==list else [ways]):
+        way_id = int(way["@id"])
+        for nd in way['nd']:
+            nd_id = nd['@ref']
+            node = nodes_dict[nd_id]
+            way_ids.append(way_id)
+            lats.append(node[0])
+            lons.append(node[1])
+    lats, lons, way_ids = np.array(lats), np.array(lons), np.array(way_ids)
+    
+    return lats, lons, way_ids

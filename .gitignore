@@ -6,3 +6,4 @@ models/*
 trt_models/*
 wandb/*
 nb/wandb/*
+tmp/*

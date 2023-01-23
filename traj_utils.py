@@ -2,9 +2,6 @@ from constants import *
 import numpy as np
 import math
 
-SPACING_BTWN_FAR_WPS = 10
-LAST_NEAR_WP_DIST_M = 25
-LAST_NEAR_WP_IX = 19
 
 def wp_ix_from_dist_along_traj(dist_m):
     # Returns a float where the decimal is the fraction the pt is btwn the two wps
@@ -14,7 +11,7 @@ def wp_ix_from_dist_along_traj(dist_m):
         n_wps_into_five_m_wps = (dist_m - LAST_NEAR_WP_DIST_M ) / SPACING_BTWN_FAR_WPS # Now the decimal is perc out of 10
         wp_ix = LAST_NEAR_WP_IX + n_wps_into_five_m_wps
 
-    wp_ix = min(max(0, wp_ix), len(traj_wp_dists)-1) # ix can't be less than our closest wp or more than our farthest wp
+    wp_ix = min(max(0, wp_ix), len(TRAJ_WP_DISTS)-1) # ix can't be less than our closest wp or more than our farthest wp
 
     return wp_ix
     
@@ -29,7 +26,7 @@ def angle_to_wp_from_dist_along_traj(traj, dist_m):
     perc_along_inbetween = wp_ix - wp_ix_0 # btwn zero and one, closer wps this is perc out of one, further it's perc out of five
 
     # weighted avg for wp_dist #TODO why don't we just use dist_m...
-    wp_dist = traj_wp_dists[wp_ix_1]*perc_along_inbetween + traj_wp_dists[wp_ix_0]*(1-perc_along_inbetween)
+    wp_dist = TRAJ_WP_DISTS[wp_ix_1]*perc_along_inbetween + TRAJ_WP_DISTS[wp_ix_0]*(1-perc_along_inbetween)
 
     # weighted avg for angle to wp
     target_wp_angle = traj[wp_ix_1]*perc_along_inbetween + traj[wp_ix_0]*(1-perc_along_inbetween)
@@ -37,17 +34,11 @@ def angle_to_wp_from_dist_along_traj(traj, dist_m):
     return target_wp_angle, wp_dist, wp_ix
 
 
-def get_target_wp(traj, speed_mps, wp_m_offset=None):
-    # negative value brings target wp closer along the traj, making turns more centered. Pos makes further, making turns tighter
-    if wp_m_offset:
-        wp_m = np.interp(mps_to_kph(speed_mps), 
-                                min_dist_bps, 
-                                [v+wp_m_offset for v in min_dist_vals]) 
-    else:
-        wp_m = np.interp(mps_to_kph(speed_mps), 
-                                min_dist_bps, 
-                                min_dist_vals) 
-    
+def get_target_wp(traj, speed_mps, wp_m_offset=0):
+    # negative values of wp_m_offset brings target wp closer along the traj, making turns more centered. Pos makes further, making turns tighter
+    wp_m = np.interp(speed_mps, 
+                    min_dist_bps, 
+                    [v+wp_m_offset for v in min_dist_vals]) 
 
     target_wp_angle, wp_dist, wp_ix = angle_to_wp_from_dist_along_traj(traj, wp_m)
 
@@ -57,54 +48,16 @@ def get_target_wp(traj, speed_mps, wp_m_offset=None):
 
 def gather_preds(preds_all, speeds):
     """ takes in preds for entire traj (seqlen, n_preds), 
-    gathers them based on the given speed kph (seqlen, 1). 
-    Adjusts for kP, returns the actual angles commanded """ 
-    # used only in rw offline eval
+    gathers them based on the given speed kph (seqlen, 1). """ 
     
     wp_angles = []
     for i in range(len(preds_all)):
         traj = preds_all[i]
         s = speeds[i]
-        angle_to_wp, _, _ = get_target_wp(traj, kph_to_mps(s))
+        angle_to_wp, _, _ = get_target_wp(traj, s)
         wp_angles.append(angle_to_wp)
     return np.array(wp_angles) 
 
-
-
-# used for blender autopilot
-def get_vehicle_updated_position(current_speed, traj): #TODO update this. We can get the actual curvature from the traj, use that vehicle heading delta instead
-    # current_speed in mps, traj as 1d np array of angles to wps in rad
-    dist_car_travelled_during_lag = current_speed * (1 / FPS)
-
-    # local space, used for directing the car
-    # everything in the frame of reference of the car at t0, the origin
-    target_wp_angle, _, _ = get_target_wp(traj, current_speed, wp_m_offset=0) # comes out as float, frac is the amount btwn the two wps
-
-    # assuming the tire angle will be the angle to the target wp
-    vehicle_turn_rate = target_wp_angle * (current_speed/CRV_WHEELBASE) # rad/sec
-    vehicle_heading_delta = vehicle_turn_rate * (1/FPS) # radians
-    # the vehicle won't be as turned as the tires, proportional to wheelbase DUMB intuition check out updated in model_wrapper
-
-    if vehicle_heading_delta==0:
-        vehicle_x_delta = 0
-        vehicle_y_delta = dist_car_travelled_during_lag
-    else:
-        r = dist_car_travelled_during_lag / vehicle_heading_delta
-        vehicle_y_delta = np.sin(vehicle_heading_delta)*r
-        vehicle_x_delta = r - (np.cos(vehicle_heading_delta)*r)
-    
-    return vehicle_x_delta, vehicle_y_delta, vehicle_heading_delta
-
-
-# These are the dists at all the midway pts btwn our wps, plus a zero in the beginning
-# they're staggered by .5m for closer wps, then 5m for farther ones
-WP_HALFWAYS = [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 23.5, 24.5, 30.0] 
-WP_HALFWAYS += [40, 50, 60, 70, 80, 90, 100, 110, 120] # last heading is the one btwn our second to last and our last wp
-# halfways are the halfway pt on each segment, there is one less than the number of wps
-
-HEADING_BPS = [0] + WP_HALFWAYS
-
-SEGMENT_DISTS = np.array(TRAJ_WP_DISTS[1:]) - np.array(TRAJ_WP_DISTS[:-1]) # 19 ones then 10 tens. There is one fewer segment than there are wps
 
 # Dumb, but have to do this bc can't get the jitter out of blender curve
 def smooth_near_wps(traj):
@@ -120,8 +73,6 @@ def smooth_near_wps(traj):
 
     return traj_orig
 
-def moving_average(arr, w):
-    return np.convolve(arr, np.ones(w), 'same') / w
 
 def get_headings_from_traj(wp_angles, wp_dists):
     #NOTE this should always be done in full float precision
@@ -139,6 +90,8 @@ def get_headings_from_traj(wp_angles, wp_dists):
     return headings
 
 
+# used for ccs apparatus
+MAX_ACCEL = .6 #1.0 #2.0 #m/s/s 3 to 5 is considered avg for an avg driver in terms of stopping, the latter as a sort of max decel
 
 # used to generate blender data. Should match the batched apparatus used in blender dataloader for making trn data curvatures
 # would be nice to actually use the exact same fns, but would need to update the fns below to accept both batched and non-batched data
@@ -151,8 +104,6 @@ def get_curve_constrained_speed_from_wp_angles(wp_angles, wp_dists, current_spee
     curve_constrained_speed = get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=max_accel)
 
     return curve_constrained_speed
-
-
 
 
 def smooth_near_wps_batch(batch):
@@ -199,11 +150,12 @@ def tire_angles_to_max_speeds(tire_angles):
     return max_speeds
 
 def max_ix_from_speed(speed_mps):
-    long_consideration_max_m = CURVE_PREP_SLOWDOWN_S_MAX * speed_mps # we currently support up to 5s out
+    long_consideration_max_m = max_pred_m_from_speeds(speed_mps)
     long_consideration_max_ix = math.ceil(wp_ix_from_dist_along_traj(long_consideration_max_m))
     return long_consideration_max_ix
 
-MAX_SPEED_MPH = 80.0
+MAX_SPEED_CCS = 30.0
+
 def _get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACCEL, preempt_sec=1.0):
     # given a traj, what is the max speed we can be going right now to ensure we're able to hit all the upcoming wps at a speed appropriate for each one?
     # and given a maximum allowed deceleration. This speed may be higher than the speed limit, it is simply the speed based on upcoming curvature, so
@@ -224,7 +176,7 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_AC
     long_consideration_max_ix = max_ix_from_speed(current_speed_mps)
     curve_constrained_speed = current_max_speed_w_respect_to_each_wp[:long_consideration_max_ix].min()
 
-    curve_constrained_speed = min(curve_constrained_speed, mph_to_mps(MAX_SPEED_MPH)) # just for visual cleanliness
+    curve_constrained_speed = min(curve_constrained_speed, MAX_SPEED_CCS) # just for visual cleanliness
 
     return curve_constrained_speed
 
@@ -237,23 +189,6 @@ def get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACC
     
     return ccs
 
-# def derive_wp_dists(wp_angles):
-#     wp_dists = [6]
-#     positions = [(0,0)]
-#     edge_dists = np.insert(SEGMENT_DISTS, 0, 6)
-
-#     edge_dist = edge_dists[0]
-#     a1 = wp_angles[0]
-#     pos_1 = (np.sin(a0)*edge_dist, np.cos(a0)*edge_dist)
-
-#     a1 = wp_angles[1]
-
-#     dist_0_2 = np.cos(a1 - a0)*edge_dist * 2
-#     pos_2 = (np.sin(a1)*dist_0_2, np.cos(a1)*dist_0_2)
-
-
-#     for i in range(1, len(wp_angles)):
-        
 
 def get_angles_to(xs, ys, heading):
     # wps w respect to current pos, ie centered at zero, ie pos already subtracted out. Radians in and out.
@@ -271,35 +206,6 @@ def get_angles_to(xs, ys, heading):
     angles[angles>np.pi] -= 2*np.pi
     
     return angles
-
-def get_angle_to(pos, theta, target): #NOTE deprecated in favor of understandable one directly above
-    theta = float(theta)
-    pos = np.array(pos, dtype=np.float32)
-    target = np.array(target, dtype=np.float32)
-    R = np.array([
-        [np.cos(theta), -np.sin(theta)],
-        [np.sin(theta),  np.cos(theta)],
-        ])
-
-    aim = R.T.dot(target - pos)
-    angle = np.arctan2(-aim[1], aim[0])
-    angle = 0.0 if np.isnan(angle) else angle 
-
-    return angle
-
-def dist(a, b):
-    x = float(a[0]) - float(b[0])
-    y = float(a[1]) - float(b[1])
-    return (x**2 + y**2)**(1/2)
-
-
-def get_random_roll_noise(window_size=20, num_passes=2):
-    # returns smoothed noise btwn -1 and 1
-    roll_noise = np.random.random(EPISODE_LEN*FPS) - .5
-    for i in range(num_passes):
-        roll_noise = moving_average(roll_noise, 20)
-    roll_noise = roll_noise / abs(roll_noise).max()
-    return roll_noise
 
 
 MAX_CCS_UNROLL_ACCEL = .6 #1.0
@@ -325,26 +231,47 @@ class CurveConstrainedSpeedCalculator():
         return curve_constrained_speed_mps
 
     def reset(self):
-        self.curve_speeds_history = [30 for _ in range(20)]
-        self.prev_commanded_ccs = 30
-
-# from input_prep import * this will make torch be imported, don't do this then we have to install in blender's python, hassle
-pad = lambda x: np.expand_dims(x,0)
-
-def get_speed_mask(aux):
-    MAX_PRED_S = 6.0
-    avg_speeds_mps = kph_to_mps(aux[:,:,2:3].mean(axis=1, keepdims=True))
-    max_pred_dists_m = avg_speeds_mps * MAX_PRED_S
-    max_pred_dists_m = np.clip(max_pred_dists_m, 10, np.inf) # always pred out to at least 12m
-    speed_mask = pad(pad(np.array(TRAJ_WP_DISTS, dtype=np.float16)))
-    speed_mask = (speed_mask <= max_pred_dists_m).astype(np.float16) 
-    # this will give us a shape of (bs, 1, 30), where 30 is the number of wps in our traj.
-
-    return speed_mask
+        self.curve_speeds_history = [MAX_SPEED_CCS for _ in range(20)]
+        self.prev_commanded_ccs = MAX_SPEED_CCS
 
 
+# "A Policy on Geometric Design of Highways and Streets recommends 3.4 m/s2
+# a comfortable deceleration rate for most drivers, as the deceleration threshold for determining adequate stopping sight distance"
+SPEED_MASK_DECEL = 2.5 # m/s/s # NOTE pay attn to this, are we still training far enough on the traj? Tradeoff here in terms of apportioning trn load
+MAX_PRED_S = 6.0
+MIN_M_TRAJ_PRED = 16.
 
-TORQUE_ABS_MAX = 10_000 
+def max_pred_m_from_speeds(speeds_mps):
+    # can be single obs, seq, or batch,seq. Returns same dims, just swaps speeds for meters.
+    
+    # Pred out as far as it will take us to comfortably to get to full stop
+    max_pred_s = speeds_mps / SPEED_MASK_DECEL
+
+    # But don't pred any further than MAX_PRED_S, TODO increase this to 10s. Now that we're clipping based on speed above, we won't hit this as often
+    max_pred_s = np.clip(max_pred_s, 0., MAX_PRED_S)
+
+    max_pred_dists_m = speeds_mps * max_pred_s
+
+    max_pred_dists_m = np.clip(max_pred_dists_m, MIN_M_TRAJ_PRED, np.inf) # always pred out to at least 10m, even when stopped
+
+    return max_pred_dists_m
+
+def get_speed_mask(speed):
+    # can be single obs, seq, or seq,batch. Returns same but w extra dim of sz 30 on the end.
+
+    if type(speed)!=np.ndarray: speed = np.array([speed])
+
+    # same shape as speeds, just swapped for distance
+    max_pred_dists_m = max_pred_m_from_speeds(speed)
+
+    # Pad to broadcast. Result is eg (batch,seq,30) if input have batch seq, or ()
+    speed_mask = (np.array(TRAJ_WP_DISTS) <= max_pred_dists_m[...,None]).astype(np.float32) 
+
+    return speed_mask[0] # otherwise padded first dim
+
+
+#TODO change to mps. Use same fns as use for speed limiting, but inverse for tire angles
+TORQUE_ABS_MAX = 10_000 #TODO move all these constants into single place
 TORQUE_DELTA_MAX = 800
 
 class TorqueLimiter():

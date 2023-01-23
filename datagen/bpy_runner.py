@@ -4,7 +4,7 @@ import numpy as np
 
 sys.path.append('/home/beans/bespoke')
 sys.path.append('/home/beans/bespoke/datagen')
-from material_updater import setup_map
+from datagen.episode import make_episode
 from bpy_handler import set_frame_change_post_handler, reset_npc_objects
 from constants import *
 
@@ -13,16 +13,17 @@ argv = argv[argv.index("--") + 1:]  # get all args after "--" ['example', 'args'
 dataloader_id = argv[0]
 dataloader_root = f"{BLENDER_MEMBANK_ROOT}/dataloader_{dataloader_id}"
 
-def random_uniform(_min, _max):
-    return random.uniform(_min, _max)
-
-bpy.app.driver_namespace['random_uniform'] = random_uniform
+FAILED_TO_GET_MAP_F = f"{dataloader_root}/failed_to_get_map.npy"
 
 if __name__ == "__main__":
 
     print(f"Launching runner {dataloader_id}")
     # Delete existing npc copies and make new ones. To ensure up to date w any changes made in master.
     reset_npc_objects(bpy)
+
+    # Clear failed message
+    if os.path.exists(FAILED_TO_GET_MAP_F):
+        os.remove(FAILED_TO_GET_MAP_F)
 
     for i in range(10_000_000):
         overall_frame_counter = 0
@@ -37,36 +38,52 @@ if __name__ == "__main__":
         if os.path.exists(next_targets_path):
             os.remove(next_targets_path)
 
-        # currently only route of insufficient len causes fail. 
+        # route of insufficient len causes fail. Also now when have overlap, which is more often
         successful = False
         failed_counter = -1
         while not successful:
-            is_highway, is_lined, pitch_perturbation, yaw_perturbation, has_npcs, is_single_rd = setup_map()
-
-            successful = set_frame_change_post_handler(bpy, save_data=True, run_root=run_root, _is_highway=is_highway, _is_lined=is_lined, 
-                                            _pitch_perturbation=pitch_perturbation, _yaw_perturbation=yaw_perturbation, has_npcs=has_npcs, 
-                                            _is_single_rd=is_single_rd)
+            episode_info = make_episode()
+            successful = set_frame_change_post_handler(bpy, episode_info, save_data=True, run_root=run_root)
             failed_counter += 1
-            if failed_counter==3:
+            if failed_counter==20:
                 print("wtf couldn't get good map? Killing runner")
-                np.save(f"{run_root}/failed_to_get_map.npy", np.array(1))
+                np.save(FAILED_TO_GET_MAP_F, np.array(1))
+                set_should_stop(True) # if one runner dies, shutdown all runners to make it obvious. Perhaps in the future we can tolerate this, but not now
                 break
         if not successful: break
 
         bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
         bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
-        bpy.data.scenes["Scene"].eevee.taa_render_samples = random.randint(2, 5)
+        # Render samples slows datagen down linearly.
+        # Too low and get aliasing around edges, harsh looking. More is softer. We're keeping low samples, trying to make up for it 
+        # in data aug w blur and other distractors
+        bpy.data.scenes["Scene"].eevee.taa_render_samples = random.randint(2, 5) 
  
         bpy.data.scenes["Scene"].render.filepath = f"{run_root}/imgs/" #f"{run_root}/imgs.avi"
         bpy.data.scenes["Scene"].frame_end = EPISODE_LEN
         bpy.data.scenes["Scene"].render.fps = 20
-        # bpy.data.scenes["Scene"].render.resolution_x = 640 # just hardcoded in the blendfile
-        # bpy.data.scenes["Scene"].render.resolution_y = 120
-        # bpy.data.scenes["Scene"].render.resolution_x = 1440
+        # bpy.data.scenes["Scene"].render.resolution_x = 1440 # hardcoded in the blendfile
         # bpy.data.scenes["Scene"].render.resolution_y = 360
 
+        ##################
+        # Render
+
+        # redirect output to log file. From https://blender.stackexchange.com/questions/44560/how-to-supress-bpy-render-messages-in-terminal-output
+        # Render too verbose, makes it impossible to debug anything in the terminal
+        logfile = f'{dataloader_root}/blender_render.log'
+        if os.path.exists(logfile): os.remove(logfile)
+        open(logfile, 'a').close()
+        old = os.dup(sys.stdout.fileno())
+        sys.stdout.flush()
+        os.close(sys.stdout.fileno())
+        fd = os.open(logfile, os.O_WRONLY)
+
         bpy.ops.render.render(animation=True)
-        #bpy.ops.render.opengl(animation=True) # can't do this headless
+
+        # disable output redirection
+        os.close(fd)
+        os.dup(old)
+        os.close(old)
 
         obs_per_sec = EPISODE_LEN/(time.time()-t0)
         report_obs_per_sec(dataloader_root, obs_per_sec)

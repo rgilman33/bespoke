@@ -10,28 +10,10 @@ from map_utils import *
 sys.path.append("/home/beans/bespoke/datagen")
 from autopilot import Autopilot
 
-#########################################
-"""
-We're currently getting some of our wps by shifting the white lines inwards, getting others by creating a new sigmoid
-curve. The point of the latter is to be able to smooth the curve, don't want to always just follow the lines, humans smooth them
-out. 
-"""
-
-# illegal_connections = {
-#     1:[2],
-#     2: [1],
-#     3: [12],
-# }
 
 def get_next_possible_wps(prev_wp, all_start_wps):
 
     threshold = WP_SPACING*2 # meters. should work w slightly above WP_SPACING
-
-    # seg_id = prev_wp.segment_id 
-
-    # # illegal internal moves
-    # if seg_id in illegal_connections.keys():
-    #     all_start_wps = all_start_wps[all_start_wps.segment_id.isin(illegal_connections[seg_id]) == False]
 
     all_start_wps = all_start_wps[(all_start_wps.way_id != prev_wp.way_id)] # no u-turns
 
@@ -70,13 +52,6 @@ def _get_route(df, start_locs_df, route_len, just_go_straight, is_ego):
         close_start_wps = get_next_possible_wps(last_wp, all_start_wps)
 
         close_start_wps = close_start_wps[close_start_wps.intersection_section_id.isin(visited_sections)==False]
-
-        # TODO need to refine that a bit, was taking longer. Maybe limit start wps to ends. And mark loose edges as no-go.
-        # # go straight more often than turn
-        # straight_wp_segments = [2,3,4] # not left or right TODO is this time consuming?
-        # go_straight_options = close_start_wps[close_start_wps.wp_curve_id.isin(straight_wp_segments)]
-        # if random.random() < .6 and len(go_straight_options) > 0:
-        #     close_start_wps = go_straight_options
 
         if len(close_start_wps)==0: break
         next_wp = close_start_wps.sample(1).iloc[0]
@@ -155,8 +130,12 @@ def get_wp_df(wps_holder_object):
     df["wps_section_id"] = (df.intersection_id.astype(str) + df.section_id.astype(str)).astype(int)
     # these last two properties necessary to differentiate slips within an intersection
 
-
     df["ix_in_curve"] = [d.value for d in wps_holder_object.data.attributes["ix_in_curve"].data]
+
+    # Using for overlap detection when map is especially noised
+    df["is_curve_tip"] = [d.value for d in wps_holder_object.data.attributes["is_curve_tip"].data] # currently only on core curves.
+    df["core_h"] = [d.value for d in wps_holder_object.data.attributes["core_h"].data]
+    df["core_v"] = [d.value for d in wps_holder_object.data.attributes["core_v"].data]
 
     # unique for each wp
     df["wp_uid"] = (df.wps_segment_uid.astype(str) + df.ix_in_curve.astype(str)).astype("int64")
@@ -172,9 +151,7 @@ def get_wp_df(wps_holder_object):
     # longitudinal
     df["wp_is_stop"] = [d.value for d in wps_holder_object.data.attributes["wp_is_stop"].data]
 
-
     return df
-####################################
 
 
 def update_ap_object(nodes, ap):
@@ -189,7 +166,7 @@ def update_ap_object(nodes, ap):
 def reset_npc_objects(bpy):
     """
     In blender, clears the existing copies of the master npc object. Makes MAX_N_NPCS copies of the master npc. 
-    To be run once at beginning to datagen to make sure npcs are up to date.
+    To be run once at beginning of datagen to make sure npcs are up to date.
     """
     # remove old npcs
     for o in bpy.data.objects:
@@ -211,12 +188,12 @@ class NPC():
         self.is_done = False
 
 class TrafficManager():
-    def __init__(self, ego_ap, wp_df, is_highway=False):
-        # self.npc_nodes, self.npc_aps, self.npc_objects = [], [], []
-        self.is_highway = is_highway
+    def __init__(self, ego_ap, wp_df, episode_info):
+        self.episode_info = episode_info
         self.ego = ego_ap # this is ego.ap actually
         # npcs only start along the route, not randomly scattered on map
         start_locs_df = wp_df[wp_df.intersection_id.isin(ego_ap.visited_intersections)] 
+        self.wtf = False
         # no NPCs right next to ego at start
         start_locs_df = start_locs_df[(start_locs_df.wps_section_id != ego_ap.start_section_id)]
         if ego_ap.start_section_id==41:
@@ -224,12 +201,13 @@ class TrafficManager():
         elif ego_ap.start_section_id==67:  
             oncoming_sections = [48, 51, 58, 61, 68]
         else:
-            assert False # wtf ego start loc should be section 41 or 67
+            self.wtf = True # this was happening every blue moon. No time to debug HACK
+            #assert False # wtf ego start loc should be section 41 or 67
 
         start_locs_df_oncoming = start_locs_df[start_locs_df.wps_section_id.isin(oncoming_sections)]
 
         self.wp_df = wp_df
-        ONLY_ONCOMING_NPCS_PROB = .33
+        ONLY_ONCOMING_NPCS_PROB = .5 #TODO can increase this if continue to have problems w false pos
         self.npcs_only_oncoming = random.random() < ONLY_ONCOMING_NPCS_PROB
         self.start_locs_df = start_locs_df_oncoming if self.npcs_only_oncoming else start_locs_df
 
@@ -248,7 +226,7 @@ class TrafficManager():
                 npc_object.hide_render = False
                 nodes = npc_object.modifiers["GeometryNodes"].node_group.nodes
 
-                npc_ap = Autopilot(is_highway=self.is_highway, ap_id=i, save_data=False, is_ego=False)
+                npc_ap = Autopilot(self.episode_info, ap_id=i, save_data=False, is_ego=False)
                 route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=200 if self.npcs_only_oncoming else 700)
                 npc_ap.set_route(route)
 
@@ -262,7 +240,6 @@ class TrafficManager():
     def step(self):
 
         self.ego.set_should_yield(False)
-        self.ego.has_lead = False
         self.ego.lead_dist = DIST_NA_PLACEHOLDER
 
         for npc in self.npcs:
@@ -278,7 +255,7 @@ class TrafficManager():
                 ego_traj = self.ego.negotiation_traj[:, :2]
                 npc_traj = npc.ap.negotiation_traj[:, :2]
                 # Result is traj_len x traj_len matrix w dist btwn every point in A to every pt in B
-                result = (ego_traj[:, None, :] - npc_traj[None, :, :])**2 # padding + broadcasting is forcing np to give us the matrix we want
+                result = (ego_traj[:, None, :] - npc_traj[None, :, :])**2
                 result = np.sqrt(result[:,:,0] + result[:,:,1])
                 if result.min() < CRV_WIDTH * 1.2: 
                     argmin_ix_a, argmin_ix_b = np.unravel_index(result.argmin(), result.shape) # np magic to find argmin in 2d array. Don't fully understand.
@@ -293,11 +270,10 @@ class TrafficManager():
                 # overlap_ixs = np.where(self.ego.traj_wp_uids==npc.ap.current_wp_uid)[0] # Doesn't work bc wps overlaps, left right straight. 
                 dists = (self.ego.traj_granular - npc.ap.current_pos)**2
                 dists = np.sqrt(dists[:,0] + dists[:,1])
-                IS_LEAD_TRAJ_DIST_THRESH = .5
+                IS_LEAD_TRAJ_DIST_THRESH = 1.0
                 overlap_ixs = np.where(dists<IS_LEAD_TRAJ_DIST_THRESH)[0] # Not perfect, would fail if vehicle was directly oncoming. Should also taking into account heading
                 npc_is_ego_lead = len(overlap_ixs)>0
                 if npc_is_ego_lead:
-                    self.ego.has_lead = True
                     lead_dist = overlap_ixs[0] * WP_SPACING
                     if lead_dist < self.ego.lead_dist:
                         self.ego.lead_dist = lead_dist
@@ -310,10 +286,23 @@ class TrafficManager():
 
         self.npcs = [npc for npc in self.npcs if not npc.is_done] 
 
+def check_map_has_overlapping_rds(df):
+    t0 = time.time()
+    df = df[df.is_curve_tip==False]
+    h = df[df.core_h][["pos_x", "pos_y"]].values
+    v = df[df.core_v][["pos_x", "pos_y"]].values
+    print(h.shape)
 
-def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
-                                _is_highway=False, _is_lined=False, _pitch_perturbation=0, _yaw_perturbation=0,
-                                has_npcs=True, _is_single_rd=True):
+    # distance matrix
+    result = (v[:, None, :] - h[None, :, :])**2 # padding so that broadcasting gives us matrix
+    result = np.sqrt(result[:,:,0] + result[:,:,1])
+    m = result.min()
+    print("Min distance btwn v and h rds", m)
+    #print("Checking distance took", time.time()-t0)
+    return m < 3.5 # chosen manually. This should be greater than dists btwn those pts themselves, which is currently 2m
+
+
+def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=None):
     global ap, tm
     bpy.app.handlers.frame_change_post.clear()
 
@@ -324,13 +313,19 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
     wps_holder_object = bpy.data.objects["wps_holder"].evaluated_get(dg)
     wp_df = get_wp_df(wps_holder_object)
     coarse_map_df = wp_df[wp_df.wps==False]
+    map_has_overlapping_rds = check_map_has_overlapping_rds(coarse_map_df)
+    if map_has_overlapping_rds:
+        print("Map has overlapping rds. Trying again.")
+        return False
+
     wp_df = wp_df[wp_df.wps]
     print("get wp df", time.time() - t0)
 
     # single-rd. Maybe just straight maybe turns ok.
     JUST_GO_STRAIGHT_PROB = 1 # .3
     just_go_straight = random.random()<JUST_GO_STRAIGHT_PROB
-    if _is_single_rd:
+    episode_info.just_go_straight = just_go_straight
+    if episode_info.is_single_rd:
         s = wp_df[(wp_df.ix_in_curve==0) & (wp_df.wp_curve_id==2)] # start wps, first lane (not turning)
         if just_go_straight:
             s = s[((s.intersection_id==4) & (s.section_id.isin([1]))) | ((s.intersection_id==6) & (s.section_id.isin([7])))]
@@ -345,16 +340,16 @@ def set_frame_change_post_handler(bpy, save_data=False, run_root=None,
         return False
 
     print("get route", time.time() - t0)
-    ap = Autopilot(is_highway=_is_highway, pitch_perturbation=_pitch_perturbation, yaw_perturbation=_yaw_perturbation, 
-                        run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True, just_go_straight=just_go_straight)
+    ap = Autopilot(episode_info, run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True)
 
     ap.set_route(route)
     ap.set_nav_map(coarse_map_df)
     update_ap_object(make_vehicle_nodes, ap)
 
-    tm = TrafficManager(wp_df=wp_df, ego_ap=ap, is_highway=_is_highway)
+    tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info)
+    if tm.wtf: return False
 
-    tm.add_npcs(random.randint(6, MAX_N_NPCS) if has_npcs else 0)
+    tm.add_npcs(random.randint(0, MAX_N_NPCS) if episode_info.has_npcs else 0)
 
     print("total setup time", time.time() - t0)
         
