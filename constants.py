@@ -383,29 +383,16 @@ def bwify_seq(_img):
 def bwify_img(_img):
     return bwify_seq(_img[None, ...])[0]
 
-def cat_imgs(imgs, imgs_bw, maps, aux, seq_len=1):
-    # single seqs, no batch. All ixs calculated from the end, so seqs can have extra in beginning, but all must end on current obs
-    aux = aux[-seq_len:, :]
-    img_final = np.zeros((seq_len, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, N_CHANNELS_MODEL), dtype='uint8')
-
-    # Current img w current map
-    # setting them all in place on final img to avoid making copies
-    current_img = imgs[-seq_len:, :,:,:]
-    img_final[:, :IMG_HEIGHT,:,:3] = current_img
-    maps = maps[-seq_len:, :,:,:] # maps can come in same len as imgs (rw) or shorter (trn). Doesn't matter bc we're right ixing
-    # img_final[:, -MAP_HEIGHT-SMALL_IMG_HEIGHT:-SMALL_IMG_HEIGHT,-MAP_WIDTH:,:3] = maps # current img gets current map in bottom right corner, no others get map
-    img_final[:, -MAP_HEIGHT:,-MAP_WIDTH:,:3] = maps # current img gets current map in bottom right corner, no others get map
-
-    # # Fast lb on current img channelwise
-    # fast_lookbehind_img = imgs_bw[-seq_len-FAST_LB_IX:-FAST_LB_IX, :,:,:]
-    # img_final[:, :IMG_HEIGHT,:,3:] = fast_lookbehind_img
+def cat_imgs(imgs, maps, aux):
+    # expects seq
+    imgs[:, -MAP_HEIGHT:,-MAP_WIDTH:,:] = maps
 
     # HUD
     hud = get_hud(aux)
     _, h,w,c = hud.shape
-    img_final[:, -h:,-w:,:c] = hud
+    imgs[:, -h:,-w:,:] = hud
 
-    return img_final
+    return imgs
 
 def get_hud(aux):
     HUD_SQUARE_SZ = 10

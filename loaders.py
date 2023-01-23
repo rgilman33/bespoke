@@ -42,11 +42,8 @@ def update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset):
     aux_chunk[b,:-1,:] = aux_chunk[b,1:,:] 
     maps[:-1, :,:,:] = maps[1:, :,:,:] # maps have to remain synced w aux bc of hud indicators, though it's less important that they're lagged
     
-    # imgs. These are the vanilla imgs, there are more of them than will be in our img_chunk, which is assembled img for model
-    # load extra imgs on the back. Won't fail bc we never load first seq
-    L = SLOW_2_LB_IX+FAST_LB_IX
-    # img_paths = sorted(glob.glob(f"{t_stem}/imgs/*"))[end_ix-SEQ_LEN+1:end_ix+1] 
-    img_paths = sorted(glob.glob(f"{t_stem}/imgs/*"))[end_ix-SEQ_LEN+1-L:end_ix+1] # imgs 1 indexed, targets zero indexed
+    # imgs
+    img_paths = sorted(glob.glob(f"{t_stem}/imgs/*"))[end_ix-SEQ_LEN+1:end_ix+1] # imgs 1 indexed, targets zero indexed
     imgs = np.empty((len(img_paths), IMG_HEIGHT, IMG_WIDTH, 3), dtype='uint8')
     for i, p in enumerate(img_paths): imgs[i, :,:,:] = cv2.imread(p) # NOTE the most time consuming part of this fn
     imgs = imgs[:, :,:,::-1] #bgr to rgb
@@ -54,11 +51,8 @@ def update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset):
     # Aug images. NOTE time consuming TODO MAYBE potentially capture augs here in aux
     imgs = aug_imgs(imgs[None,:, :,:,:])[0] # fn requires batch dimension 
 
-    # Bwify imgs. NOTE also time consuming
-    img_bw = "" #bwify_seq(imgs)
-
     # Assemble img for model
-    img_chunk[b,:, :,:,:] = cat_imgs(imgs, img_bw, maps, aux, seq_len=SEQ_LEN)
+    img_chunk[b,:, :,:,:] = cat_imgs(imgs, maps, aux)
 
     is_done[b] = 1 # why does this work, but didn't in my eval rw fn?
 

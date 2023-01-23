@@ -359,8 +359,8 @@ def get_transform():
             A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=.4)
         ]),
         A.OneOf([ # brightness
-            A.RandomGamma(gamma_limit=(25,160), p=.4), # higher is darker
-            A.RandomBrightness(p=.4, limit=(-0.4, 0.5)),
+            A.RandomGamma(gamma_limit=(30,150), p=.4), # higher is darker
+            A.RandomBrightness(p=.4, limit=(-0.35, 0.4)),
         ]),
         A.OneOf([  # other 
             # A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)),
