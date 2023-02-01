@@ -6,12 +6,13 @@ from models import *
 
 
 class Rollout():
-    def __init__(self, run, model_stem=None, m=None):
+    def __init__(self, run, model_stem=None, m=None, store_imgs=False):
 
         self.model_stem = model_stem
         self.run_id = run.run_id
         self.is_rw = run.is_rw
         self.m = m
+        self.store_imgs = store_imgs
         self._get_rollout(run)
 
     def _get_rollout(self, run):
@@ -38,7 +39,7 @@ class Rollout():
                 _img, _aux, _wps, extras = batch
                 m.zero_grad()
                 with torch.cuda.amp.autocast(): _wps_p, _aux_targets_p, _obsnet_out = m(_img, _aux)
-                img.append(unprep_img(_img))
+                if self.store_imgs: img.append(unprep_img(_img))
                 aux.append(unprep_aux(_aux))
                 wps.append(unprep_wps(_wps))
                 wps_p.append(unprep_wps(_wps_p))
@@ -47,7 +48,7 @@ class Rollout():
                 final_acts.append(m.backbone_out_acts.detach().cpu().numpy())
 
         # Aux, inputs, targets
-        self.img = np.concatenate(img, axis=1) #NOTE can't use the imgs from the run bc sometimes use TrnLoader, which will have updated chunks
+        if self.store_imgs: self.img = np.concatenate(img, axis=1) #NOTE can't use the imgs from the run bc sometimes use TrnLoader, which will have updated chunks
         self.aux = na(np.concatenate(aux, axis=1), AUX_PROPS)
         self.wps = np.concatenate(wps, axis=1)
 
@@ -109,7 +110,7 @@ def flatten_rollout(rollout):
     # All rollout results must be accounted for. That's one reason for keeping things in big containers until here
 
     # Inputs, targets, aux
-    rollout.img = flatten_batch_seq(rollout.img)
+    if rollout.store_imgs: rollout.img = flatten_batch_seq(rollout.img)
     rollout.aux = flatten_batch_seq(rollout.aux)
     rollout.wps = flatten_batch_seq(rollout.wps)
 
@@ -145,18 +146,19 @@ def get_te(tire_angle):
 
 
 import threading
-def evaluate_run(run, m, save_rollouts, a):
+def evaluate_run(run_path, m, save_rollouts, a):
     # run is a Run object, m is a model
-    rollout = Rollout(run, model_stem=m.model_stem, m=m)
+    run = load_object(run_path)
+    rollout = Rollout(run, model_stem=m.model_stem, m=m, store_imgs=save_rollouts)
     if save_rollouts:
         save_object(rollout, f"{BESPOKE_ROOT}/tmp/{rollout.run_id}_{m.model_stem}_rollout.pkl")
     a.append(rollout)
 
 import multiprocessing
 class RwEvaluator():
-    def __init__(self, run_ids, m, wandb=None, save_rollouts=False):
-        run_paths = [f"{BESPOKE_ROOT}/tmp/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
-        self.runs = [load_object(p) for p in run_paths]
+    def __init__(self, m, wandb=None, save_rollouts=False):
+        run_ids = ["run_555a", "run_556a", "run_556b", "run_556c", "run_555b", "run_556d"]
+        self.run_paths = [f"{BESPOKE_ROOT}/tmp/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
         self.wandb = wandb
         self.m = m
         self.save_rollouts = save_rollouts
@@ -164,13 +166,12 @@ class RwEvaluator():
     def evaluate(self):
         threads = [] # not using multiprocessing Process bc of complications with gpu
         a = []
-        for i in range(len(self.runs)):
-            run = self.runs[i]
-            t = threading.Thread(target=evaluate_run, args=(run, self.m, self.save_rollouts, a)) # this takes 3.5 minutes for four runs, opposed to 6.5 w no threads
-            t.start()
-            threads.append(t)
+        for i in range(len(self.run_paths)):
+            # t = threading.Thread(target=evaluate_run, args=(self.run_paths[i], self.m, self.save_rollouts, a)) # this takes 3.5 minutes for four runs, opposed to 6.5 w no threads
+            # t.start()
+            # threads.append(t)
+            evaluate_run(self.run_paths[i], self.m, self.save_rollouts, a)
         for t in threads:t.join()
-        for r in self.runs:r.reset()
         self.m.save_backbone_out = False # return model to trn state
         self.m.train()
         print("down w rollouts, reporting")

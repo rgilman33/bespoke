@@ -20,14 +20,13 @@ def mse_loss_no_reduce(targets, preds, weights=None, clip=None):
     
 
 class LossManager():
+    """
+    Decouples the loss magnitude and the amount of data in the dataset from the stimulus provided to the model.
+    A loss weight of e.g. .2 means roughly that 20% of the gradient stim should come from this item
+    """
     def __init__(self):
         self.baseline_loss_name = "wp_angles"
         self.loss_weights = { 
-            "wp_angles": 1,
-            "wp_curvatures":.2,
-            "wp_headings":.02,
-            "wp_rolls":.05,
-            "wp_zs":.02,
             "has_stop":.1, 
             "stop_dist":.1, 
             "has_lead":.1, 
@@ -36,20 +35,37 @@ class LossManager():
             "lane_width":.02,
             "dagger_shift":.05,
             "rd_is_lined":.02,
+            "left_turn":.01,
+            "right_turn":.01,
             "td":.03,
             "pitch":.1,
             "yaw":.1,
             "unc":.1,
         }
-        self.loss_emas = {k:1000 for k in self.loss_weights.keys()} # init to be large so baseline loss will dominate
+        wps_losses = {   
+                    "wp_angles": 1,
+                    "wp_curvatures":.2,
+                    "wp_headings":.02,
+                    "wp_rolls":.05,
+                    "wp_zs":.02,
+                    }
+        for k,v in wps_losses.items():
+            self.loss_weights[k] = v
+            self.loss_weights[f"{k}_i"] = v *.1 # manual downweighting. Remember this is the proportion w respect to normal control loss, not the weight itself
+
+        self.loss_emas = {k:1000. for k in self.loss_weights.keys()} # init to be large so baseline loss will dominate
         self.loss_emas[self.baseline_loss_name] = .1 # init to be small to dominate first updates until ema stabilizes
-        self.LOSS_EPS = 1 - 1/200 
+        self.LOSS_EPS = 1. - 1./200.
 
     def _step_loss(self, loss_name, loss):
         # update avg
-        self.loss_emas[loss_name] = self.loss_emas[loss_name]*self.LOSS_EPS + loss.item()*(1-self.LOSS_EPS)
+        self.loss_emas[loss_name] = self.loss_emas[loss_name]*self.LOSS_EPS + float(loss.item())*(1-self.LOSS_EPS) # full prec
         weight = self.loss_weights[loss_name] * (self.loss_emas[self.baseline_loss_name] / (self.loss_emas[loss_name]+1e-6))
-        return weight*loss
+        weighted_loss = weight*loss
+        assert not np.isnan(loss.item()), f"loss is nan for {loss_name}"
+        assert not np.isnan(weight), f"weight is nan for {loss_name}"
+        # print(loss_name, loss.item(), weighted_loss.item())
+        return weighted_loss
 
     def step(self, losses_dict, logger=None):
         total_loss = torch.HalfTensor([0]).to(device)
@@ -115,13 +131,13 @@ class Trainer():
             if self.should_stop: 
                 print("ending training early")
                 break
-            if self.rw_evaluator is not None and (self.current_epoch+1) % 2 == 0: # every hour and a half currently
+            if self.rw_evaluator is not None and (self.current_epoch+1) % 2 == 0: # every 1.5 hours currently
                 self.model.model_stem = f"{self.model_stem}_e{self.current_epoch}"
                 self.rw_evaluator.evaluate()
             self.current_epoch += 1
         
     def reset_worsts(self):
-        self.worsts = {p:[-np.inf, None] for p in ['angles']+SHOW_WORST_PROPS}
+        self.worsts = {p:[-np.inf, None] for p in ['angles', 'angles_i']+SHOW_WORST_PROPS}
 
     def update_worst(self, loss_name, loss_values_no_reduce, batch):
         worst_loss, batch_worst_ix, seq_worst_ix = get_worst(loss_values_no_reduce)
@@ -148,6 +164,9 @@ class Trainer():
             if is_first_in_seq: model.reset_hidden(dataloader.bs)
             timer.log("get batch from dataloader")
 
+            assert torch.isnan(img).sum() == 0, f"img has nans: {img}"
+            #assert torch.isnan(aux).sum() == 0, f"aux has nans: {aux}"
+
             with torch.cuda.amp.autocast(): wps_p, aux_targets_p, obsnet_out = model(img, aux)
             timer.log("model forward")
 
@@ -155,15 +174,34 @@ class Trainer():
             # wp losses
             #############
             weights = (to_pred_mask*self.LOSS_WEIGHTS).repeat((1,1,5))
+            assert torch.isnan(wps).sum() == 0, f"wps has nans: {wps}"
+            assert torch.isnan(wps_p).sum() == 0, f"wps_p has nans: {wps_p}"
+            assert torch.isnan(aux_targets_p).sum() == 0, f"aux_targets_p has nans: {wps_p}"
+            assert torch.isnan(obsnet_out).sum() == 0, f"obsnet_out has nans: {obsnet_out}"
             _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights)
+
+            is_intersection_turn = aux[:,:,AUX_PROPS.index("left_turn")] + aux[:,:,AUX_PROPS.index("right_turn")]
+
+            _wps_loss_intersection = _wps_loss * is_intersection_turn[:,:,None]
+            _wps_loss = _wps_loss * (is_intersection_turn*-1+1)[:,:,None]
+
+            angles_loss_i, headings_loss_i, curvatures_loss_i, rolls_loss_i, zs_loss_i = torch.chunk(_wps_loss_intersection, 5, -1)
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
+
             losses = {
+                "wp_angles_i": angles_loss_i.mean(),
+                "wp_headings_i": headings_loss_i.mean(),
+                "wp_curvatures_i": curvatures_loss_i.mean(),
+                "wp_rolls_i":rolls_loss_i.mean(),
+                "wp_zs_i":zs_loss_i.mean(),
+            }
+            losses.update({
                 "wp_angles": angles_loss.mean(),
-                "wp_curvatures": curvatures_loss.mean(),
                 "wp_headings": headings_loss.mean(),
+                "wp_curvatures": curvatures_loss.mean(),
                 "wp_rolls":rolls_loss.mean(),
                 "wp_zs":zs_loss.mean(),
-            }
+            })
             #############
             # aux losses
             #############
@@ -183,14 +221,13 @@ class Trainer():
             pitch_loss = mse_loss(aux[:,:,AUX_PROPS.index('pitch')], obsnet_out[:,:,OBSNET_PROPS.index('pitch')])
             yaw_loss = mse_loss(aux[:,:,AUX_PROPS.index('yaw')], obsnet_out[:,:,OBSNET_PROPS.index('yaw')])
             unc_p = obsnet_out[:,:,OBSNET_PROPS.index('unc_p')]
-            unc_loss = mse_loss(torch.log(angles_loss.mean(dim=-1).detach()), unc_p)
+            unc_loss = mse_loss(torch.log(angles_loss.mean(dim=-1).detach()+angles_loss_i.mean(dim=-1).detach()), unc_p)
             losses.update({
-                "pitch":pitch_loss,
-                "yaw":yaw_loss,
+                #"pitch":pitch_loss,
+                #"yaw":yaw_loss,
                 "unc":unc_loss,
             })
             logger.log({f"avg_unc": unc_p.mean().item()})
-
 
             loss = self.loss_manager.step(losses, logger=logger)
             timer.log("calc losses")
@@ -200,7 +237,8 @@ class Trainer():
                 scaler = self.scaler
                 scaler.scale(loss).backward() 
                 scaler.unscale_(opt)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 10.0)
+                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 2.0)
+                logger.log({"grad_norm": total_norm.item()})
                 scaler.step(opt)
                 scaler.update() 
                 opt.zero_grad()
@@ -212,9 +250,13 @@ class Trainer():
             if update_counter%CHECK_FOR_WORST_FREQ==0 and self.log_wandb:
                 with torch.no_grad():
                     # collapse the wp traj for any traj related losses
-                    angles_loss,_ = angles_loss.max(-1) 
                     b = (img, wps, wps_p, aux, aux_targets_p, obsnet_out)
+
+                    angles_loss,_ = angles_loss.max(-1) 
                     self.update_worst("angles", angles_loss, b)
+
+                    angles_loss_i,_ = angles_loss_i.max(-1) 
+                    self.update_worst("angles_i", angles_loss_i, b)
 
                     # Report worsts for our aux targets
                     for p in SHOW_WORST_PROPS:
@@ -339,7 +381,7 @@ import albumentations as A
 COMPRESSION_QUALITY_MIN = 30 # 15
 
 random_color = lambda : (random.randint(0,255), random.randint(0,255), random.randint(0,255))
-def get_transform():
+def get_transform(seqlen):
     transforms = [
         A.AdvancedBlur(p=.4, blur_limit=(3, 3), sigmaX_limit=(0.1, 1.55), sigmaY_limit=(0.1, 1.51), rotate_limit=(-81, 81), beta_limit=(0.5, 8.0), noise_limit=(0.01, 22.05)),
         A.RandomContrast(limit=(-.4, .4), p=.4),
@@ -360,7 +402,7 @@ def get_transform():
         ]),
         A.OneOf([ # brightness
             A.RandomGamma(gamma_limit=(30,150), p=.4), # higher is darker
-            A.RandomBrightness(p=.4, limit=(-0.35, 0.4)),
+            A.RandomBrightness(p=.5, limit=(-0.35, 0.35)),
         ]),
         A.OneOf([  # other 
             # A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)),
@@ -370,20 +412,22 @@ def get_transform():
 
     ]
     random.shuffle(transforms)
-    transform = A.Compose(transforms, additional_targets={f"image{i}":"image" for i in range(1,BPTT)})
+    transform = A.Compose(transforms, additional_targets={f"image{i}":"image" for i in range(seqlen)})
     return transform
 
 def aug_imgs(img):
-    bs, seqlen, _,_,_= img.shape # seqlen may be shorter than BPTT at the end of each seq
-    transform = get_transform()
-    AUG_SEQ_PROB = 1.0
-    for b in range(bs):
-        # Sometimes don't aug at all
-        if random.random() > AUG_SEQ_PROB: continue
+    seqlen, _,_,_= img.shape # seqlen may be shorter than BPTT at the end of each seq
+    transform = get_transform(seqlen)
+    CONSTANT_AUG_PROB = 1.0
 
+    if random.random() < CONSTANT_AUG_PROB:
+        transformed = transform(image=img[1], image0=img[0])
+        img[1, :,:,:] = transformed['image']
+        img[0, :,:,:] = transformed['image0']
+    else:
         # different aug for each img in seq
         for s in range(seqlen):
-            img[b][s] = transform(image=img[b][s])['image']
+            img[s] = transform(image=img[s])['image']
 
     return img
 #################################################### 

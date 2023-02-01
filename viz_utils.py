@@ -96,6 +96,8 @@ def enrich_img(img=None, wps=None, wps_p=None, aux=None, aux_targets_p=None, obs
 
     a.append(f"unc_p: {round(obsnet_out['unc_p'], 2)}")
 
+    # a.append(f"maps, route: {aux['has_map']}, {aux['has_route']}")
+
     # Roll
     _, _, target_wp_ix = get_target_wp(rolls_p, speed) # doesn't matter if rolls or whatever, we're just getting ix
     target_wp_ix = int(target_wp_ix)
@@ -185,81 +187,6 @@ def combine_img_actgrad(img, actgrad, color=(8,255,8)):
     return img_actgrad
 
 
-# q_lookup = {
-#     'traj': 6e-4,
-#     'stop': 4e-5,
-#     'lead': 6e-5,
-# }
-# def _get_actgrad(m, img, aux_model, aux_calib, backwards_fn, clip_neg=False, do_abs=False, q=.005, backwards_target='traj'):
-#     grads = []
-#     img.requires_grad_(True)
-#     img.register_hook(lambda grad : grads.append(grad.detach().cpu()))
-#     with torch.cuda.amp.autocast():
-#         m.zero_grad()
-#         model_out = m(img, aux_model, aux_calib) 
-        
-#         to_backwards = backwards_fn(model_out, m, aux_model.detach().cpu().numpy())
-#         to_backwards.backward()
-    
-#     actgrad_source = "level5"
-#     if actgrad_source=='img':
-#         # The img itself, in normalized state
-#         acts = img[0][0].permute(1,2,0).detach().cpu().numpy()
-#         grads = grads[0][0][0].permute(1,2,0).numpy()
-#         actgrad = grads * acts # the actual actgrads, nothing rescaled yet. This is the actual grad*act
-#         actgrad = (actgrad[:,:,:3].mean(-1)) # not taking the movement channel for now
-#         actgrad /= q
-
-#     elif actgrad_source=='level5':
-#         acts = m.activations.mean(1, keepdim=True).numpy() # (bs, 1, 13, 80), mean of channels
-#         grads = m.gradients.mean(1, keepdim=True).numpy()
-#         actgrad = (acts * grads)[0][0].astype(np.float32)
-#         actgrad = cv2.resize(actgrad, (IMG_WIDTH,IMG_HEIGHT))
-#         actgrad /= q_lookup[backwards_target] # rescale to clip dist for viewing
-
-#     actgrad = np.clip(actgrad, -1, 1) # this works in conjunction w the quantile-based rescaling, eliminating outliers
-#     # and scaling to -1, 1
-
-#     # need one or the other. Actgrad in range zero to one.
-#     if do_abs: actgrad = abs(actgrad)
-#     elif clip_neg: grads = np.clip(grads, 0, 1)
-#     else: print("need to get actgrads in range zero to one")
-    
-#     actgrad = np.expand_dims(actgrad, -1) # from zero to one in shape (IMG_HEIGHT, IMG_WIDTH, 1)
-
-#     return actgrad
-    
-# def _backwards_lead(model_out, m, aux_model):
-#     wp_preds, pred_aux, obsnet_out = model_out
-#     return (pred_aux[:,:,3]).mean() # has lead
-
-# def _backwards_stop(model_out, m, aux_model):
-#     wp_preds, pred_aux, obsnet_out = model_out
-#     return (pred_aux[:,:,0]).mean() # has stop
-
-# def _backwards_traj(model_out, m, aux_model):
-#     aux_model *= model_in_aux_norm_constants
-#     to_pred_mask = get_speed_mask(aux_model)
-#     to_pred_mask = torch.from_numpy(to_pred_mask).to(device)
-#     wp_preds, pred_aux, obsnet_out = model_out
-#     wp_angles_p, _, _, _, _ = torch.chunk(wp_preds, 5, -1)
-#     return ((wp_angles_p * to_pred_mask)*400).mean() #TODO need this provided
-
-# def get_actgrad(m, img, aux_model, aux_calib, actgrad_target='traj'):
-#     if actgrad_target=='traj': return _get_actgrad(m, img, aux_model, aux_calib, _backwards_traj, do_abs=True, q=.13, backwards_target='traj')
-#     elif actgrad_target=='stop': return _get_actgrad(m, img, aux_model, aux_calib, _backwards_stop, clip_neg=True, q=.006, backwards_target='stop')
-#     elif actgrad_target=='lead': return _get_actgrad(m, img, aux_model, aux_calib, _backwards_lead, clip_neg=True, q=.058, backwards_target='lead')
-#     else: print("actgrad target not valid")
-
-# def combine_img_actgrad(img, actgrad, color=(8,255,8)):
-#     """ actgrad in range zero to one, img in range 0 to 255 uint8 """
-#     actgrad_mask = (actgrad > .01).astype(int)
-#     actgrad *= actgrad_mask # do we want to do this?
-#     actgrad_fillin = (actgrad * np.array(color)).astype(np.uint8)
-#     img_actgrad = (actgrad_fillin + img*(1-actgrad)).astype('uint8')
-#     return img_actgrad
-
-
 
 
 def write_vid(img, filename):
@@ -305,3 +232,5 @@ def plot_wps(ws, speed_mask):
         w_masked = ws[i]*speed_mask
         ax.hist(w_masked.flatten(), bins=80, alpha=.6)
         ax.set_title(f"{titles[i]}, std {round(float(ws[i].std()), 3)}, {round(float(w_masked.std()),3)}", fontdict={"fontsize":12})
+
+

@@ -102,9 +102,9 @@ BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
 #BLENDER_MEMBANK_ROOT = "/dev/shm/blender_membank"
 
 
-SEQ_LEN = 16 #64 #116 * 1
+SEQ_LEN = 1 #16 #64 #116 
 EPISODE_LEN = SEQ_LEN * (1280//SEQ_LEN)
-RUNS_TO_STORE_PER_PROCESS = 128 #30
+RUNS_TO_STORE_PER_PROCESS = 96 #30
 N_RUNNERS = 12
 
 BPTT = 1 #4 #8 #9
@@ -374,7 +374,7 @@ assert IMG_WIDTH%2==0 and IMG_HEIGHT%2==0
 # SMALL_IMG_WIDTH = IMG_WIDTH//2
 IMG_HEIGHT_MODEL = IMG_HEIGHT #+SMALL_IMG_HEIGHT
 IMG_WIDTH_MODEL = IMG_WIDTH
-N_CHANNELS_MODEL = 3 #4
+N_CHANNELS_MODEL = 4
 
 def bwify_seq(_img):
     #return _img[:, :,:,:1]//3 + _img[:, :,:,1:2]//3 + _img[:, :,:,2:3]//3
@@ -383,14 +383,17 @@ def bwify_seq(_img):
 def bwify_img(_img):
     return bwify_seq(_img[None, ...])[0]
 
-def cat_imgs(imgs, maps, aux):
+def cat_imgs(current_img, imgs_bw, maps, aux):
     # expects seq
-    imgs[:, -MAP_HEIGHT:,-MAP_WIDTH:,:] = maps
+    current_img[:, -MAP_HEIGHT:,-MAP_WIDTH:,:] = maps
 
     # HUD
     hud = get_hud(aux)
     _, h,w,c = hud.shape
-    imgs[:, -h:,-w:,:] = hud
+    current_img[:, -h:,-w:,:] = hud
+
+    # cat fast img channelwise
+    imgs = np.concatenate([current_img, imgs_bw], axis=-1)
 
     return imgs
 
@@ -410,7 +413,15 @@ def get_hud(aux):
     has_map_route[:, :,:,1] = (aux[:, "has_route"]*255)[:, None,None]
     has_map_route[:, :,:,2] = ((aux[:, "has_route"]*-1+1)*255)[:, None,None]
 
-    hud = np.concatenate([has_map_route, speed], axis=-3) # stack on height dim
+    # Current tire angle
+    tire_angle = get_hud_square()
+    m = .05
+    has_tire_angle = aux[:, "has_tire_angle"][:, None,None]
+    tire_angle[:, :,:,0] = np.interp(aux[:, "tire_angle_lagged"], [-m, m], [0, 255])[:, None,None] * has_tire_angle
+    tire_angle[:, :,:,1] = np.interp(aux[:, "tire_angle_lagged"], [m*6, -m*6], [0, 255])[:, None,None] * has_tire_angle
+    tire_angle[:, :,:,2] = has_tire_angle * 255
+
+    hud = np.concatenate([tire_angle, has_map_route, speed], axis=-3) # stack on height dim. New elements put in front
     return hud
     
 ###########################
@@ -425,6 +436,8 @@ SIM_RUN_ID = "sim"
 # Property reference
 ###########################
 import pandas as pd
+pd.options.mode.chained_assignment = None  # default='warn'
+
 propref = pd.read_csv(f"{BESPOKE_ROOT}/propref.csv").fillna(0)
 propref['ix'] = list(range(len(propref)))
 AUX_PROPS = list(propref.prop.values)
@@ -449,9 +462,9 @@ EPISODE_PROPS = list(propref_episode.prop.values)
 propref_rollout = propref[propref.rollout==1]
 ROLLOUT_PROPS = list(propref_rollout.prop.values)
 
-get_img_container = lambda bs, seqlen : np.empty((bs, seqlen, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, N_CHANNELS_MODEL), dtype='uint8')
-get_aux_container = lambda bs, seqlen : na(np.empty((bs, seqlen, len(AUX_PROPS)), dtype=np.float32), AUX_PROPS)
-get_targets_container = lambda bs, seqlen : np.empty((bs, seqlen, N_WPS*4), dtype=np.float32)
+get_img_container = lambda bs, seqlen : np.zeros((bs, seqlen, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, N_CHANNELS_MODEL), dtype='uint8')
+get_aux_container = lambda bs, seqlen : na(np.zeros((bs, seqlen, len(AUX_PROPS)), dtype=np.float32), AUX_PROPS)
+get_targets_container = lambda bs, seqlen : np.zeros((bs, seqlen, N_WPS*4), dtype=np.float32)
 get_maps_container = lambda bs, seqlen : np.zeros((bs, seqlen, MAP_HEIGHT, MAP_WIDTH, 3), dtype='uint8')
 
 

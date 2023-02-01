@@ -72,28 +72,13 @@ class EffNet(nn.Module):
                 # Run through the model
                 x = mm(x)
                 name = i
-
+                #print(f"{i} isnan:{x.isnan().sum().item()} max:{x.max().item()} min:{x.min().item()} std:{x.std().item()} mean:{x.mean().item()} {x.shape}")
                 if i==self.viz_ix:
                     # Store the activations
-                    # if name in self.acts.keys():
-                    #     self.acts[name] = self.acts[name]*EPS + x.detach().cpu().numpy()*(1-EPS)
-                    # else:
                     self.acts[name] = x.detach().cpu().numpy()
                     # Instruct to store the gradients if necessary
                     x.register_hook(self.get_hook(name))
 
-        # if self.is_for_viz: 
-        #     # viz
-        #     bb = self.backbone
-        #     x = bb[:VIZ_IX](x)
-        #     x = bb[VIZ_IX](x)
-
-        #     activations = x
-        #     activations.register_hook(self.activations_hook)
-        #     self.activations = activations.detach().cpu()
-        #     x = activations
-
-        #     x = bb[VIZ_IX+1:](x)
         elif self.backbone_is_trt:
             # inference
             x = self.trt_backbone(x)
@@ -146,9 +131,13 @@ def try_load_state_dict(model, state_dict):
     for name, param in state_dict.items():
         try:
             own_state[name].copy_(param)
-            print(f"loaded {name}")
+            #print(f"loaded {name}")
         except:
-            print(f"could not load {name}")
+            print(f"could not fully load {name}, patching what we can")
+            own_state_n_out = own_state[name].shape[0]
+            param_n_out = param.shape[0] # assumes loaded weights have fewer than new model, ie we've added something to final layer
+            own_state[name][:param_n_out].copy_(param)
+            print(own_state[name].shape, param.shape)
     
     model.load_state_dict(own_state, strict=False)
     return model

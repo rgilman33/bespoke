@@ -5,54 +5,70 @@ from constants import *
 from imports import *
 from traj_utils import *
 
+format_ix = lambda ix: ("0000"+str(ix))[-4:]
 
-def update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset):
-    #TODO keep an eye here. Won't likely run into targets file not exist, but may get the occasion where imgs begin to overwrite.
-    # ie we grab a targets right before it's deleted, and imgs begin to be overwritten before we can grab them all. Also note this modulo
-    # move is to keep sampling more even. Offset is so first runners don't get preference.
+def get_current_run(dataloader_root):
+    # Rare error here, prob writing to it at same time
+    try:
+        current_run = np.load(f"{dataloader_root}/run_counter.npy")[0]
+        return current_run
+    except:
+        print("Failed to load run_counter.npy. Retrying...")
+        time.sleep(1)
+        return get_current_run(dataloader_root)
+    
+def update_seq_inplace(*inputs):
+    try:
+        _update_seq_inplace(*inputs)
+    except KeyboardInterrupt:
+        print("Keyboard interrupt. Ending thread.")
+        return
+    except Exception as e:
+        print("Error in thread, trying again\n\n", e)
+        time.sleep(1)
+        update_seq_inplace(*inputs)
+
+def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset):
+
     datagen_id = ("00"+str((b+offset) % N_RUNNERS))[-2:] 
+    dataloader_root = f"{BLENDER_MEMBANK_ROOT}/dataloader_{datagen_id}"
 
-    # Grab a target file. That's how we choose a seq.
-    ts = []
-    first_ix = SEQ_LEN - 1
-    while len(ts)==0: # So we can start sooner than when all runs fully populated
-        ts = glob.glob(f"{BLENDER_MEMBANK_ROOT}/dataloader_{datagen_id}/run_{random.randint(0, RUNS_TO_STORE_PER_PROCESS-1)}/targets_*.npy")
-        ts = [f for f in ts if f"targets_{first_ix}.npy" not in f] # don't load first seq, not enough history, it's a buffer for second seq
-    t = random.choice(ts)
+    current_run = get_current_run(dataloader_root)
 
-    # Parse filename for end_ix identifier
-    t_split = t.split('/')
-    p = t_split[-1]
-    t_stem = '/'.join(t_split[:-1])
-    end_ix = int(p.split('.npy')[0].split('_')[1])
+    available_runs = glob.glob(f"{dataloader_root}/*/")
+    available_runs = [r for r in available_runs if f"run_{current_run}" not in r]
+
+    run_path = random.choice(available_runs)
+    ix = random.randint(20, EPISODE_LEN-1) # not taking the first n obs
+
+    # Targets and aux start at 0, imgs start at one. This actually lines up correctly if we match ixs. ie we throw away the first 
+    # target and aux. img1 corresponds to targets1, aux1. 
 
     # Load targets
-    targets = np.load(t)
+    targets = np.load(f"{run_path}/targets/{ix}.npy") # rare error here, why? this should always exist
     targets_chunk[b, :, :] = targets
 
-    # Load aux. Will use and update below before caching to chunk
-    aux = na(np.load(f"{t_stem}/aux_{end_ix}.npy"), AUX_PROPS)
+    # Load aux
+    aux = na(np.load(f"{run_path}/aux/{ix}.npy"), AUX_PROPS)
     aux_chunk[b, :, :] = aux
 
     # Maps
-    maps = np.load(f"{t_stem}/maps_{end_ix}.npy") 
+    maps = np.load(f"{run_path}/maps/{ix}.npy") 
 
-    # moving targets forward by one bc of they're off by one. Without this targets are lagged. This is critical.
-    targets_chunk[b,:-1,:] = targets_chunk[b,1:,:] 
-    aux_chunk[b,:-1,:] = aux_chunk[b,1:,:] 
-    maps[:-1, :,:,:] = maps[1:, :,:,:] # maps have to remain synced w aux bc of hud indicators, though it's less important that they're lagged
-    
     # imgs
-    img_paths = sorted(glob.glob(f"{t_stem}/imgs/*"))[end_ix-SEQ_LEN+1:end_ix+1] # imgs 1 indexed, targets zero indexed
-    imgs = np.empty((len(img_paths), IMG_HEIGHT, IMG_WIDTH, 3), dtype='uint8')
-    for i, p in enumerate(img_paths): imgs[i, :,:,:] = cv2.imread(p) # NOTE the most time consuming part of this fn
-    imgs = imgs[:, :,:,::-1] #bgr to rgb
+    ixs =[ix-2, ix]
+    img_paths = [f"{run_path}/imgs/{format_ix(i)}.jpg" for i in ixs]
 
-    # Aug images. NOTE time consuming TODO MAYBE potentially capture augs here in aux
-    imgs = aug_imgs(imgs[None,:, :,:,:])[0] # fn requires batch dimension 
+    imgs = np.stack([cv2.imread(img_path) for img_path in img_paths])[:, :,:,::-1] # bgr to rgb
+
+    # Aug images
+    imgs = aug_imgs(imgs) 
+
+    imgs_bw = bwify_seq(imgs[:-1]) # past imgs all bw
+    current_img = imgs[-1:] 
 
     # Assemble img for model
-    img_chunk[b,:, :,:,:] = cat_imgs(imgs, maps, aux)
+    img_chunk[b,:, :,:,:] = cat_imgs(current_img, imgs_bw, maps, aux) # each has seq dim, no batch
 
     is_done[b] = 1 # why does this work, but didn't in my eval rw fn?
 
@@ -85,7 +101,12 @@ class TrnLoader():
 
         self.should_stop = False
         self.chunks_queue = Queue(maxsize=3)
-        self.chunks_worker = Process(target=self.make_chunks).start()
+        N_WORKERS = 3
+        print(f"Launching {N_WORKERS} loader workers")
+        for i in range(N_WORKERS):
+            p = Process(target=self.make_chunks)
+            setattr(self, f"chunks_worker{i}", p)
+            p.start()
 
         self._refresh_backup_chunk()
         self.promote_backup_chunk()
@@ -113,10 +134,16 @@ class TrnLoader():
         timer = Timer("fill chunk inplace")
         # sets them in place. Takes about 2 sec per seq of len 116. Threading important for perf, as most of the time is io reading in imgs
         is_done = np.zeros(self.bs)
+        threads = []
         for b in range(self.bs):
-            threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, b, is_done, random.randint(0,10_000))).start() 
-        while is_done.sum() < self.bs:
-            time.sleep(.1)
+            t = threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, b, is_done, random.randint(0,10_000)))
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+
+        assert is_done.sum() == self.bs
         self.logger.log(timer.finish())
         
     def _refresh_backup_chunk(self):
@@ -129,9 +156,11 @@ class TrnLoader():
         self.backup_chunk_is_ready = True
 
     def promote_backup_chunk(self):
+        i = 0
         while not self.backup_chunk_is_ready:
-            print("backup chunk not yet ready")
-            time.sleep(.2)
+            if (i+1)%300==0: print("backup chunk not yet ready")
+            time.sleep(.01)
+            i+=1
         self.seq_ix = 0
         self.img_chunk[:,:, :,:,:] = self.img_chunk_b[:,:, :,:,:] 
         self.aux_chunk[:,:,:] = self.aux_chunk_b[:,:,:]
@@ -214,33 +243,24 @@ class RunLoader():
         self.targets_chunk = np.zeros((self.img_chunk.shape[0], N_WPS*4)) # For convenience. at some point we could actually fill these in using kalman filter
 
     def _load_sim(self, run_path):
-        chunks_range = range(SEQ_LEN-1, EPISODE_LEN, SEQ_LEN)
-        self.aux_chunk = na(np.concatenate([np.load(f'{run_path}/aux_{i}.npy') for i in chunks_range], axis=0), AUX_PROPS)
-        self.targets_chunk = np.concatenate([np.load(f'{run_path}/targets_{i}.npy') for i in chunks_range], axis=0)
-        self.maps = np.concatenate([np.load(f'{run_path}/maps_{i}.npy') for i in chunks_range], axis=0)
+
+        self.aux_chunk = na(np.concatenate([np.load(f'{run_path}/aux/{i}.npy') for i in range(1,EPISODE_LEN+1)], axis=0), AUX_PROPS)
+        self.targets_chunk = np.concatenate([np.load(f'{run_path}/targets/{i}.npy') for i in range(1,EPISODE_LEN+1)], axis=0)
+        self.maps = np.concatenate([np.load(f'{run_path}/maps/{i}.npy') for i in range(1,EPISODE_LEN+1)], axis=0)
         self.img_chunk = np.stack([cv2.imread(i)[:,:,::-1].astype(np.uint8) for i in sorted(glob.glob(f"{run_path}/imgs/*"))]) 
-            
-        # staggering by one, otherwise targets and aux are lagged. This is important. Current blender setup is off by one.
-        self.targets_chunk[:-1,:] = self.targets_chunk[1:,:]
-        self.aux_chunk[:-1,:] = self.aux_chunk[1:,:] 
-        self.maps[:-1, :,:,:] = self.maps[1:, :,:,:]
+        print(self.img_chunk.shape, self.maps.shape, self.aux_chunk.shape, self.targets_chunk.shape)
 
     def _finalize_loader_init(self):
         # Common to both sim and rw paths
-        
-        img_bw = bwify_seq(self.img_chunk)
-        self.seq_len = len(self.img_chunk) - SLOW_2_LB_IX - FAST_LB_IX # cat hist shortens seqs
-        self.img_chunk = cat_imgs(self.img_chunk, img_bw, self.maps, self.aux_chunk, seq_len=self.seq_len)
-
-        # Assembling imgs shortens the seq. Ensure everything else is shortened equally.
-        assert len(self.img_chunk)==self.seq_len
-        self.aux_chunk = self.aux_chunk[-self.seq_len:]
-        self.targets_chunk = self.targets_chunk[-self.seq_len:]
+    
+        imgs_bw = bwify_seq(self.img_chunk)
+        self.img_chunk = cat_imgs(self.img_chunk[2:], imgs_bw[:-2], self.maps[2:], self.aux_chunk[2:])
+        self.seq_len = len(self.img_chunk)
 
         # Pad batch dimension to keep common dims of (batch,seq,n) across all loaders
         self.img_chunk = self.img_chunk[None,:, :,:,:]
-        self.aux_chunk = self.aux_chunk[None,:,:]
-        self.targets_chunk = self.targets_chunk[None,:,:]
+        self.aux_chunk = self.aux_chunk[None,2:,:] # TODO rationalize all of this
+        self.targets_chunk = self.targets_chunk[None,2:,:]
 
         # Chunks are now loaded in common format: np, real units
 
@@ -272,19 +292,19 @@ def _iter_batch(loader):
     if loader.batches_delivered == loader.n_batches:
         return None
 
-    while len(loader.queued_batches)==0 and loader.retry_counter < 1200:
+    while len(loader.queued_batches)==0 and loader.retry_counter < 12_000:
         if hasattr(loader, "is_done") and loader.is_done: 
             print("loader is done")
             return None
 
-        if (loader.retry_counter+1)%100==0:
+        if (loader.retry_counter+1)%1000==0:
             print("Waiting for batch...")
         loader.retry_counter += 1
-        time.sleep(.1)
+        time.sleep(.01)
 
     thread = threading.Thread(target=loader.queue_up_batch)
     thread.start()
-    loader.logger.log({"timing/wait bc batch not ready":.1*loader.retry_counter})
+    loader.logger.log({"timing/wait bc batch not ready":.01*loader.retry_counter})
     
     if len(loader.queued_batches)==0:
         print("Finished dataloader!")
@@ -311,7 +331,7 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
     aux = prep_aux(aux)
     timer.log("prep aux")
 
-    # Wps targets
+    # Wps targets TODO time for these to go into prep chunk
     wps, to_pred_mask = None, None
     if targets_chunk is not None:
         targets = targets_chunk[:, ix:ix+bptt, :].copy()

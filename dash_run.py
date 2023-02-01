@@ -15,8 +15,8 @@ import numpy as np
 from PIL import Image
 from dash_utils import *
 
-run_ids = ["run_555a", "run_556a", "run_556b", "run_556c", "none"]
-model_stem = "1.18_avg"
+run_ids = ["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "none"]
+model_stem = "1.29_avg"
 run_id = run_ids[0]
 run_id_2 = 'none'
 

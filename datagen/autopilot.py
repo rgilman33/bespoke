@@ -13,7 +13,7 @@ class Autopilot():
         self.episode_info, self.save_data, self.run_root, self.ap_id, self.is_ego = episode_info, save_data, run_root, ap_id, is_ego
 
         self.reset_drive_style()
-        self.counter, self.overall_frame_counter = 0, 0
+        self.overall_frame_counter = 0
         self.current_speed_mps = self.speed_limit / 2
         self.current_tire_angle = 0
         self.DRIVE_STYLE_CHANGE_IX = random.randint(200, 600)
@@ -42,7 +42,7 @@ class Autopilot():
         episode_info.roll_noise_mult = roll_noise_mult
 
         r = random.random()
-        gps_state = "BAD" if (r < .05 and self.episode_info.just_go_straight) else "MED" if r <.1 else "NORMAL" #TODO update these probs when doing turns again
+        gps_state = "BAD" if (r < .05 and self.episode_info.just_go_straight) else "MED" if r <.1 else "NORMAL"
         # # noise for the map, heading. This is in addition to what we'll get from the noisy pos
         # num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity
         # maps_noise_mult = np.radians(10) if gps_state=="BAD" else np.radians(5) if gps_state=="MED" else random.uniform(.001, np.radians(3)) # radians
@@ -73,6 +73,12 @@ class Autopilot():
 
         self.dagger_shift = 0
         self.should_yield = False
+
+        # 
+        tire_angle_noise_mult = random.uniform(.001, .015) # radians
+        self.tire_angle_noise = get_random_roll_noise(num_passes=random.randint(30,300)) * tire_angle_noise_mult
+        self.tire_angles_hist = [0 for _ in range(6)]
+        self.tire_angles_lag = random.randint(2,6) # two is most recent obs
 
         # # Final stop for episode info datagen NOTE don't use this anymore afterwards. It gets consolidated in aux
         # if self.save_data: save_object(self.episode_info, f"{self.run_root}/episode_info.pkl")
@@ -125,6 +131,12 @@ class Autopilot():
 
         self.route_normal_shift = random.uniform(0,3)
 
+        self.is_left_turn = route.left_turn.to_numpy()
+        self.is_right_turn = route.right_turn.to_numpy()
+        if self.is_ego: print("left, right turn wps", self.is_left_turn.sum(), self.is_right_turn.sum())
+
+        self.route_curvature = route.route_curvature.to_numpy()
+
     def set_nav_map(self, coarse_map_df):
         self.way_ids = coarse_map_df.way_id.to_numpy()
         self.map_xs, self.map_ys = coarse_map_df.pos_x.to_numpy(), coarse_map_df.pos_y.to_numpy()
@@ -162,6 +174,7 @@ class Autopilot():
         traj_wps = self.waypoints[wp_ixs]
         deltas = traj_wps - self.current_pos
         xs, ys = deltas[:, 0], deltas[:, 1]
+        xs_d, ys_d = xs.copy(), ys.copy()
 
         if abs(self.shift_x) > 0 or abs(self.shift_y) > 0:
             perc_into_undaggering = TRAJ_WP_DISTS_NP / meters_to_undagger 
@@ -169,11 +182,21 @@ class Autopilot():
             xs += self.shift_x*p
             ys += self.shift_y*p
 
-        angles_to_wps = get_angles_to(xs, ys, -self.current_rotation[2])
+            xs_d += self.shift_x # used to get a rough idea of where the actual tire is angled. Not very good.
+            ys_d += self.shift_y
+
+        angles_to_wps = get_angles_to(xs, ys, -self.current_rotation[2]) # dagger corrected, used for targets
+        angles_to_wps_d = get_angles_to(xs_d, ys_d, -self.current_rotation[2]) # not corrected, used to get tire angle
+
         wp_dists_actual = np.sqrt(xs**2 + ys**2)
 
+        # rd maneuvers
+        RD_MANEUVER_LOOKAHEAD = 60 # meters
+        left_turn = any(self.is_left_turn[current_wp_ix:current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
+        right_turn = any(self.is_right_turn[current_wp_ix:current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
+
         if self.save_data:
-            HAS_MAP_PROB = .8
+            HAS_MAP_PROB = .8 if self.episode_info.just_go_straight else 1
             HAS_ROUTE_PROB = .9 if self.episode_info.just_go_straight else 1
             if self.overall_frame_counter < 10: HAS_MAP_PROB, HAS_ROUTE_PROB = 0, 0 # First few obs, no maps bc heading tracker janky and rds cutoff
             # Navmap
@@ -211,10 +234,9 @@ class Autopilot():
                                         close_buffer,
                                         draw_route=self.has_route) if self.has_map else np.zeros_like(self.maps_container[0])
             
-            c = self.counter
-            
             # Maps
             # will get repeated ~4 times in a row bc gps less hz
+            c = 0
             self.maps_container[c,:,:,:] = self.small_map 
             self.aux[c, "has_map"] = int(self.has_map)
             self.aux[c, "has_route"] = int(self.has_route and self.has_map)
@@ -229,9 +251,16 @@ class Autopilot():
             self.targets_container[c, N_WPS*3:] = deltas[:,2] # z delta w respect to ego
 
             # aux
-            angle_to_wp, _, _ = get_target_wp(angles_to_wps, self.current_speed_mps) # gathering this here for convencience, just for logging. The target wp for real driver, not the close up one ap is using.
+            angle_to_wp, _, _ = get_target_wp(angles_to_wps, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
+            angle_to_wp_d, _, _ = get_target_wp(angles_to_wps_d, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
+            self.tire_angles_hist.append(angle_to_wp_d)
+            
+            HAS_TIRE_ANGLE_PROB = .6
             self.aux[c, "speed"] = self.current_speed_mps
-            self.aux[c, "tire_angle"] = angle_to_wp
+            self.aux[c, "tire_angle"] = angle_to_wp_d #self.current_tire_angle
+            self.aux[c, "tire_angle_dagger_corrected"] = angle_to_wp
+            self.aux[c, "tire_angle_lagged"] = self.tire_angles_hist[-self.tire_angles_lag] + self.tire_angle_noise[self.overall_frame_counter]
+            self.aux[c, "has_tire_angle"] = int(random.random() < HAS_TIRE_ANGLE_PROB)
             self.aux[c, "has_stop"] = smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
             self.aux[c, "stop_dist"] = self.stop_dist
             self.aux[c, "has_lead"] = smooth_dist_clf(self.lead_dist, 80, 100)
@@ -239,26 +268,20 @@ class Autopilot():
             self.aux[c, "lead_speed"] = self.lead_relative_speed
             self.aux[c, "should_yield"] = self.should_yield
             self.aux[c, "dagger_shift"] = self.dagger_shift
+            self.aux[c, "left_turn"] = left_turn
+            self.aux[c, "right_turn"] = right_turn
+            self.aux[c, "curvature_at_ego"] = self.route_curvature[current_wp_ix]
+
+
 
             # Passing episode info forward. These will be repeated. Not efficient but more robust -- now everything consolidated in aux.
             episode_info_dict = self.episode_info.__dict__
             for p in EPISODE_PROPS: 
                 self.aux[c, p] = episode_info_dict[p]
             
-            if (c+1) == SEQ_LEN:
-                np.save(f"{self.run_root}/aux_{self.overall_frame_counter}.npy", self.aux)
-                np.save(f"{self.run_root}/targets_{self.overall_frame_counter}.npy", self.targets_container)
-                np.save(f"{self.run_root}/maps_{self.overall_frame_counter}.npy", self.maps_container)  
-
-                next_seq_path = f"{self.run_root}/targets_{self.overall_frame_counter+SEQ_LEN}.npy"
-                if os.path.exists(next_seq_path):
-                    os.remove(next_seq_path)
-
-                self.targets_container[:,:] = 0.0 # NOTE shouldn't need this, but it's for safety?
-                self.aux[:,:] = 0
-                self.counter = 0
-            else:
-                self.counter += 1
+            np.save(f"{self.run_root}/aux/{self.overall_frame_counter}.npy", self.aux)
+            np.save(f"{self.run_root}/targets/{self.overall_frame_counter}.npy", self.targets_container)
+            np.save(f"{self.run_root}/maps/{self.overall_frame_counter}.npy", self.maps_container)  
         
         self.overall_frame_counter += 1
 
@@ -286,7 +309,7 @@ class Autopilot():
         ############
         # target wp close to vehicle, used for steering AP to keep it tight on traj
         # This just follows the cos dagger traj directly. This is the wp we aim towards, not the wp we use for targets
-        CLOSE_WP_DIST = np.interp(self.current_speed_mps, [9, 30], [5., 10.]) #NOTE keep an eye here, once doing turns may not be right
+        CLOSE_WP_DIST = np.interp(self.current_speed_mps, [9, 30], [5., 11.]) #NOTE keep an eye here, once doing turns may not be right
         # The above is an important number. If cutting turns too close in AP w traj still in middle, model thinks traj is usually on the right
         # during turns, ie it only sees turns from that perspective. Want to keep agent on traj as much as possible, while also balancing smoothness,
         # bc if too on top of target wp, jittery
@@ -309,11 +332,10 @@ class Autopilot():
         if self.overall_frame_counter % self.DRIVE_STYLE_CHANGE_IX: self.reset_drive_style()
 
         fps = np.clip(random.gauss(20, 2), 17, 23)
-
         dist_car_travelled = self.current_speed_mps * (1 / fps) if self.current_speed_mps>0 else 0
 
         # always using close wp for ap, to keep right on traj
-        _wheelbase = CRV_WHEELBASE # 1.5 # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase.
+        _wheelbase = 1.7 #CRV_WHEELBASE # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
         _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/_wheelbase) # rad/sec # Tire angle from prev step
         vehicle_heading_delta = _vehicle_turn_rate * (1/fps) # radians
         
@@ -437,7 +459,7 @@ class Autopilot():
         if not self.is_ego:
             self.speed_limit *= .8 # hack to make npcs go a bit slower than ego, to get more time w npcs as lead car
 
-        self.lateral_kP = .8 #.9 #.85 #random.uniform(.75, .95)
+        self.lateral_kP = .9 #.85 #random.uniform(.75, .95)
         # self.long_kP = .5 #random.uniform(.02, .05)
         self.curve_speed_mult = random.uniform(.7, 1.25)
         self.turn_slowdown_sec_before = random.uniform(.25, .75)

@@ -1,7 +1,7 @@
 import numpy as np
 import os, random, sys, bpy, time, glob
 import pandas as pd
-
+pd.options.mode.chained_assignment = None  # default='warn'
 sys.path.append("/home/beans/bespoke")
 from constants import *
 from traj_utils import *
@@ -59,14 +59,59 @@ def _get_route(df, start_locs_df, route_len, just_go_straight, is_ego):
         
     route_wps = pd.concat(segments)
     route_wps = route_wps.iloc[front_chop:-1]
+
+    # calculate the curvatures and headings of the chosen route
+    # this is the curvature of the underlying rd network, not the curvature of the vehicle's path bc the vehicle does dagger
+    # using this to eliminate routes w too high curvature
+    if is_ego and len(route_wps) > 100: # safeguard, if this short we're not using it anyways
+        M_TO_CALC_CURVATURE = 3
+        c_skip = int(M_TO_CALC_CURVATURE/WP_SPACING)
+        route_wps_skip = route_wps.iloc[::c_skip]
+
+        headings = np.arctan2(route_wps_skip.pos_x.values[1:] - route_wps_skip.pos_x.values[:-1], route_wps_skip.pos_y.values[1:] - route_wps_skip.pos_y.values[:-1])
+        headings_d = (headings[1:] - headings[:-1])
+        headings_d[headings_d>np.pi] -= 2*np.pi
+        headings_d[headings_d<-np.pi] += 2*np.pi
+        curvatures = headings_d / M_TO_CALC_CURVATURE # rad / m
+        curvatures = np.insert(curvatures, 0, 0) # lose two above
+        curvatures = np.insert(curvatures, 0, 0)
+
+        #headings, curvatures = calc_headings_curvatures(route_wps_skip.pos_x.values, route_wps_skip.pos_y.values)
+        # print("SHAPES", curvatures.shape, route_wps_skip.shape)
+        route_wps_skip["route_curvature"] = curvatures
+        
+        route_wps['route_curvature'] = route_wps_skip.route_curvature
+        route_wps["route_curvature"] = route_wps["route_curvature"].fillna(method='ffill').fillna(method='bfill')
+        # print("max curvature in the route", route_wps.route_curvature.max())
+    else:
+        route_wps["route_curvature"] = 0
     return route_wps
+
+# # from chatgpt
+# def calc_headings_curvatures(x, y):
+#     dx = np.gradient(x)
+#     dy = np.gradient(y)
+#     headings = np.arctan2(dy, dx)
+#     d_headings = np.gradient(headings)
+
+#     d_headings[d_headings>np.pi] -= 2*np.pi
+#     d_headings[d_headings<-np.pi] += 2*np.pi
+
+#     curvatures = d_headings / np.hypot(dx, dy)
+#     return headings, curvatures
+
+# repeat each item in a list n times
+def repeat_list(l, n):
+    return [item for item in l for i in range(n)]
 
 def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False, is_ego=False):
     # route len in meters
     _route_len = 0
     counter = 0
-    while _route_len < route_len:
+    max_curve = np.inf
+    while _route_len < route_len or max_curve > .25: # .25 chosen manually, cuts out about 1 in ten routes, is still pretty sharp. Can maybe go up to .3
         route = _get_route(wp_df, start_locs_df, route_len, just_go_straight, is_ego)
+        max_curve = route.route_curvature.abs().max()
         _route_len = len(route)*WP_SPACING
         counter += 1
         if counter>100: 
@@ -113,6 +158,19 @@ def get_wp_df(wps_holder_object):
     df["to_section"] = [d.value for d in wps_holder_object.data.attributes["to_section"].data]
     df["from_section"] = [d.value for d in wps_holder_object.data.attributes["from_section"].data]
 
+    df["left_turn"] = ((df.from_section==1) & (df.to_section==5)) | \
+                        ((df.from_section==10) & (df.to_section==2) | \
+                        ((df.from_section==7) & (df.to_section==11)) | \
+                        ((df.from_section==4) & (df.to_section==8))
+                        ).astype('int')
+
+    df["right_turn"] = ((df.from_section==1) & (df.to_section==11)) | \
+                        ((df.from_section==10) & (df.to_section==8) | \
+                        ((df.from_section==7) & (df.to_section==5)) | \
+                        ((df.from_section==4) & (df.to_section==2))
+                        ).astype('int')
+    print("left turn wps", df.left_turn.sum(), "right turn wps", df.right_turn.sum())
+
     # dumb packing up of one-hot into single categorical
     wp_left = [d.value for d in wps_holder_object.data.attributes["wp_left"].data]
     wp_l1 = [d.value for d in wps_holder_object.data.attributes["wp_l1"].data]
@@ -133,7 +191,7 @@ def get_wp_df(wps_holder_object):
     df["ix_in_curve"] = [d.value for d in wps_holder_object.data.attributes["ix_in_curve"].data]
 
     # Using for overlap detection when map is especially noised
-    df["is_curve_tip"] = [d.value for d in wps_holder_object.data.attributes["is_curve_tip"].data] # currently only on core curves.
+    df["is_curve_tip"] = [d.value for d in wps_holder_object.data.attributes["is_curve_tip"].data] # currently only on core curves. Dist is 10m.
     df["core_h"] = [d.value for d in wps_holder_object.data.attributes["core_h"].data]
     df["core_v"] = [d.value for d in wps_holder_object.data.attributes["core_v"].data]
 
@@ -193,7 +251,6 @@ class TrafficManager():
         self.ego = ego_ap # this is ego.ap actually
         # npcs only start along the route, not randomly scattered on map
         start_locs_df = wp_df[wp_df.intersection_id.isin(ego_ap.visited_intersections)] 
-        self.wtf = False
         # no NPCs right next to ego at start
         start_locs_df = start_locs_df[(start_locs_df.wps_section_id != ego_ap.start_section_id)]
         if ego_ap.start_section_id==41:
@@ -201,13 +258,13 @@ class TrafficManager():
         elif ego_ap.start_section_id==67:  
             oncoming_sections = [48, 51, 58, 61, 68]
         else:
-            self.wtf = True # this was happening every blue moon. No time to debug HACK
-            #assert False # wtf ego start loc should be section 41 or 67
+            # this happens when on side street
+            oncoming_sections = [48, 51, 58, 61, 68] + [62, 57,52, 47,42] # For now not caring about oncoming distinction when on side street
 
         start_locs_df_oncoming = start_locs_df[start_locs_df.wps_section_id.isin(oncoming_sections)]
 
         self.wp_df = wp_df
-        ONLY_ONCOMING_NPCS_PROB = .5 #TODO can increase this if continue to have problems w false pos
+        ONLY_ONCOMING_NPCS_PROB = .5 
         self.npcs_only_oncoming = random.random() < ONLY_ONCOMING_NPCS_PROB
         self.start_locs_df = start_locs_df_oncoming if self.npcs_only_oncoming else start_locs_df
 
@@ -299,7 +356,7 @@ def check_map_has_overlapping_rds(df):
     m = result.min()
     print("Min distance btwn v and h rds", m)
     #print("Checking distance took", time.time()-t0)
-    return m < 3.5 # chosen manually. This should be greater than dists btwn those pts themselves, which is currently 2m
+    return m < 3.5 # chosen manually. Tips are 10m. This should be greater than dists btwn those pts themselves, which is currently 2m. Also using to keep intersections not too sharp.
 
 
 def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=None):
@@ -322,17 +379,18 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     print("get wp df", time.time() - t0)
 
     # single-rd. Maybe just straight maybe turns ok.
-    JUST_GO_STRAIGHT_PROB = 1 # .3
+    JUST_GO_STRAIGHT_PROB = .5
     just_go_straight = random.random()<JUST_GO_STRAIGHT_PROB
     episode_info.just_go_straight = just_go_straight
     if episode_info.is_single_rd:
-        s = wp_df[(wp_df.ix_in_curve==0) & (wp_df.wp_curve_id==2)] # start wps, first lane (not turning)
+        s = wp_df[(wp_df.ix_in_curve==0)] # start wps
         if just_go_straight:
+            s = s[(s.wp_curve_id==2)] # only straights
             s = s[((s.intersection_id==4) & (s.section_id.isin([1]))) | ((s.intersection_id==6) & (s.section_id.isin([7])))]
-            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=True, is_ego=True)
         else:
-            s = s[((s.intersection_id==4) & (s.section_id.isin([1, 10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([7, 4, 10])))]
-            route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=False, is_ego=True)
+            # s = s[((s.intersection_id==4) & (s.section_id.isin([1, 10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([7, 4, 10])))] 
+            s = s[((s.intersection_id==4) & (s.section_id.isin([10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([4, 10])))] 
+        route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=just_go_straight, is_ego=True)
     else: # start anywhere, turning allowed
         route = get_route(wp_df, route_len=ROUTE_LEN_M, is_ego=True)
 
@@ -347,8 +405,6 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     update_ap_object(make_vehicle_nodes, ap)
 
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info)
-    if tm.wtf: return False
-
     tm.add_npcs(random.randint(0, MAX_N_NPCS) if episode_info.has_npcs else 0)
 
     print("total setup time", time.time() - t0)

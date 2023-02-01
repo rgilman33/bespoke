@@ -59,7 +59,7 @@ rd_surfaces += snow_surfaces # These generally look good, no need to deal w sepa
 
 print(f"{len(all_albedos)} total surfaces. {len(rd_surfaces)} appropriate for rd surface. {len(snow_surfaces)} snow surfaces.")
 
-slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr", "houseplant_flowering_vgztealha"]
+slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr", "houseplant_flowering_vgztealha", "plant_shrub_wdvhberja"]
 # /home/beans/static/Megascans Library/Downloaded/3dplant/plants_3d_slfpffjr/Var4/Var4_LOD3.fbx
 
 plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
@@ -79,11 +79,6 @@ def make_episode():
     wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0
 
     is_just_straight = random.random()<.01
-
-    RD_IS_BANKED_PROB = 0 if (not rd_is_lined or is_just_straight) else .7 if is_highway else .4
-    rd_is_banked = random.random()<RD_IS_BANKED_PROB
-    get_node("max_roll_at_this_curvature", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.08, .14)
-    get_node("rd_is_banked", z_adjustment_nodes).outputs["Value"].default_value = 1 if rd_is_banked else 0
 
     left_shift = 0
     if rd_is_lined:
@@ -107,6 +102,13 @@ def make_episode():
     # dist from back wheel to cam loc is 1.78m
     # i believe cam was ~1.45m from the ground, should measure again. These values are hardcoded in the blendfile. Cam is also hardcoded to
     # the cube in a janky way, but i believe is fine.
+
+    # Rd roll / supereleveation
+    RD_IS_BANKED_PROB = 0 if (not rd_is_lined or is_just_straight) else .7 if is_highway else .4
+    rd_is_banked = random.random()<RD_IS_BANKED_PROB
+    get_node("max_rd_roll", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.06, .1) if is_country_mtn else random.uniform(.1, .14) # max roll is 8 deg (.14 rad) on rural rds in WY
+    get_node("max_roll_at_this_curvature", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.08, .16)
+    get_node("rd_is_banked", z_adjustment_nodes).outputs["Value"].default_value = 1 if rd_is_banked else 0
 
     is_wide_laned = lane_width>3.4 or wide_shoulder_add>0
 

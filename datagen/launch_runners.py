@@ -3,7 +3,6 @@ sys.path.append("/home/beans/bespoke")
 from constants import *
 import subprocess
 
-#TODO save the run number that was on so don't have to overwrite from beginning each time
 clear_obs_per_sec()
 set_should_stop(False)
 for i in range(N_RUNNERS):
@@ -29,9 +28,15 @@ time.sleep(10)
 import re
 while True:
     r = subprocess.check_output("ps aux | grep -i blenders_for_dataloader", shell=True)
-    num_processes_running = len([m.start() for m in re.finditer('/home/beans/blenders_for_dataloader/tmp/fustbol3', str(r))]) # manual, hacky
+    # ps = [m.start() for m in re.finditer('/home/beans/blenders_for_dataloader/tmp/fustbol3_\d\d', str(r))]
+    ps = [int(p[-2:]) for p in re.findall(r"/home/beans/blenders_for_dataloader/tmp/fustbol3_\d\d", str(r))]
+    num_processes_running = len(ps) # manual, hacky
     print(f"There are {num_processes_running} bpy runners still running.")
     if num_processes_running==0: break
+    if num_processes_running < N_RUNNERS:
+        missing_runners = [i for i in range(N_RUNNERS) if i not in ps]
+        print(f"Missing runners: {missing_runners}")
     time.sleep(10)
+    
 print("All processes finished!")
 # # sudo pkill -f blenders_for_dataloader
