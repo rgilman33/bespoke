@@ -158,7 +158,7 @@ import multiprocessing
 class RwEvaluator():
     def __init__(self, m, wandb=None, save_rollouts=False):
         run_ids = ["run_555a", "run_556a", "run_556b", "run_556c", "run_555b", "run_556d"]
-        self.run_paths = [f"{BESPOKE_ROOT}/tmp/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
+        self.run_paths = [f"{SSD_ROOT}/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
         self.wandb = wandb
         self.m = m
         self.save_rollouts = save_rollouts

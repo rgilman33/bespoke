@@ -85,7 +85,8 @@ CRV_WIDTH = 1.85
 
 GPS_HZ = 5
 
-ROUTES_DIR = "/media/beans/ssd/routes"
+SSD_ROOT = "/media/beans/ssd"
+ROUTES_DIR = f"{SSD_ROOT}/routes"
 
 
 ###########################
