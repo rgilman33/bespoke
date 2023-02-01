@@ -6,13 +6,14 @@ from models import *
 
 
 class Rollout():
-    def __init__(self, run, model_stem=None, m=None, store_imgs=False):
+    def __init__(self, run, model_stem=None, m=None, store_imgs=False, trt=False):
 
         self.model_stem = model_stem
         self.run_id = run.run_id
         self.is_rw = run.is_rw
         self.m = m
         self.store_imgs = store_imgs
+        self.trt = trt
         self._get_rollout(run)
 
     def _get_rollout(self, run):
@@ -38,7 +39,10 @@ class Rollout():
                 if not batch: break
                 _img, _aux, _wps, extras = batch
                 m.zero_grad()
-                with torch.cuda.amp.autocast(): _wps_p, _aux_targets_p, _obsnet_out = m(_img, _aux)
+                if self.trt: 
+                    _wps_p, _aux_targets_p, _obsnet_out = m(_img.float(), _aux.float())
+                else:
+                    with torch.cuda.amp.autocast(): _wps_p, _aux_targets_p, _obsnet_out = m(_img, _aux)
                 if self.store_imgs: img.append(unprep_img(_img))
                 aux.append(unprep_aux(_aux))
                 wps.append(unprep_wps(_wps))
@@ -146,22 +150,25 @@ def get_te(tire_angle):
 
 
 import threading
-def evaluate_run(run_path, m, save_rollouts, a):
+def evaluate_run(run_path, m, save_rollouts,trt,bptt, a):
     # run is a Run object, m is a model
     run = load_object(run_path)
-    rollout = Rollout(run, model_stem=m.model_stem, m=m, store_imgs=save_rollouts)
+    if bptt is not None: run.bptt = bptt
+    rollout = Rollout(run, model_stem=m.model_stem, m=m, store_imgs=save_rollouts, trt=trt)
     if save_rollouts:
         save_object(rollout, f"{BESPOKE_ROOT}/tmp/{rollout.run_id}_{m.model_stem}_rollout.pkl")
     a.append(rollout)
 
 import multiprocessing
 class RwEvaluator():
-    def __init__(self, m, wandb=None, save_rollouts=False):
-        run_ids = ["run_555a", "run_556a", "run_556b", "run_556c", "run_555b", "run_556d"]
+    def __init__(self, m, wandb=None, save_rollouts=False, trt=False, run_ids=None, bptt=None):
+        run_ids = run_ids if run_ids is not None else ["run_555a", "run_556a", "run_556b", "run_556c", "run_555b", "run_556d"]
         self.run_paths = [f"{SSD_ROOT}/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
         self.wandb = wandb
         self.m = m
         self.save_rollouts = save_rollouts
+        self.trt = trt
+        self.bptt = bptt
 
     def evaluate(self):
         threads = [] # not using multiprocessing Process bc of complications with gpu
@@ -170,7 +177,7 @@ class RwEvaluator():
             # t = threading.Thread(target=evaluate_run, args=(self.run_paths[i], self.m, self.save_rollouts, a)) # this takes 3.5 minutes for four runs, opposed to 6.5 w no threads
             # t.start()
             # threads.append(t)
-            evaluate_run(self.run_paths[i], self.m, self.save_rollouts, a)
+            evaluate_run(self.run_paths[i], self.m, self.save_rollouts, self.trt, self.bptt, a)
         for t in threads:t.join()
         self.m.save_backbone_out = False # return model to trn state
         self.m.train()
