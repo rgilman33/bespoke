@@ -101,7 +101,7 @@ class EffNet(nn.Module):
 
         aux = aux[:,:,self.AUX_MODEL_IXS]
         x = torch.cat([x, aux], dim=-1) # cat in aux
-        
+        #if self.backbone_is_trt: x = x.half()
         wps_preds = self.wps_head(x)
         aux_preds = self.aux_targets_head(x)
         obsnet_out = self.obsnet(x if self.is_for_viz else x.detach())
