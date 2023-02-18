@@ -26,19 +26,20 @@ class Rollout():
         else:
             m = self.m
 
+        backbone_was_train_mode = m.backbone.training
+        m_was_train_mode = m.training
         m.eval()
-        m.save_backbone_out = True
 
         img, aux, wps = [], [], [] 
-        final_acts, wps_p, obsnet_outs, aux_targets_p = [], [], [], []
+        wps_p, obsnet_outs, aux_targets_p = [], [], []
 
         with torch.no_grad():
             while True:
                 # get and unpack batch
                 batch = run.get_batch()
                 if not batch: break
-                _img, _aux, _wps, extras = batch
-                m.zero_grad()
+                _img, _aux, _wps, (to_pred_mask, is_first_in_seq) = batch
+                if is_first_in_seq: m.reset_hidden(run.bs)
                 if self.trt: 
                     _wps_p, _aux_targets_p, _obsnet_out = m(_img.float(), _aux.float())
                 else:
@@ -49,7 +50,6 @@ class Rollout():
                 wps_p.append(unprep_wps(_wps_p))
                 obsnet_outs.append(unprep_obsnet(_obsnet_out))
                 aux_targets_p.append(unprep_aux_targets(_aux_targets_p))
-                final_acts.append(m.backbone_out_acts.detach().cpu().numpy())
 
         # Aux, inputs, targets
         if self.store_imgs: self.img = np.concatenate(img, axis=1) #NOTE can't use the imgs from the run bc sometimes use TrnLoader, which will have updated chunks
@@ -58,7 +58,6 @@ class Rollout():
 
         # Model out
         self.wps_p = np.concatenate(wps_p, axis=1)
-        self.final_acts = np.concatenate(final_acts, axis=1) # NOTE these will be a problem bc of threading
         self.obsnet_outs = na(np.concatenate(obsnet_outs, axis=1), OBSNET_PROPS)
         self.aux_targets_p = na(np.concatenate(aux_targets_p, axis=1), AUX_TARGET_PROPS)
 
@@ -67,10 +66,13 @@ class Rollout():
         calc_rollout_results(self)
         flatten_rollout(self)
 
+        m.train(m_was_train_mode)
+        m.backbone.train(backbone_was_train_mode)
+
         print("Rollout complete!")
 
 def skipify(rollout, skip=20):
-    for a in ["img", "aux", "wps", "wps_p", "final_acts", "obsnet_outs", "aux_targets_p", "additional_results"]:
+    for a in ["img", "aux", "wps", "wps_p", "obsnet_outs", "aux_targets_p", "additional_results"]:
         setattr(rollout, a, getattr(rollout, a)[::skip])
 
 def calc_rollout_results(rollout):
@@ -119,7 +121,7 @@ def flatten_rollout(rollout):
     rollout.wps = flatten_batch_seq(rollout.wps)
 
     # Model out
-    rollout.wps_p = flatten_batch_seq(rollout.wps_p); rollout.final_acts = flatten_batch_seq(rollout.final_acts)
+    rollout.wps_p = flatten_batch_seq(rollout.wps_p); 
     rollout.obsnet_outs = flatten_batch_seq(rollout.obsnet_outs); rollout.aux_targets_p = flatten_batch_seq(rollout.aux_targets_p)
 
     # Additional props
@@ -150,9 +152,9 @@ def get_te(tire_angle):
 
 
 import threading
-def evaluate_run(run_path, m, save_rollouts,trt,bptt, a):
+def evaluate_run(run, m, save_rollouts,trt,bptt, a):
     # run is a Run object, m is a model
-    run = load_object(run_path)
+    run.bs = 1 #TODO get rid of this
     if bptt is not None: run.bptt = bptt
     rollout = Rollout(run, model_stem=m.model_stem, m=m, store_imgs=save_rollouts, trt=trt)
     if save_rollouts:
@@ -160,6 +162,7 @@ def evaluate_run(run_path, m, save_rollouts,trt,bptt, a):
     a.append(rollout)
 
 import multiprocessing
+from loaders import *
 class RwEvaluator():
     def __init__(self, m, wandb=None, save_rollouts=False, trt=False, run_ids=None, bptt=None):
         run_ids = run_ids if run_ids is not None else ["run_555a", "run_556a", "run_556b", "run_556c", "run_555b", "run_556d"]
@@ -171,16 +174,21 @@ class RwEvaluator():
         self.bptt = bptt
 
     def evaluate(self):
-        threads = [] # not using multiprocessing Process bc of complications with gpu
+        # threads = [] # not using multiprocessing Process bc of complications with gpu
         a = []
         for i in range(len(self.run_paths)):
             # t = threading.Thread(target=evaluate_run, args=(self.run_paths[i], self.m, self.save_rollouts, a)) # this takes 3.5 minutes for four runs, opposed to 6.5 w no threads
             # t.start()
             # threads.append(t)
-            evaluate_run(self.run_paths[i], self.m, self.save_rollouts, self.trt, self.bptt, a)
-        for t in threads:t.join()
-        self.m.save_backbone_out = False # return model to trn state
-        self.m.train()
+            run = load_object(self.run_paths[i])
+            evaluate_run(run, self.m, self.save_rollouts, self.trt, self.bptt, a)
+        
+        # Do a single sim run each round
+        run_paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/*/run*/", recursive=True)
+        run = RunLoader(random.choice(run_paths), is_rw=False) # this takes awhile itself, ~50s (when other trn is going on though)
+        evaluate_run(run, self.m, self.save_rollouts, self.trt, self.bptt, a)
+
+        # for t in threads:t.join()
         print("down w rollouts, reporting")
         for rollout in a:
             print(rollout.run_id)

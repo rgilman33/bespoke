@@ -15,15 +15,16 @@ import numpy as np
 from PIL import Image
 from dash_utils import *
 
-run_ids = ["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "none"]
-model_stem = "1.29_avg"
+run_ids = ["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
+model_stem = "2.10_e34"
 run_id = run_ids[0]
 run_id_2 = 'none'
 
-rollout = None
+rollout, imgs = None, None
 def update_rollout():
-    global rollout
+    global rollout, imgs
     rollout = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem}_rollout.pkl")
+    imgs = load_object(f"{SSD_ROOT}/runs/{run_id}.pkl").img_chunk[0] #rollout.img
 
 update_rollout()
 
@@ -104,7 +105,7 @@ refresh_charts()
 
 
 # Image
-image = np.zeros_like(rollout.img[0, :,:,:3])
+image = np.zeros_like(imgs[0, :,:,:3])
 image[:,:,:] = 200
 image_display = image.copy()
 fig_img = None
@@ -128,6 +129,7 @@ m = EffNet().to(device)
 m.load_state_dict(torch.load(f"{BESPOKE_ROOT}/models/m{model_stem}.torch"), strict=False)
 m.set_for_viz()
 m.eval()
+m.use_rnn = False # will give us different results on traj compared w rollout versions
 
 actgrad_source_options = list(range(8))
 actgrad_source = 5
@@ -136,7 +138,7 @@ actgrad_target = 'traj'
 
 def get_actgrad_by_ix(ix):
     m.viz_ix = actgrad_source
-    actgrad = get_actgrad(m, rollout.img[ix], rollout.aux[ix], actgrad_target=actgrad_target, viz_loc=actgrad_source)
+    actgrad = get_actgrad(m, imgs[ix], rollout.aux[ix], actgrad_target=actgrad_target, viz_loc=actgrad_source)
     return actgrad
 
 def rerun_m(m, img, aux):
@@ -226,7 +228,7 @@ def display_hover(hover_data, click_data, relayout_data):
     if triggered_id=="graph-image":
         if "shapes" in relayout_data:
             d = relayout_data["shapes"]
-            img_model = rollout.img[num].copy()
+            img_model = imgs[num].copy()
             for rect in d:  
                 x0 = int(rect["x0"])
                 x1 = int(rect["x1"])
@@ -263,7 +265,7 @@ def display_hover(hover_data, click_data, relayout_data):
         bbox = hoverclick_data["bbox"]
         num = hoverclick_data["pointNumber"]
         
-        image = rollout.img[num][:,:,:3]
+        image = imgs[num][:,:,:3]
         # Actgrad
         if actgrad_target=='none':
             image_display = image

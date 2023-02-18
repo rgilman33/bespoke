@@ -66,6 +66,8 @@ def get_text_box(d):
 def enrich_img(img=None, wps=None, wps_p=None, aux=None, aux_targets_p=None, obsnet_out=None):
     # takes in img np (h, w, c), denormed. Adds trajs and info to it.
 
+    img = img.copy() # have to do this bc otherwise was strange error w our new lstm loader. 
+
     # Trajs, targets if have them
     angles_p, curvatures_p, headings_p, rolls_p, zs_p = np.split(wps_p, 5, -1)
     speed = aux["speed"]
@@ -90,11 +92,15 @@ def enrich_img(img=None, wps=None, wps_p=None, aux=None, aux_targets_p=None, obs
     aux["ccs_p"] = get_curve_constrained_speed(curvatures_p, speed)
 
     # text box
-    a = [f"{p}: {round(aux_targets_p[p],2)}, {round(aux[p], 2)}" for p in AUX_TARGET_PROPS]
-    v = [vv for vv in VIEW_INFO_PROPS if vv not in AUX_TARGET_PROPS] # clean up the rest
-    a += [f"{p}: {round(aux[p],2)}" for p in v]
+    if aux_targets_p is not None:
+        a = [f"{p}: {round(aux_targets_p[p],2)}, {round(aux[p], 2)}" for p in AUX_TARGET_PROPS]
+        v = [vv for vv in VIEW_INFO_PROPS if vv not in AUX_TARGET_PROPS] # clean up the rest
+        a += [f"{p}: {round(aux[p],2)}" for p in v]
+    else:
+        a = []
 
-    a.append(f"unc_p: {round(obsnet_out['unc_p'], 2)}")
+    if obsnet_out is not None:
+        a.append(f"unc_p: {round(obsnet_out['unc_p'], 2)}")
 
     # a.append(f"maps, route: {aux['has_map']}, {aux['has_route']}")
 
@@ -187,7 +193,28 @@ def combine_img_actgrad(img, actgrad, color=(8,255,8)):
     return img_actgrad
 
 
+def make_enriched_vid(model_stem, run_id):
+    rollout = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem}_rollout.pkl")
+    run = load_object(f"{SSD_ROOT}/runs/{run_id}.pkl")
 
+    height, width, channels = IMG_HEIGHT, IMG_WIDTH, 3
+    fps = 20
+    filename = f"{rollout.run_id}_{rollout.model_stem}"
+    video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
+
+    for i in range(len(run.img_chunk[0])):
+        if i%1000==0: print(i)
+        img = run.img_chunk[0][i]
+        aux = rollout.aux[i]
+        wps_p = rollout.wps_p[i]
+        aux_targets_p = rollout.aux_targets_p[i]
+        obsnet_outs = rollout.obsnet_outs[i]
+        img = enrich_img(img=img[:,:,:3], wps_p=wps_p, aux_targets_p=aux_targets_p, 
+                                aux=aux, obsnet_out=obsnet_outs)
+        video.write(img[:,:,::-1])
+
+    video.release()
+    print(f"{filename} done!")
 
 def write_vid(img, filename):
     # just write the frames to a vid, no actgrad or anything

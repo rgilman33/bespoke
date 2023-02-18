@@ -41,6 +41,7 @@ class LossManager():
             "pitch":.1,
             "yaw":.1,
             "unc":.1,
+            "te":.05,
         }
         wps_losses = {   
                     "wp_angles": 1,
@@ -51,16 +52,19 @@ class LossManager():
                     }
         for k,v in wps_losses.items():
             self.loss_weights[k] = v
-            self.loss_weights[f"{k}_i"] = v *.1 # manual downweighting. Remember this is the proportion w respect to normal control loss, not the weight itself
+            self.loss_weights[f"{k}_i"] = v * .5 #.1 # manual downweighting. Remember this is the proportion w respect to normal control loss, not the weight itself
 
-        self.loss_emas = {k:1000. for k in self.loss_weights.keys()} # init to be large so baseline loss will dominate
-        self.loss_emas[self.baseline_loss_name] = .1 # init to be small to dominate first updates until ema stabilizes
-        self.LOSS_EPS = 1. - 1./200.
+        self.loss_emas = {k:10. for k in self.loss_weights.keys()} # init to be large so baseline loss will dominate
+        self.loss_emas[self.baseline_loss_name] = 1. # init to be small to dominate first updates until ema stabilizes
+        self.LOSS_EPS = 1. - 1./80.
+        self.counter = 0
+        self.update_emas = True
 
     def _step_loss(self, loss_name, loss):
         # update avg
-        self.loss_emas[loss_name] = self.loss_emas[loss_name]*self.LOSS_EPS + float(loss.item())*(1-self.LOSS_EPS) # full prec
-        weight = self.loss_weights[loss_name] * (self.loss_emas[self.baseline_loss_name] / (self.loss_emas[loss_name]+1e-6))
+        if self.update_emas:
+            self.loss_emas[loss_name] = self.loss_emas[loss_name]*self.LOSS_EPS + float(loss.item())*(1-self.LOSS_EPS) # full prec
+        weight = self.loss_weights[loss_name] * (self.loss_emas[self.baseline_loss_name] / (self.loss_emas[loss_name]+1e-8))
         weighted_loss = weight*loss
         assert not np.isnan(loss.item()), f"loss is nan for {loss_name}"
         assert not np.isnan(weight), f"weight is nan for {loss_name}"
@@ -70,9 +74,12 @@ class LossManager():
     def step(self, losses_dict, logger=None):
         total_loss = torch.HalfTensor([0]).to(device)
         for loss_name, loss_value in losses_dict.items():
+            if self.counter%100==0: print(loss_name, loss_value)
+            # weighted_loss = self._step_loss(loss_name, (loss_value*LOSS_SCALER if loss_name==self.baseline_loss_name else loss_value)) #NOTE this is strange and sensitive. Pay attn. 
             weighted_loss = self._step_loss(loss_name, loss_value)
             total_loss += weighted_loss
-            if logger: logger.log({loss_name:loss_value.item()})
+            if logger: logger.log({loss_name:loss_value.item()/(LOSS_SCALER if "wp_" in loss_name else 1)})
+        self.counter+=1
         return total_loss
 
 
@@ -89,12 +96,14 @@ def get_and_enrich_img(b, b_ix, seq_ix):
     """ 
     img, wps, wps_p, aux, aux_targets_p, obsnet_out = b
     
-    return enrich_img(img=unprep_img(img[b_ix, seq_ix, :,:,:]), 
+    return enrich_img(img=unprep_img(img[b_ix, seq_ix, :3,:,:]), 
                         wps=unprep_wps(wps[b_ix, seq_ix,:]), 
                         wps_p=unprep_wps(wps_p[b_ix, seq_ix,:]), 
                         aux=unprep_aux(aux[b_ix, seq_ix,:]),
                         aux_targets_p=unprep_aux_targets(aux_targets_p[b_ix, seq_ix,:]),
-                        obsnet_out=unprep_obsnet(obsnet_out[b_ix, seq_ix,:]))[:,:,:3]
+                        obsnet_out=unprep_obsnet(obsnet_out[b_ix, seq_ix,:]))
+
+LOSS_SCALER = 100
 
 class Trainer():
     def __init__(self,
@@ -107,9 +116,10 @@ class Trainer():
                 log_cadence=128, updates_per_epoch=2560, total_epochs=300,
                 wandb=None,
                 rw_evaluator=None,
+                rnn_only=False,
                 ):
 
-        self.dataloader = dataloader; self.model = model; self.opt = opt; self.model_stem = model_stem
+        self.dataloader = dataloader; self.model = model; self.opt = opt; self.model_stem = model_stem; self.rnn_only = rnn_only
         self.backwards, self.log_wandb = backwards, log_wandb
         self.log_cadence, self.updates_per_epoch, self.wandb = log_cadence, updates_per_epoch, wandb
         self.wandb = wandb
@@ -160,15 +170,25 @@ class Trainer():
             # get and unpack batch
             batch = dataloader.get_batch()
             if not batch: break
-            img, aux, wps, (to_pred_mask, is_first_in_seq) = batch
-            if is_first_in_seq: model.reset_hidden(dataloader.bs)
             timer.log("get batch from dataloader")
 
-            assert torch.isnan(img).sum() == 0, f"img has nans: {img}"
-            #assert torch.isnan(aux).sum() == 0, f"aux has nans: {aux}"
+            if self.rnn_only: #TODO clean this up a bit once we decide don't want the ZLoader anymore, of if we do.
+                zs, img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
+                #img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
+                if is_first_in_seq: model.reset_hidden(dataloader.bs)
+                with torch.cuda.amp.autocast(): model_out = model.rnn_head(zs)
+                #with torch.cuda.amp.autocast(): model_out = model.forward_rnn(img, aux)
+            else:
+                img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
+                assert torch.isnan(img).sum() == 0, f"img has nans: {img}"
 
-            with torch.cuda.amp.autocast(): wps_p, aux_targets_p, obsnet_out = model(img, aux)
+                with torch.cuda.amp.autocast(): model_out= model.forward_cnn(img, aux)
+
+            wps_p, aux_targets_p, obsnet_out = model_out
+            #assert torch.isnan(aux).sum() == 0, f"aux has nans: {aux}"
             timer.log("model forward")
+
+            aux_targets = aux[:,:,AUX_TARGET_IXS] 
 
             #############
             # wp losses
@@ -178,7 +198,9 @@ class Trainer():
             assert torch.isnan(wps_p).sum() == 0, f"wps_p has nans: {wps_p}"
             assert torch.isnan(aux_targets_p).sum() == 0, f"aux_targets_p has nans: {wps_p}"
             assert torch.isnan(obsnet_out).sum() == 0, f"obsnet_out has nans: {obsnet_out}"
+        
             _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights)
+            _wps_loss *= LOSS_SCALER
 
             is_intersection_turn = aux[:,:,AUX_PROPS.index("left_turn")] + aux[:,:,AUX_PROPS.index("right_turn")]
 
@@ -200,14 +222,21 @@ class Trainer():
                 "wp_headings": headings_loss.mean(),
                 "wp_curvatures": curvatures_loss.mean(),
                 "wp_rolls":rolls_loss.mean(),
-                "wp_zs":zs_loss.mean(),
+                "wp_zs":zs_loss.mean(), 
             })
+
+            # te. When in doubt, stay close to prev preds
+            _, bptt, _ = wps_p.shape
+            if bptt > 1:
+                te_loss = mse_loss_no_reduce(wps_p[:, :-1, :].detach(), wps_p[:, 1:, :], weights=weights[:, 1:, :])
+                losses.update({"te": te_loss.mean()})
+
             #############
             # aux losses
             #############
-            aux_targets = aux[:,:,AUX_TARGET_IXS] 
             aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
-            aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p)
+            aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
+
             # Only enforce stops and lead metrics when we have stops and leads
             has_stop, has_lead = aux_targets[:,:,AUX_TARGET_PROPS.index("has_stop")], aux_targets[:,:,AUX_TARGET_PROPS.index("has_lead")]
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= has_stop
@@ -237,17 +266,28 @@ class Trainer():
                 scaler = self.scaler
                 scaler.scale(loss).backward() 
                 scaler.unscale_(opt)
+
+                mins, maxs, means = [], [], []
+                for n, param in model.named_parameters():
+                    if param.grad is not None:
+                        #if update_counter%20==0: print("grads", param.grad.shape, param.grad.dtype)
+                        mins.append(torch.min(param.grad))
+                        maxs.append(torch.max(param.grad))
+                        means.append(torch.mean(param.grad))
+                grad_min = min(mins); grad_max = max(maxs)
+                logger.log({"grad_max": max(grad_max.item(), abs(grad_min.item()))})
                 total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 2.0)
                 logger.log({"grad_norm": total_norm.item()})
+
                 scaler.step(opt)
                 scaler.update() 
                 opt.zero_grad()
                 time.sleep(train_pause)
             timer.log("backwards")
-
+        
             # Obs w worst loss
             CHECK_FOR_WORST_FREQ = 10 # takes a long time, so not each update
-            if update_counter%CHECK_FOR_WORST_FREQ==0 and self.log_wandb:
+            if update_counter%CHECK_FOR_WORST_FREQ==0 and self.log_wandb and img is not None:
                 with torch.no_grad():
                     # collapse the wp traj for any traj related losses
                     b = (img, wps, wps_p, aux, aux_targets_p, obsnet_out)
@@ -280,8 +320,9 @@ class Trainer():
                 if self.log_wandb: 
                     # random imgs to log
                     batch = (img, wps, wps_p, aux, aux_targets_p, obsnet_out)
-                    for k,v in self.worsts.items(): self.wandb.log({f"imgs/worst_{k}": wandb.Image(v[1])})
-                    self.wandb.log({"imgs/random":wandb.Image(get_and_enrich_img(batch, b_ix=0, seq_ix=0))})
+                    if img is not None: 
+                        for k,v in self.worsts.items(): self.wandb.log({f"imgs/worst_{k}": wandb.Image(v[1])})
+                    if img is not None: self.wandb.log({"imgs/random":wandb.Image(get_and_enrich_img(batch, b_ix=0, seq_ix=0))})
                     self.wandb.log(stats)
                     self.wandb.log(dataloader_stats)
 
@@ -335,7 +376,7 @@ class Trainer():
         if self.opt is not None: torch.save(self.opt.state_dict(), f"{BESPOKE_ROOT}/models/opt.torch")
         trainer_state = {
             "current_epoch":self.current_epoch,
-            "loss_manager":self.loss_manager,
+            "loss_manager_emas":self.loss_manager.loss_emas,
         }
         save_object(trainer_state, f"{BESPOKE_ROOT}/tmp/trainer_state.pkl")
     
@@ -349,8 +390,13 @@ class Trainer():
             opt_path = f"{BESPOKE_ROOT}/models/opt.torch"
             print(f"Loading opt from {opt_path}. \nLast modified {round((time.time() - os.path.getmtime(opt_path)) / 60)} min ago.")
             self.opt.load_state_dict(torch.load(opt_path))
+        
+        # reload trainer state. Manually keep these updated.
         trainer_state = load_object(f"{BESPOKE_ROOT}/tmp/trainer_state.pkl")
-        for k,v in trainer_state.items():setattr(self, k, v)
+        # for k,v in trainer_state.items():setattr(self, k, v)
+        self.current_epoch = trainer_state["current_epoch"]
+        self.loss_manager.loss_emas = trainer_state["loss_manager_emas"]
+
         print(f"Currently at epoch {self.current_epoch}.")
 
 
@@ -415,23 +461,23 @@ def get_transform(seqlen):
     transform = A.Compose(transforms, additional_targets={f"image{i}":"image" for i in range(seqlen)})
     return transform
 
-def aug_imgs(img):
+def aug_imgs(img, constant_seq_aug):
     seqlen, _,_,_= img.shape # seqlen may be shorter than BPTT at the end of each seq
     transform = get_transform(seqlen)
-    CONSTANT_AUG_PROB = 1.0
 
-    if random.random() < CONSTANT_AUG_PROB:
+    if random.random() < constant_seq_aug: #TODO only works w len 2, fix it. How to pass in param names programatically? wtf shitty api
         transformed = transform(image=img[1], image0=img[0])
         img[1, :,:,:] = transformed['image']
         img[0, :,:,:] = transformed['image0']
     else:
         # different aug for each img in seq
         for s in range(seqlen):
-            img[s] = transform(image=img[s])['image']
+            AUG_PROB = .8 # to speed up a bit.
+            if random.random() < AUG_PROB:
+                img[s] = transform(image=img[s])['image']
 
     return img
 #################################################### 
-
 
 def unfreeze_part_of_model(m, part_to_unfreeze):
     for n, p in m.named_parameters():

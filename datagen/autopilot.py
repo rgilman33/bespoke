@@ -20,9 +20,9 @@ class Autopilot():
         self.DAGGER_FREQ = random.randint(400, 1000)
         self.reset_dagger()
 
-        self.targets_container = get_targets_container(1,SEQ_LEN)[0] # angles, dists, rolls, z deltas
-        self.aux = get_aux_container(1,SEQ_LEN)[0] # returns w batch, but just seq here
-        self.maps_container = get_maps_container(1, SEQ_LEN)[0]
+        self.targets_container = get_targets_container(1,1)[0] # angles, dists, rolls, z deltas
+        self.aux = get_aux_container(1,1)[0] # returns w batch, but just seq here
+        self.maps_container = get_maps_container(1, 1)[0]
 
         self.small_map = None
         self.should_yield = False
@@ -85,9 +85,9 @@ class Autopilot():
         
 
     def set_route(self, route):
-                                        
+
         self.waypoints = np.empty((len(route), 3), dtype="float64")
-        XY_SMOOTH = 60 # xy smoothing of pos of window 30, still getting too much noise in targets
+        XY_SMOOTH = 160 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
         # NOTE will have to be wary of this smoothing when we're doing intersections, as this may be too much. Also our close wp dist.
         self.waypoints[:,0] = moving_average(route.pos_x.to_numpy(), XY_SMOOTH)
         self.waypoints[:,1] = moving_average(route.pos_y.to_numpy(), XY_SMOOTH)
@@ -309,7 +309,7 @@ class Autopilot():
         ############
         # target wp close to vehicle, used for steering AP to keep it tight on traj
         # This just follows the cos dagger traj directly. This is the wp we aim towards, not the wp we use for targets
-        CLOSE_WP_DIST = np.interp(self.current_speed_mps, [9, 30], [5., 11.]) #NOTE keep an eye here, once doing turns may not be right
+        CLOSE_WP_DIST = np.interp(self.current_speed_mps, [9, 30], [5., 11.]) #
         # The above is an important number. If cutting turns too close in AP w traj still in middle, model thinks traj is usually on the right
         # during turns, ie it only sees turns from that perspective. Want to keep agent on traj as much as possible, while also balancing smoothness,
         # bc if too on top of target wp, jittery
@@ -335,7 +335,7 @@ class Autopilot():
         dist_car_travelled = self.current_speed_mps * (1 / fps) if self.current_speed_mps>0 else 0
 
         # always using close wp for ap, to keep right on traj
-        _wheelbase = 1.7 #CRV_WHEELBASE # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
+        _wheelbase = 1.6 #CRV_WHEELBASE # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
         _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/_wheelbase) # rad/sec # Tire angle from prev step
         vehicle_heading_delta = _vehicle_turn_rate * (1/fps) # radians
         
@@ -459,7 +459,7 @@ class Autopilot():
         if not self.is_ego:
             self.speed_limit *= .8 # hack to make npcs go a bit slower than ego, to get more time w npcs as lead car
 
-        self.lateral_kP = .9 #.85 #random.uniform(.75, .95)
+        self.lateral_kP = .95 #.85 #random.uniform(.75, .95)
         # self.long_kP = .5 #random.uniform(.02, .05)
         self.curve_speed_mult = random.uniform(.7, 1.25)
         self.turn_slowdown_sec_before = random.uniform(.25, .75)

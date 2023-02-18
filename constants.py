@@ -103,13 +103,10 @@ FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TO
 BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
 #BLENDER_MEMBANK_ROOT = "/dev/shm/blender_membank"
 
-
-SEQ_LEN = 1 #16 #64 #116 
-EPISODE_LEN = SEQ_LEN * (1280//SEQ_LEN)
-RUNS_TO_STORE_PER_PROCESS = 96 #30
-N_RUNNERS = 12
-
 BPTT = 1 #4 #8 #9
+EPISODE_LEN = 1280
+RUNS_TO_STORE_PER_PROCESS = 128 #30
+N_RUNNERS = 8 #12
 
 DATA_CONSUMPTION_RATIO_LIMIT = 3 #1.
 
@@ -163,23 +160,35 @@ def set_lr(lr):
 def get_lr():
     return np.load(f"{BLENDER_MEMBANK_ROOT}/lr.npy")[0]
 
-import time
+import time, threading
 class Logger():
     def __init__(self):
         self.tracker = {}
-        
+        self.lock = threading.Lock()
+
     def log(self, to_log):
-        for k,v in to_log.items():
-            if k in self.tracker:
-                self.tracker[k].append(v)
-            else:
-                self.tracker[k] = [v]
-    
+        with self.lock:
+            for k,v in to_log.items():
+                if k in self.tracker:
+                    self.tracker[k].append(v)
+                else:
+                    self.tracker[k] = [v]
+        
     def finish(self):
-        r = self.tracker
-        for k in r: r[k] = np.round(np.nanmean(np.array(r[k])), 8)
-        self.tracker = {}
-        return r
+        with self.lock:
+            r = self.tracker
+            for k in r: r[k] = np.round(np.nanmean(np.array(r[k])), 8)
+            self.tracker = {}
+            return r
+
+    def __getstate__(self): # can't pickle threading.Lock
+        state = self.__dict__.copy()
+        del state['lock']
+        return state
+        
+    def __setstate__(self, state):
+        self.__dict__ = state
+        self.lock = threading.Lock()
 
 class Timer():
     def __init__(self, timer_name):
@@ -196,6 +205,7 @@ class Timer():
     def finish(self):
         self.results[f"timing/{self.timer_name}"] = time.time() - self.init_time
         return self.results
+
 
 OBS_PER_SEC_F = "obs_per_sec.npy"
 
@@ -271,6 +281,15 @@ def load_object(filename):
 
 def moving_average(arr, w):
     return np.convolve(arr, np.ones(w), 'same') / w
+
+def moving_average_n(arr, w):
+    # moving average over seq of n dims, rather than single
+    s, n = arr.shape
+    r = arr.copy() # otherwise doesn't alter arr, why?
+    for i in range(n):
+        a = moving_average(r[:,i], w)
+        r[:,i] = a
+    return r
 
 def dist(a, b):
     x = float(a[0]) - float(b[0])
@@ -376,7 +395,8 @@ assert IMG_WIDTH%2==0 and IMG_HEIGHT%2==0
 # SMALL_IMG_WIDTH = IMG_WIDTH//2
 IMG_HEIGHT_MODEL = IMG_HEIGHT #+SMALL_IMG_HEIGHT
 IMG_WIDTH_MODEL = IMG_WIDTH
-N_CHANNELS_MODEL = 4
+FS_LOOKBACK = 0 #1
+N_CHANNELS_MODEL = 3 + FS_LOOKBACK
 
 def bwify_seq(_img):
     #return _img[:, :,:,:1]//3 + _img[:, :,:,1:2]//3 + _img[:, :,:,2:3]//3
@@ -384,6 +404,30 @@ def bwify_seq(_img):
 
 def bwify_img(_img):
     return bwify_seq(_img[None, ...])[0]
+
+# def cat_imgs(imgs, maps, aux):
+#     # expects seq. Imgs are longer than maps and aux by amount FS_LOOKBACK, which are the len of the actual observations
+#     seqlen = len(aux)
+#     assert len(imgs) - seqlen == FS_LOOKBACK
+    
+#     final_imgs = np.zeros((seqlen, IMG_HEIGHT, IMG_WIDTH, N_CHANNELS_MODEL))
+
+#     # the current imgs
+#     final_imgs[:, :,:,:3] = imgs[-seqlen:, :,:,:]
+
+#     final_imgs[:, -MAP_HEIGHT:,-MAP_WIDTH:,:3] = maps
+
+#     # HUD
+#     hud = get_hud(aux)
+#     _, h,w,c = hud.shape
+#     final_imgs[:, -h:,-w:,:3] = hud
+
+#     # cat fast imgs channelwise
+#     imgs_bw = imgs[:, :,:,0]
+#     for i in range(seqlen):
+#         final_imgs[i, :,:,3:] = imgs_bw[i:i+FS_LOOKBACK][::-1].transpose(1,2,0)
+
+#     return final_imgs
 
 def cat_imgs(current_img, imgs_bw, maps, aux):
     # expects seq
@@ -395,7 +439,7 @@ def cat_imgs(current_img, imgs_bw, maps, aux):
     current_img[:, -h:,-w:,:] = hud
 
     # cat fast img channelwise
-    imgs = np.concatenate([current_img, imgs_bw], axis=-1)
+    imgs = current_img #np.concatenate([current_img, imgs_bw], axis=-1)
 
     return imgs
 
@@ -458,15 +502,31 @@ propref_model = propref[propref.model==1]
 AUX_MODEL_PROPS = list(propref_model.prop.values)
 AUX_MODEL_IXS = propref_model.ix.values
 
+propref_calib = propref[propref.calib==1]
+AUX_CALIB_PROPS = list(propref_calib.prop.values)
+AUX_CALIB_IXS = propref_calib.ix.values
+
 propref_episode = propref[propref.episode_info==1]
 EPISODE_PROPS = list(propref_episode.prop.values)
 
 propref_rollout = propref[propref.rollout==1]
 ROLLOUT_PROPS = list(propref_rollout.prop.values)
 
-get_img_container = lambda bs, seqlen : np.zeros((bs, seqlen, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, N_CHANNELS_MODEL), dtype='uint8')
-get_aux_container = lambda bs, seqlen : na(np.zeros((bs, seqlen, len(AUX_PROPS)), dtype=np.float32), AUX_PROPS)
-get_targets_container = lambda bs, seqlen : np.zeros((bs, seqlen, N_WPS*4), dtype=np.float32)
+def get_img_container(bs, seqlen, shm=None):
+    arr = np.ndarray((bs, seqlen, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, N_CHANNELS_MODEL), dtype='uint8', buffer=(shm.buf if shm else None))
+    arr[:,:, :,:,:] = 0
+    return arr
+
+def get_aux_container(bs, seqlen, shm=None):
+    arr = na(np.ndarray((bs, seqlen, len(AUX_PROPS)), dtype=np.float32, buffer=(shm.buf if shm else None)), AUX_PROPS)
+    arr[:,:, :] = 0
+    return arr
+
+def get_targets_container(bs, seqlen, shm=None):
+    arr = np.ndarray((bs, seqlen, N_WPS*4), dtype=np.float32, buffer=(shm.buf if shm else None))
+    arr[:,:, :] = 0
+    return arr
+
 get_maps_container = lambda bs, seqlen : np.zeros((bs, seqlen, MAP_HEIGHT, MAP_WIDTH, 3), dtype='uint8')
 
 

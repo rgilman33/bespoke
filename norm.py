@@ -31,8 +31,7 @@ def prep_img(img, is_for_trt=False):
     img = img.to('cuda') # ~40ms as uint8, more as half #TODO try the pinned memory thing here. Faster?
     img = img / 255. # <1ms # implicitly converts to float
     img = norm_img(img) # <1msnorming should return float32
-    if not is_for_trt:
-        img = img.half() # <1ms
+    if not is_for_trt: img = img.half() # <1ms
     return img
 
 def unprep_img(img):

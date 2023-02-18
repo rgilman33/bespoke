@@ -1,11 +1,23 @@
 from constants import *
 from imports import *
 
-VIZ_IX = 5 # viz_ix from 3 (granular) to at least 5, maybe more?
 
 # b3 is 1536 features, 14M params or so
 # b4 is 1792 features, 21M params
 # b5 is 2048 features, 32M params, don't seem to be any weights for models this size and above, actually there are, under the 'tf' prefix
+
+class Finisher(nn.Module):
+    def __init__(self, n):
+        super(Finisher, self).__init__()
+        self.wps_head = nn.Linear(n, N_WPS_TARGETS)
+        self.aux_targets_head = nn.Linear(n, len(AUX_TARGET_PROPS))
+        self.obsnet = nn.Sequential(nn.Linear(n, 256), nn.ReLU(), nn.Linear(256, len(OBSNET_PROPS)))
+
+    def forward(self, x):
+        obsnet_out = self.obsnet(x.detach())
+        wps_preds = self.wps_head(x)
+        aux_preds = self.aux_targets_head(x)
+        return wps_preds, aux_preds, obsnet_out
 
 class EffNet(nn.Module):
     def __init__(self):
@@ -15,23 +27,45 @@ class EffNet(nn.Module):
         self.backbone.classifier = nn.Identity()
         self.backbone_out = self.backbone.num_features #b3 is 1536
 
+        # common cnn feature extractor
         n = self.backbone_out + len(AUX_MODEL_PROPS)
-        self.wps_head = nn.Linear(n, N_WPS_TARGETS)
-        self.aux_targets_head = nn.Linear(n, len(AUX_TARGET_PROPS))
-        self.obsnet = nn.Sequential(nn.Linear(n, 256), nn.ReLU(), nn.Linear(256, len(OBSNET_PROPS)))
+        self.inner_dim = 1024
 
-        self.activations, self.gradients = None, None 
+        self.fcs1_rnn = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
+        self.fcs1_cnn = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
+        
+        # finishers are same structure
+        self.cnn_finisher = Finisher(self.inner_dim)
+        self.rnn_finisher = Finisher(self.inner_dim)
 
+        # rnn
+        self.rnn = nn.LSTM(self.inner_dim, self.inner_dim, 1, batch_first=True)
+        self.h, self.c = None, None
+
+        # Create parameters for learnable hidden state and cell state
+        self.hidden_init = nn.Parameter(torch.zeros((1,1,self.inner_dim)), requires_grad=True)
+        self.cell_init = nn.Parameter(torch.zeros((1,1,self.inner_dim)), requires_grad=True)
+        # initialize hidden and cell states with xavier uniform
+        nn.init.xavier_uniform_(self.hidden_init)
+        nn.init.xavier_uniform_(self.cell_init)
+
+        self.use_rnn = True
+
+        self.AUX_MODEL_IXS = torch.LongTensor(AUX_MODEL_IXS); self.AUX_CALIB_IXS = torch.LongTensor(AUX_CALIB_IXS)
+    
         self.backbone_is_trt = False
 
         self.is_for_viz = False
-        self.save_backbone_out = False
-        self.backbone_out_acts = None
-        self.AUX_MODEL_IXS = torch.LongTensor(AUX_MODEL_IXS)
-    
+        self.activations, self.gradients = None, None 
         self.grads = {}
         self.acts = {}
         self.viz_ix = 5
+
+    def copy_cnn_params_to_rnn(self):
+        for p1, p2 in zip(self.cnn_finisher.parameters(), self.rnn_finisher.parameters()):
+            p2.data = p1.data.clone()
+        for p1, p2 in zip(self.fcs1_cnn.parameters(), self.fcs1_rnn.parameters()):
+            p2.data = p1.data.clone()
 
     def set_for_viz(self):
         # has to be called AFTER load state dict
@@ -44,7 +78,10 @@ class EffNet(nn.Module):
         self.backbone_is_trt = True
 
     def reset_hidden(self, bs):
-        pass
+        # self.h = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        self.h = self.hidden_init.expand(1, bs, self.inner_dim).contiguous()
+        self.c = self.cell_init.expand(1, bs, self.inner_dim).contiguous()
 
     def get_hook(self, name):
         EPS = .99
@@ -56,11 +93,10 @@ class EffNet(nn.Module):
             self.grads[name] = grad.detach().cpu().numpy()
         return hook
         
-
     def activations_hook(self, grad):
         self.gradients = grad.detach().cpu()
 
-    def forward(self, x, aux):
+    def cnn_features(self, x, aux):
         # flatten batch and seq for CNNs
         bs, bptt, c, h, w = x.shape
         x = x.reshape(bs*bptt,c,h,w).contiguous() 
@@ -72,7 +108,7 @@ class EffNet(nn.Module):
                 # Run through the model
                 x = mm(x)
                 name = i
-                #print(f"{i} isnan:{x.isnan().sum().item()} max:{x.max().item()} min:{x.min().item()} std:{x.std().item()} mean:{x.mean().item()} {x.shape}")
+                print(f"{i} isnan:{x.isnan().sum().item()} max:{x.max().item()} min:{x.min().item()} std:{x.std().item()} mean:{x.mean().item()} {x.shape}")
                 if i==self.viz_ix:
                     # Store the activations
                     self.acts[name] = x.detach().cpu().numpy()
@@ -96,17 +132,38 @@ class EffNet(nn.Module):
         
         # unpack seq and batch
         x = x.reshape(bs, bptt, self.backbone_out)
-        if self.save_backbone_out:
-            self.backbone_out_acts = x
 
-        aux = aux[:,:,self.AUX_MODEL_IXS]
-        x = torch.cat([x, aux], dim=-1) # cat in aux
-        #if self.backbone_is_trt: x = x.half()
-        wps_preds = self.wps_head(x)
-        aux_preds = self.aux_targets_head(x)
-        obsnet_out = self.obsnet(x if self.is_for_viz else x.detach())
+        # cat in aux model (speed, has_maps, has_route), this still has calib params in it
+        x = torch.cat([x, aux[:,:,self.AUX_MODEL_IXS]], dim=-1)
 
+        return x
+
+    def rnn_head(self, z):
+        z = self.fcs1_rnn(z)
+
+        #if self.training and not self.is_for_viz: x = dropout_no_rescale(x, p=.2) 
+        x, h_c = self.rnn(z, (self.h, self.c))
+        self.h, self.c = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
+
+        wps_preds, aux_preds, obsnet_out = self.rnn_finisher(x)
         return wps_preds, aux_preds, obsnet_out
+
+    def cnn_head(self, z):
+        z = self.fcs1_cnn(z)
+
+        wps_preds, aux_preds, obsnet_out = self.cnn_finisher(z)
+        return wps_preds, aux_preds, obsnet_out
+
+    def forward_cnn(self, x, aux):
+        x = self.cnn_features(x, aux)
+        return self.cnn_head(x)
+
+    def forward_rnn(self, x, aux):
+        x = self.cnn_features(x, aux)
+        return self.rnn_head(x)
+
+    def forward(self, x, aux):
+        return self.forward_rnn(x, aux) if self.use_rnn else self.forward_cnn(x, aux)
 
 
 def get_children(model: torch.nn.Module):
@@ -133,11 +190,49 @@ def try_load_state_dict(model, state_dict):
             own_state[name].copy_(param)
             #print(f"loaded {name}")
         except:
-            print(f"could not fully load {name}, patching what we can")
-            own_state_n_out = own_state[name].shape[0]
-            param_n_out = param.shape[0] # assumes loaded weights have fewer than new model, ie we've added something to final layer
-            own_state[name][:param_n_out].copy_(param)
-            print(own_state[name].shape, param.shape)
+            try:
+                print(f"could not fully load {name}, patching what we can")
+                s = own_state[name].shape
+                sp = param.shape
+                print(s, sp)
+
+                if len(s)==4:
+                    # conv layer
+                    m = min(s[1], sp[1])
+                    own_state[name][:,:m, :,:].copy_(param[:,:m, :,:])
+                else:
+                    param_n_out = param.shape[0] # assumes loaded weights have fewer than new model, ie we've added something to final layer
+                    own_state[name][:param_n_out].copy_(param)
+            except:
+                print(f"could not load {name}")
+                continue
     
     model.load_state_dict(own_state, strict=False)
     return model
+
+"""
+# Some bespoke model surgery. Loading our prev wps, aux_targets and obsnet weights into the new ones prefixed w "finisher"
+
+saved_sd = torch.load(f"{BESPOKE_ROOT}/models/m.torch")
+sd = m.state_dict()
+
+for name, param in sd.items():
+    if "finisher" in name:
+        print(name)
+        nn = name[13:]; print(nn)
+        print(sd[name].shape, saved_sd[nn].shape, "\n\n")
+        sd[name].copy_(saved_sd[nn])
+m.load_state_dict(sd)
+
+sd["rnn_finisher.wps_head.weight"]
+saved_sd["wps_head.weight"]
+"""
+
+def add_noise(activations, std=.1):
+    noise = torch.randn(activations.shape, dtype=activations.dtype).to(device) * std
+    noise += 1 # centered at one w std of std
+    return activations * noise
+
+def dropout_no_rescale(activations, p=.2): 
+    mask = (torch.rand_like(activations) > p).half()
+    return activations * mask

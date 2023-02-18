@@ -28,7 +28,9 @@ def update_seq_inplace(*inputs):
         time.sleep(1)
         update_seq_inplace(*inputs)
 
-def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset):
+def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset, constant_seq_aug, timings_container):
+
+    timer = Timer("update_seq_inplace")
 
     datagen_id = ("00"+str((b+offset) % N_RUNNERS))[-2:] 
     dataloader_root = f"{BLENDER_MEMBANK_ROOT}/dataloader_{datagen_id}"
@@ -39,135 +41,158 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset)
     available_runs = [r for r in available_runs if f"run_{current_run}" not in r]
 
     run_path = random.choice(available_runs)
-    ix = random.randint(20, EPISODE_LEN-1) # not taking the first n obs
+
+    timer.log("get run_path")
 
     # Targets and aux start at 0, imgs start at one. This actually lines up correctly if we match ixs. ie we throw away the first 
-    # target and aux. img1 corresponds to targets1, aux1. 
+    # target and aux. img1 corresponds to targets1, aux1. One is our first obs.
 
-    # Load targets
-    targets = np.load(f"{run_path}/targets/{ix}.npy") # rare error here, why? this should always exist
-    targets_chunk[b, :, :] = targets
+    bptt = img_chunk.shape[1] #TODO this should't be called bptt, it's seqlen
+    ix = random.randint(bptt+FS_LOOKBACK, EPISODE_LEN-1) # ix will be the current obs, ie the latest obs
+    
+    # Load targets, aux, maps
+    maps = []
+    ixs = list(range(ix+1-bptt, ix+1)) # ends in ix
+    for i, _ix in enumerate(ixs):
+        targets = np.load(f"{run_path}/targets/{_ix}.npy")
+        targets_chunk[b, i, :] = targets# rare error here, why? this should always exist
+        aux_chunk[b, i, :] = na(np.load(f"{run_path}/aux/{_ix}.npy"), AUX_PROPS)
+        maps.append(np.load(f"{run_path}/maps/{_ix}.npy"))
+    maps = np.concatenate(maps, axis=0)
+    timer.log("load targets, aux, maps")
 
-    # Load aux
-    aux = na(np.load(f"{run_path}/aux/{ix}.npy"), AUX_PROPS)
-    aux_chunk[b, :, :] = aux
-
-    # Maps
-    maps = np.load(f"{run_path}/maps/{ix}.npy") 
+    # smoothing targets along sequence dimension. Later on we smooth along the traj itself.
+    if bptt > 1: #NOTE this is a sensitive move. Pay attn to this.
+        w = 5
+        targets_chunk[b, :, :] = moving_average_n(targets_chunk[b, :,:], w)
+    timer.log("smooth targets")
 
     # imgs
-    ixs =[ix-2, ix]
-    img_paths = [f"{run_path}/imgs/{format_ix(i)}.jpg" for i in ixs]
-
+    img_paths = [f"{run_path}/imgs/{format_ix(i)}.jpg" for i in range(ix+1-bptt-FS_LOOKBACK, ix+1)]
     imgs = np.stack([cv2.imread(img_path) for img_path in img_paths])[:, :,:,::-1] # bgr to rgb
+    timer.log("load imgs")
 
-    # Aug images
-    imgs = aug_imgs(imgs) 
-
-    imgs_bw = bwify_seq(imgs[:-1]) # past imgs all bw
-    current_img = imgs[-1:] 
+    constant_seq_aug = 0 #TODO remove this
+    imgs = aug_imgs(imgs, constant_seq_aug)
+    imgs_bw = bwify_seq(imgs)
+    timer.log("aug imgs")
 
     # Assemble img for model
-    img_chunk[b,:, :,:,:] = cat_imgs(current_img, imgs_bw, maps, aux) # each has seq dim, no batch
+    aux_chunk[b,:,"has_tire_angle"] = 0 # temporary
+    img_chunk[b,:, :,:,:] = cat_imgs(imgs[FS_LOOKBACK:], imgs_bw[:-FS_LOOKBACK], maps, aux_chunk[b,:,:]) # each has seq dim, no batch
+    timer.log("assemble img")
 
+    timings_container.append(timer.finish())
     is_done[b] = 1 # why does this work, but didn't in my eval rw fn?
 
-from multiprocessing import Queue, Process
+from multiprocessing import Queue, Process, shared_memory
 
+
+
+def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, constant_seq_aug):
+    # sets them in place. Takes about 2 sec per seq of len 116. Threading important for perf, as most of the time is io reading in imgs
+    bs, seqlen, _,_,_ = img_chunk.shape
+    is_done = np.zeros(bs)
+    threads = []
+    timings_container = []
+    offset = random.randint(0,1_000)
+    for b in range(bs):
+        t = threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, b, is_done, offset, constant_seq_aug, timings_container))
+        threads.append(t)
+        t.start()
+
+    for t in threads:
+        t.join()
+
+    logger = Logger() # using logger just for averaging
+    for timings in timings_container: logger.log(timings)
+    timings = logger.finish()
+
+    assert is_done.sum() == bs
+    return timings
+
+def keep_chunk_filled(shm_img, shm_aux, shm_targets, shm_is_ready, constant_seq_aug, timings_queue):
+    while True:
+        if not shm_is_ready[0]:
+            timings = fill_chunk_inplace(shm_img, shm_aux, shm_targets, constant_seq_aug=constant_seq_aug)
+            timings_queue.put(timings)
+            shm_is_ready[0] = 1
+        else:
+            time.sleep(0.1)
+
+
+import atexit
 
 class TrnLoader():
-    def __init__(self, bs, n_batches=np.inf, bptt=BPTT):
-        self.bs = bs
-        self.bptt = bptt
-        self.logger = Logger()
-        self.path_stem = "trn"
-        self.run_id = "trn" # for use w Rollout apparatus
-        self.is_rw = False
-        self.n_batches = n_batches
-        self.batches_delivered = 0
+    def __init__(self, bs, n_batches=np.inf, bptt=BPTT, seqlen=1, constant_seq_aug=.5, n_workers=8):
+        self.bs = bs; self.bptt = bptt; self.logger = Logger(); self.path_stem = "trn"; self.run_id = "trn"; self.is_rw = False
+        self.n_batches = n_batches; self.batches_delivered = 0; self.seqlen = seqlen; self.constant_seq_aug = constant_seq_aug
+        self.seq_ix = 0; self.queued_batches = []; self.retry_counter = 0
+        self.is_done = False #TODO workers need to listen for this
 
-        self.seq_ix = 0
-        self.queued_batches = []
-        self.retry_counter = 0
-        set_loader_should_stop(False)
-
-        self.img_chunk = get_img_container(bs, SEQ_LEN)
-        self.aux_chunk = get_aux_container(bs, SEQ_LEN)
-        self.targets_chunk = get_targets_container(bs, SEQ_LEN)
-
-        self.img_chunk_b = get_img_container(bs, SEQ_LEN)
-        self.aux_chunk_b = get_aux_container(bs, SEQ_LEN)
-        self.targets_chunk_b = get_targets_container(bs, SEQ_LEN)
-
-        self.should_stop = False
-        self.chunks_queue = Queue(maxsize=3)
-        N_WORKERS = 3
-        print(f"Launching {N_WORKERS} loader workers")
-        for i in range(N_WORKERS):
-            p = Process(target=self.make_chunks)
-            setattr(self, f"chunks_worker{i}", p)
-            p.start()
-
-        self._refresh_backup_chunk()
-        self.promote_backup_chunk()
-
-        print("Got first chunk")
-        # self.queue_up_batch()
+        self.img_chunk = get_img_container(bs, seqlen)
+        self.aux_chunk = get_aux_container(bs, seqlen)
+        self.targets_chunk = get_targets_container(bs, seqlen)
         
+        self.queue = []; queue_size = n_workers # was 10 NOTE pay attn for slowdown
+        self.shms = []
+        self.timings_queue = Queue(queue_size) # just used for storing timings
+        for i in range(queue_size):
+            img_name = f"shm_img_{i}"; aux_name = f"shm_aux_{i}"; targets_name = f"shm_targets_{i}"; is_ready_name = f"shm_is_ready_{i}"
+            for n in [img_name, aux_name, targets_name, is_ready_name]:
+                if os.path.exists(f"/dev/shm/{n}"): os.remove(f"/dev/shm/{n}")
+            shm_img = shared_memory.SharedMemory(create=True, size=self.img_chunk.nbytes, name=img_name)
+            shm_aux = shared_memory.SharedMemory(create=True, size=self.aux_chunk.nbytes, name=aux_name)
+            shm_targets = shared_memory.SharedMemory(create=True, size=self.targets_chunk.nbytes, name=targets_name)
+            shm_is_ready = shared_memory.SharedMemory(create=True, size=1, name=is_ready_name)
+            self.shms += [shm_img, shm_aux, shm_targets, shm_is_ready]
+            shm_img = get_img_container(bs, seqlen, shm_img)
+            shm_aux = get_aux_container(bs, seqlen, shm_aux)
+            shm_targets = get_targets_container(bs, seqlen, shm_targets)
+            shm_is_ready = np.ndarray((1,), dtype=np.int8, buffer=shm_is_ready.buf)
+            shm_is_ready[0] = 0
+            Process(target=keep_chunk_filled, args=(shm_img, shm_aux, shm_targets, shm_is_ready, constant_seq_aug, self.timings_queue)).start()
+            
+            self.queue.append((shm_img, shm_aux, shm_targets, shm_is_ready))
 
-    def make_chunks(self): # done in separate process to remove from main process. Still have substantial time spent in handoff though, consider shm
-        while True:
-            if get_loader_should_stop(): 
-                print("worker process received order to stop")
-                break
-            if not self.chunks_queue.full():
-                img_chunk = get_img_container(self.bs, SEQ_LEN)
-                aux_chunk = get_aux_container(self.bs, SEQ_LEN)
-                targets_chunk = get_targets_container(self.bs, SEQ_LEN)
-                self._fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk)
-                self.chunks_queue.put((img_chunk, aux_chunk, targets_chunk))
-            else:
-                time.sleep(.1)
-        print("done making chunks!")
+        self.refresh_chunk()
 
-    def _fill_chunk_inplace(self, img_chunk, aux_chunk, targets_chunk):
-        timer = Timer("fill chunk inplace")
-        # sets them in place. Takes about 2 sec per seq of len 116. Threading important for perf, as most of the time is io reading in imgs
-        is_done = np.zeros(self.bs)
-        threads = []
-        for b in range(self.bs):
-            t = threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, b, is_done, random.randint(0,10_000)))
-            threads.append(t)
-            t.start()
+    def cleanup(self):
+        self.close_shms()
 
-        for t in threads:
-            t.join()
+    def __delete__(self):
+        self.close_shms()
 
-        assert is_done.sum() == self.bs
-        self.logger.log(timer.finish())
-        
-    def _refresh_backup_chunk(self):
-        timer = Timer("get chunk from queue")
-        self.backup_chunk_is_ready = False
-        self.seq_ix = 0
-        self.img_chunk_b, self.aux_chunk_b, self.targets_chunk_b = self.chunks_queue.get()
-        self.aux_chunk_b = na(self.aux_chunk_b, AUX_PROPS) #Why necessary?
-        self.logger.log(timer.finish())
-        self.backup_chunk_is_ready = True
+    def close_shms(self):
+        for shm in self.shms:
+            shm.close()
+            shm.unlink()
+        print("closed all shms")
 
-    def promote_backup_chunk(self):
-        i = 0
-        while not self.backup_chunk_is_ready:
-            if (i+1)%300==0: print("backup chunk not yet ready")
-            time.sleep(.01)
-            i+=1
-        self.seq_ix = 0
-        self.img_chunk[:,:, :,:,:] = self.img_chunk_b[:,:, :,:,:] 
-        self.aux_chunk[:,:,:] = self.aux_chunk_b[:,:,:]
-        self.targets_chunk[:,:,:] = self.targets_chunk_b[:,:,:]
-
-        threading.Thread(target=self._refresh_backup_chunk).start() # the theory being this is mostly unpickling time, which would benefit from threading
-
+    def refresh_chunk(self):
+        timer = Timer("refresh_chunk"); got_chunk = False; i = 0
+        while not got_chunk:
+            for chunk in self.queue:
+                shm_img, shm_aux, shm_targets, shm_is_ready = chunk
+                if shm_is_ready[0]:
+                    timer.log("got chunk")
+                    self.img_chunk[:,:, :,:,:] = shm_img[:,:, :,:,:]
+                    self.aux_chunk[:,:, :] = shm_aux[:,:, :]
+                    self.targets_chunk[:,:, :] = shm_targets[:,:, :]
+                    self.seq_ix = 0; shm_is_ready[0] = 0; got_chunk = True
+                    timer.log("transfered chunk")
+                    timings = self.timings_queue.get() # this won't be from the same chunk, but that's ok
+                    timer.log("got timings")
+                    timings.update(timer.finish())
+                    self.logger.log(timings)
+                    self.logger.log({"timing/waiting for available chunk": i*.01})
+                    break # only need one chunk
+            if not got_chunk:
+                time.sleep(0.01)
+                i += 1
+                if i % 300 == 0:
+                    print("waiting for chunk")
+    
     def queue_up_batch(self):
         timer = Timer("queue_batch")
         bptt = self.bptt
@@ -175,11 +200,8 @@ class TrnLoader():
         batch = get_batch_at_ix(self.img_chunk, self.aux_chunk, self.targets_chunk, self.seq_ix, bptt, timer=timer)
         self.seq_ix += bptt
         timer.log("get_batch_at_ix")
-
-        # If at the end of seq, move the backup into active position and grab a new backup
-        # This will pause until backup is ready
         if (self.seq_ix > seq_len-bptt): # Trn, not taking any w len shorter than bptt
-            self.promote_backup_chunk()
+            self.refresh_chunk()
         timer.log("promote backup chunk")
         self.logger.log(timer.finish())
 
@@ -195,6 +217,60 @@ class TrnLoader():
         stats = self.logger.finish()
         return stats
 
+atexit.register(TrnLoader.cleanup)
+
+
+class ZLoader():
+    def __init__(self, m, bs, bptt, seqlen, constant_seq_aug=.0, n_workers=8):
+        self.m = m 
+        self.bs = bs
+        self.bptt = bptt
+        self.seqlen = seqlen
+        self.constant_seq_aug = constant_seq_aug
+        normal_loader_bptt = 7 #3 # 7
+        self.normal_loader = TrnLoader(bs=bs, bptt=normal_loader_bptt, seqlen=seqlen, constant_seq_aug=constant_seq_aug, n_workers=n_workers)
+        self.queued_batches = []
+        self.batches_delivered = 0
+        self.retry_counter = 0
+        self.n_batches = np.inf
+        self.logger = self.normal_loader.logger
+    
+
+    def queue_up_batch(self):
+        n_img_batches_per_z_batch = self.bptt // self.normal_loader.bptt
+        n_batches = 0
+        zs, imgs, auxs, wpss, to_pred_masks, is_first_in_seqs = [], [], [], [], [], []
+
+        while n_batches < n_img_batches_per_z_batch:
+            batch = self.normal_loader.get_batch()
+            img, aux, wps, (to_pred_mask, is_first_in_seq) = batch
+            with torch.no_grad():
+                with torch.cuda.amp.autocast(): z = self.m.cnn_features(img, aux)
+            zs.append(z); auxs.append(aux); wpss.append(wps); to_pred_masks.append(to_pred_mask)
+            #imgs.append(img.cpu());
+            is_first_in_seqs.append(is_first_in_seq)
+            n_batches += 1
+        
+        zs = torch.cat(zs, dim=1); auxs = torch.cat(auxs, dim=1); wpss = torch.cat(wpss, dim=1); to_pred_masks = torch.cat(to_pred_masks, dim=1)
+        imgs = None #torch.cat(imgs, dim=1)
+        is_first_in_seq = is_first_in_seqs[0]
+
+        self.queued_batches.append((zs, imgs, auxs, wpss, (to_pred_masks, is_first_in_seq)))
+    
+    def get_batch(self):
+        return _iter_batch(self)
+
+    def get_obs_per_second(self):
+        return self.normal_loader.get_obs_per_second()
+
+    def report_logs(self):
+        stats = self.normal_loader.logger.finish()
+        return stats
+
+
+    
+    
+
 
 from map_utils import *
 
@@ -203,6 +279,7 @@ class RunLoader():
         self.logger = Logger()
         self.retry_counter = 0
         self.bptt = 32 #12 # didn't seem to affect throughput speed, tested from 12 to 64 all similar.
+        self.bs = 1
         self.is_rw = is_rw
         self.n_batches = np.inf
         self.gamma_correct_auto = _gamma_correct_auto
@@ -252,15 +329,15 @@ class RunLoader():
 
     def _finalize_loader_init(self):
         # Common to both sim and rw paths
-    
-        imgs_bw = bwify_seq(self.img_chunk)
-        self.img_chunk = cat_imgs(self.img_chunk[2:], imgs_bw[:-2], self.maps[2:], self.aux_chunk[2:])
+        L = FS_LOOKBACK 
+        imgs_bw = bwify_seq(self.img_chunk).copy() # need copy otherwise they also have maps
+        self.img_chunk = cat_imgs(self.img_chunk[L:], imgs_bw[:-L], self.maps[L:], self.aux_chunk[L:])
         self.seq_len = len(self.img_chunk)
 
         # Pad batch dimension to keep common dims of (batch,seq,n) across all loaders
         self.img_chunk = self.img_chunk[None,:, :,:,:]
-        self.aux_chunk = self.aux_chunk[None,2:,:] # TODO rationalize all of this
-        self.targets_chunk = self.targets_chunk[None,2:,:]
+        self.aux_chunk = self.aux_chunk[None,L:,:] # shorten to match img_chunk
+        self.targets_chunk = self.targets_chunk[None,L:,:]
 
         # Chunks are now loaded in common format: np, real units
 
