@@ -474,7 +474,7 @@ def get_hud(aux):
 # Misc
 ###########################
 
-TRT_MODEL_PATH = f"{BESPOKE_ROOT}/trt_models/backbone_trt.jit.pt"
+TRT_MODEL_PATH = f"{SSD_ROOT}/models_deploy/backbone_trt.jit.pt"
 
 SIM_RUN_ID = "sim"
 
