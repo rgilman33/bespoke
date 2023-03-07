@@ -61,13 +61,15 @@ class LossManager():
         self.update_emas = True
 
     def _step_loss(self, loss_name, loss):
+        if not np.isfinite(loss.item()):
+            print(f"loss is nan for {loss_name}. Skipping")
+            return torch.HalfTensor([0]).to(device)
+
         # update avg
         if self.update_emas:
             self.loss_emas[loss_name] = self.loss_emas[loss_name]*self.LOSS_EPS + float(loss.item())*(1-self.LOSS_EPS) # full prec
         weight = self.loss_weights[loss_name] * (self.loss_emas[self.baseline_loss_name] / (self.loss_emas[loss_name]+1e-8))
         weighted_loss = weight*loss
-        assert not np.isnan(loss.item()), f"loss is nan for {loss_name}"
-        assert not np.isnan(weight), f"weight is nan for {loss_name}"
         # print(loss_name, loss.item(), weighted_loss.item())
         return weighted_loss
 
@@ -210,19 +212,23 @@ class Trainer():
             angles_loss_i, headings_loss_i, curvatures_loss_i, rolls_loss_i, zs_loss_i = torch.chunk(_wps_loss_intersection, 5, -1)
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
 
+            if update_counter % 20 == 0:
+                print(curvatures_loss.max().item(), curvatures_loss_i.max().item(), headings_loss_i.max().item(), headings_loss.max().item(), angles_loss_i.max().item(), angles_loss.max().item(), zs_loss_i.max().item(), zs_loss.max().item(), rolls_loss_i.max().item(), rolls_loss.max().item())
+            _mm = 500
+            cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
             losses = {
-                "wp_angles_i": angles_loss_i.mean(),
-                "wp_headings_i": headings_loss_i.mean(),
-                "wp_curvatures_i": curvatures_loss_i.mean(),
-                "wp_rolls_i":rolls_loss_i.mean(),
-                "wp_zs_i":zs_loss_i.mean(),
+                "wp_angles_i": cm(angles_loss_i),
+                "wp_headings_i": cm(headings_loss_i),
+                "wp_curvatures_i": cm(curvatures_loss_i),
+                "wp_rolls_i":cm(rolls_loss_i),
+                "wp_zs_i":cm(zs_loss_i),
             }
             losses.update({
-                "wp_angles": angles_loss.mean(),
-                "wp_headings": headings_loss.mean(),
-                "wp_curvatures": curvatures_loss.mean(),
-                "wp_rolls":rolls_loss.mean(),
-                "wp_zs":zs_loss.mean(), 
+                "wp_angles": cm(angles_loss),
+                "wp_headings": cm(headings_loss),
+                "wp_curvatures": cm(curvatures_loss),
+                "wp_rolls":cm(rolls_loss),
+                "wp_zs":cm(zs_loss), 
             })
 
             # te. When in doubt, stay close to prev preds

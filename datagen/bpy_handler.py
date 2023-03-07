@@ -264,7 +264,7 @@ class TrafficManager():
         start_locs_df_oncoming = start_locs_df[start_locs_df.wps_section_id.isin(oncoming_sections)]
 
         self.wp_df = wp_df
-        ONLY_ONCOMING_NPCS_PROB = .5 
+        ONLY_ONCOMING_NPCS_PROB = .4
         self.npcs_only_oncoming = random.random() < ONLY_ONCOMING_NPCS_PROB
         self.start_locs_df = start_locs_df_oncoming if self.npcs_only_oncoming else start_locs_df
 
@@ -405,7 +405,7 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     update_ap_object(make_vehicle_nodes, ap)
 
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info)
-    tm.add_npcs(random.randint(0, MAX_N_NPCS) if episode_info.has_npcs else 0)
+    tm.add_npcs(random.randint(6, MAX_N_NPCS) if episode_info.has_npcs else 0)
 
     print("total setup time", time.time() - t0)
         

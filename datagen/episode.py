@@ -8,6 +8,7 @@ STATIC_ROOT = "/home/beans/static"
 TEXTURES_ROOT = f"{STATIC_ROOT}/textures"
 HDRIS_ROOT = f"{STATIC_ROOT}/hdris" 
 MEGASCANS_DOWNLOADED_ROOT = f"{STATIC_ROOT}/Megascans Library/Downloaded" #TODO must update this in bridge app
+OPEN_IMGS_ROOT = f"{STATIC_ROOT}/open_imgs/test"
 
 # Getting nodes and filepaths
 rd_noise_nodes = bpy.data.node_groups['getRdNoise'].nodes 
@@ -20,6 +21,8 @@ make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes
 get_map_nodes = bpy.data.node_groups['get_map'].nodes
 get_rds_nodes = bpy.data.node_groups['get_rds'].nodes
 get_section_nodes = bpy.data.node_groups['get_section'].nodes
+get_stop_line_meshes_nodes = bpy.data.node_groups['get_stop_line_meshes'].nodes
+
 
 get_variables_nodes = bpy.data.node_groups['getVariables'].nodes
 
@@ -27,6 +30,9 @@ dirt_gravel_nodes = bpy.data.materials["Dirt Gravel"].node_tree.nodes
 background_hdri_nodes = bpy.context.scene.world.node_tree.nodes
 building_material = bpy.data.materials["buildings"].node_tree.nodes
 npc_material = bpy.data.materials["npc"].node_tree.nodes
+rdside_thing_material = bpy.data.materials["rdside_thing"].node_tree.nodes
+grass_trees_material = bpy.data.materials["grass_trees"].node_tree.nodes
+
 
 stopsign_material = bpy.data.materials["stopsign"].node_tree.nodes
 stopsign_nodes = bpy.data.node_groups['stopsign_nodes'].nodes
@@ -50,6 +56,8 @@ literally_all_normals = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/**/*_2K_Normal.j
 
 img_textures = glob.glob(f"{TEXTURES_ROOT}/*.jpg") 
 literally_all_albedos += img_textures
+
+open_imgs = glob.glob(f"{OPEN_IMGS_ROOT}/*.jpg")
 
 rd_surface_keywords = ["gravel", "rock", "concrete", "soil", "mud", "asphalt", "sand", "road"] #TODO put in snow sometimes
 
@@ -106,7 +114,7 @@ def make_episode():
     # Rd roll / supereleveation
     RD_IS_BANKED_PROB = 0 if (not rd_is_lined or is_just_straight) else .7 if is_highway else .4
     rd_is_banked = random.random()<RD_IS_BANKED_PROB
-    get_node("max_rd_roll", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.06, .1) if is_country_mtn else random.uniform(.1, .14) # max roll is 8 deg (.14 rad) on rural rds in WY
+    get_node("max_rd_roll", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.02, .05) if is_country_mtn else random.uniform(.1, .14) # max roll is 8 deg (.14 rad) on rural rds in WY
     get_node("max_roll_at_this_curvature", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.08, .16)
     get_node("rd_is_banked", z_adjustment_nodes).outputs["Value"].default_value = 1 if rd_is_banked else 0
 
@@ -267,7 +275,7 @@ def make_episode():
     # Background
     ######################
 
-    background_hdri_nodes["Environment Texture"].image.filepath = random.choice(all_background_hdris)
+    background_hdri_nodes["Environment Texture"].image.filepath = random.choice(all_background_hdris) if random.random()<.8 else random.choice(open_imgs)
     #get_node("hdri_rotation_x", background_hdri_nodes).outputs["Value"].default_value = random.uniform(-.3, .3)
     #get_node("hdri_rotation_y", background_hdri_nodes).outputs["Value"].default_value = random.uniform(-.3, .3)
     get_node("hdri_rotation_z", background_hdri_nodes).outputs["Value"].default_value = random.uniform(0, 6.28)
@@ -279,6 +287,7 @@ def make_episode():
     ######################
     # Lanelines, material
     ######################
+    # whitelines also control stoplines
 
     white_lines_opacity = get_node("white_line_opacity", dirt_gravel_nodes)
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes)
@@ -302,6 +311,9 @@ def make_episode():
     get_node("yellow_line_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.2, .5)
     get_node("yellow_line_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .7)
 
+    mm = random.uniform(.4, .8)
+    get_node("white_line_mid", dirt_gravel_nodes).outputs["Value"].default_value = mm
+    get_node("white_line_outer", dirt_gravel_nodes).outputs["Value"].default_value = mm * random.uniform(.0, .8)
 
 
     ######################
@@ -435,16 +447,17 @@ def make_episode():
     ######################
 
     terrain_albedo = rd_img_albedo if random.random() < .6 else random.choice(all_albedos)
-    get_node("terrain_img_albedo", dirt_gravel_nodes).image.filepath = terrain_albedo
+    get_node("terrain_img_albedo", dirt_gravel_nodes).image.filepath = random.choice(open_imgs) if random.random() < .5 else terrain_albedo
     get_node("terrain_img_normal", dirt_gravel_nodes).image.filepath = terrain_albedo.replace("Albedo", "Normal")
 
-    get_node("terrain_hue", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.4, .6)
+    get_node("terrain_hue", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.46, .54)
     get_node("terrain_saturation", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.4, 1.2)
     get_node("terrain_brightness", dirt_gravel_nodes).outputs["Value"].default_value  = .3 * 10**random.uniform(0, 1.)
 
     get_node("terrain_roughness", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.4, 1.0)
 
-    get_node("terrain_overlay_fac", dirt_gravel_nodes).outputs["Value"].default_value  = 0 if random.random() < .6 else random.uniform(0, 1.0)
+    # turning this off for now. Don't like the unnatural colors.
+    get_node("terrain_overlay_fac", dirt_gravel_nodes).outputs["Value"].default_value  = 0 # if random.random() < .6 else random.uniform(0, 1.0)
     get_node("terrain_overlay_hue", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(0, 1.0)
     get_node("terrain_overlay_sat", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.4, 2.0)
     get_node("terrain_overlay_value", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.1, 3.0)
@@ -478,10 +491,12 @@ def make_episode():
     get_node("rotation_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
     get_node("rotation_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
     get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.3, .0)
-    # get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, 2) TODO dr these once model is catching them at all. Have to fit before can overfit.
-    # get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-3, 1)
+    get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, .5) # neg moves closer to rd
+    get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-2, .5) # neg moves it along rd closer up before stopline
     # don't shift in stopsign object itself, do so aftewards, otherwise was keeping origin of obj as center, stopsign itself was in rd
     get_node("shift_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(1.8, 3.)
+
+    get_node("stop_line_hwidth", get_stop_line_meshes_nodes).outputs["Value"].default_value = random.uniform(.2, .5)
 
     ######################
     # Rdsigns
@@ -533,7 +548,7 @@ def make_episode():
     get_node("building_roughness", building_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("building_specular", building_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("building_img_normal", building_material).image.filepath = random.choice(literally_all_normals)
-    get_node("building_img_albedo", building_material).image.filepath = random.choice(img_textures) if random.random()<.6 else random.choice(literally_all_albedos)
+    get_node("building_img_albedo", building_material).image.filepath = random.choice(open_imgs) #random.choice(img_textures) if random.random()<.6 else random.choice(literally_all_albedos)
     get_node("building_hue", building_material).outputs["Value"].default_value = random.uniform(.0, 1.0)
     get_node("building_sat", building_material).outputs["Value"].default_value = random.uniform(.5, 3.0)
     get_node("building_brightness", building_material).outputs["Value"].default_value = random.uniform(.5, 1.2)
@@ -542,6 +557,19 @@ def make_episode():
 
     get_node("buildings_seed", buildings_nodes).outputs["Value"].default_value = random.uniform(-1e-6, 1e6)
     get_node("buildings_noise_mult", buildings_nodes).outputs["Value"].default_value = 0 if random.random() < .3 else random.uniform(.2, .6) #TODO make this so can go higher, need to prevent intersect w rd
+
+
+    # roadside things
+    get_node("rst_img_albedo", rdside_thing_material).image.filepath = random.choice(open_imgs)
+    get_node("rst_size", main_map_nodes).outputs["Value"].default_value = random.uniform(3., 12.)
+    rst_group_center_modulo = random.uniform(50, 300)
+    get_node("rst_group_center_modulo", main_map_nodes).outputs["Value"].default_value = rst_group_center_modulo
+    get_node("rst_group_size", main_map_nodes).outputs["Value"].default_value = rst_group_center_modulo * random.uniform(.1, .9)
+    #get_node("rst_density", main_map_nodes).outputs["Value"].default_value = random.uniform(.003, .03)
+
+    # grass trees
+    
+    get_node("gt_img_albedo", grass_trees_material).image.filepath = terrain_albedo
 
     ######################
     # NPCs

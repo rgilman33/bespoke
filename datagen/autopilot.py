@@ -6,8 +6,6 @@ from constants import *
 from traj_utils import *
 from map_utils import *
 
-
-
 class Autopilot():
     def __init__(self, episode_info, save_data=True, run_root=None, ap_id=None, is_ego=False):
         self.episode_info, self.save_data, self.run_root, self.ap_id, self.is_ego = episode_info, save_data, run_root, ap_id, is_ego
@@ -16,8 +14,14 @@ class Autopilot():
         self.overall_frame_counter = 0
         self.current_speed_mps = self.speed_limit / 2
         self.current_tire_angle = 0
-        self.DRIVE_STYLE_CHANGE_IX = random.randint(200, 600)
-        self.DAGGER_FREQ = random.randint(400, 1000)
+        self.DRIVE_STYLE_CHANGE_IX = random.randint(300, 600)
+        self.DAGGER_FREQ = random.randint(400, 800)
+
+        # doing these here so they don't change mid stopsign
+        self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,4)
+        OBEYS_STOPS_PROB = .5
+        self.obeys_stops = random.random()<OBEYS_STOPS_PROB
+
         self.reset_dagger()
 
         self.targets_container = get_targets_container(1,1)[0] # angles, dists, rolls, z deltas
@@ -27,6 +31,11 @@ class Autopilot():
         self.small_map = None
         self.should_yield = False
         self.route_is_done = False
+
+        self.is_rando_yielding = False
+        self.rando_yield_counter = 0
+        self.RANDO_YIELD_FREQ = random.randint(400, 800) if not (episode_info.is_highway or random.random()<.5) else 10_000
+        self.RANDO_YIELD_DURATION = random.randint(30, 120)
 
         self.N_NEGOTIATION_WPS = 100
         NEGOTIATION_TRAJ_LEN_SEC = random.uniform(2.0, 3.5) # follow dist. TODO uncouple follow dist and negotiation traj
@@ -71,7 +80,6 @@ class Autopilot():
         self.lead_relative_speed = 100
         self.is_in_yield_zone = False
 
-        self.dagger_shift = 0
         self.should_yield = False
 
         # 
@@ -87,7 +95,7 @@ class Autopilot():
     def set_route(self, route):
 
         self.waypoints = np.empty((len(route), 3), dtype="float64")
-        XY_SMOOTH = 160 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
+        XY_SMOOTH = 120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
         # NOTE will have to be wary of this smoothing when we're doing intersections, as this may be too much. Also our close wp dist.
         self.waypoints[:,0] = moving_average(route.pos_x.to_numpy(), XY_SMOOTH)
         self.waypoints[:,1] = moving_average(route.pos_y.to_numpy(), XY_SMOOTH)
@@ -151,11 +159,11 @@ class Autopilot():
     def set_should_yield(self, should_yield):
         self.should_yield = should_yield
         
-    def step(self):
+    def _sec_to_undagger(self, dagger_shift):
+        # fixed, for targets. Constant time return to proper traj based on dagger shift
+        return np.interp(abs(dagger_shift), [NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX], [2, 4]) #2
 
-        sec_to_undagger = 2 # TODO shift should prob be variable, in which case this should also be variable as a fn of shift IMPORTANT
-        meters_to_undagger = self.current_speed_mps * sec_to_undagger
-        meters_to_undagger = max(meters_to_undagger, 5)
+    def step(self):
 
         current_wp_ix = int(round(self.distance_along_loop / WP_SPACING, 0))
         cam_normal = self.wp_normals[current_wp_ix]
@@ -176,7 +184,12 @@ class Autopilot():
         xs, ys = deltas[:, 0], deltas[:, 1]
         xs_d, ys_d = xs.copy(), ys.copy()
 
-        if abs(self.shift_x) > 0 or abs(self.shift_y) > 0:
+        # dagger targets take ego smoothly back to proper traj
+        if abs(self.dagger_shift):
+            sec_to_undagger = self._sec_to_undagger(self.dagger_shift)
+            meters_to_undagger = self.current_speed_mps * sec_to_undagger
+            meters_to_undagger = max(meters_to_undagger, 8)
+            
             perc_into_undaggering = TRAJ_WP_DISTS_NP / meters_to_undagger 
             p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
             xs += self.shift_x*p
@@ -254,16 +267,19 @@ class Autopilot():
             angle_to_wp, _, _ = get_target_wp(angles_to_wps, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
             angle_to_wp_d, _, _ = get_target_wp(angles_to_wps_d, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
             self.tire_angles_hist.append(angle_to_wp_d)
+
+            get_clf_range = lambda s : np.clip(s*4.0, 30., 100) # looking four seconds out, but clamped. TODO should prob be more sec ahead
+            r = get_clf_range(self.current_speed_mps)
             
-            HAS_TIRE_ANGLE_PROB = .6
+            HAS_TIRE_ANGLE_PROB = 0 #.6
             self.aux[c, "speed"] = self.current_speed_mps
             self.aux[c, "tire_angle"] = angle_to_wp_d #self.current_tire_angle
             self.aux[c, "tire_angle_dagger_corrected"] = angle_to_wp
             self.aux[c, "tire_angle_lagged"] = self.tire_angles_hist[-self.tire_angles_lag] + self.tire_angle_noise[self.overall_frame_counter]
             self.aux[c, "has_tire_angle"] = int(random.random() < HAS_TIRE_ANGLE_PROB)
-            self.aux[c, "has_stop"] = smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
+            self.aux[c, "has_stop"] = self.stop_dist < r #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
             self.aux[c, "stop_dist"] = self.stop_dist
-            self.aux[c, "has_lead"] = smooth_dist_clf(self.lead_dist, 80, 100)
+            self.aux[c, "has_lead"] = self.lead_dist < r #smooth_dist_clf(self.lead_dist, 80, 100)
             self.aux[c, "lead_dist"] = self.lead_dist
             self.aux[c, "lead_speed"] = self.lead_relative_speed
             self.aux[c, "should_yield"] = self.should_yield
@@ -286,25 +302,26 @@ class Autopilot():
         self.overall_frame_counter += 1
 
         #############
-        # DAGGER setting
-
-        DAGGER_DURATION = sec_to_undagger*2*FPS # frames. TODO this doesn't need to be tied w sec_to_undagger
+        # DAGGER setting. This is what the ap car will take. 
 
         shift_x_max = cam_normal[0]*self.normal_shift
         shift_y_max = cam_normal[1]*self.normal_shift
 
         DAGGER_MIN_SPEED = mph_to_mps(12)
-        if self.is_ego and (self.overall_frame_counter % self.DAGGER_FREQ == 0) and (self.current_speed_mps > DAGGER_MIN_SPEED):
+        # if self.is_ego and (self.overall_frame_counter % self.DAGGER_FREQ == 0) and (self.current_speed_mps > DAGGER_MIN_SPEED) and not self.is_rando_yielding:
+        if (self.overall_frame_counter % self.DAGGER_FREQ == 0) and (self.current_speed_mps > DAGGER_MIN_SPEED) and not self.is_rando_yielding:
             self.is_doing_dagger = True
         if self.is_doing_dagger:
             self.dagger_counter += 1
-            r = linear_to_cos(self.dagger_counter/DAGGER_DURATION)
+            r = linear_to_cos(self.dagger_counter/self.dagger_duration)
             
             self.shift_x = r * shift_x_max
             self.shift_y = r * shift_y_max
             self.dagger_shift = self.normal_shift * r # for logging 
+
+            # print(f"Doing dagger. Counter: {self.dagger_counter}, duration: {self.dagger_duration}, dagger shift: {round(self.dagger_shift, 3)}, normal shift: {round(self.normal_shift, 3)}")
             
-        if self.dagger_counter == DAGGER_DURATION: self.reset_dagger()
+        if self.dagger_counter == self.dagger_duration: self.reset_dagger()
 
         ############
         # target wp close to vehicle, used for steering AP to keep it tight on traj
@@ -369,7 +386,6 @@ class Autopilot():
         curvature_constrained_speed *= self.curve_speed_mult
         
         # stopsign constrained speed
-        STOPSIGN_DECEL = 2.0
         STOPPED_SPEED = mph_to_mps(1.6)
         n_advance_wps_for_stop = int(STOP_OUTER_DIST / WP_SPACING) # always looking 100 m ahead
         upcoming_wps_is_stop = self.wp_is_stop[current_wp_ix:current_wp_ix+n_advance_wps_for_stop]
@@ -380,7 +396,7 @@ class Autopilot():
             stop_ix = np.where(upcoming_wps_is_stop==True)[0][0]
             stop_dist = abs(stop_ix * WP_SPACING)
             stop_dist = stop_dist if stop_dist > .1 else 0
-            stop_sign_constrained_speed = np.sqrt(STOPSIGN_DECEL * stop_dist) 
+            stop_sign_constrained_speed = np.sqrt(self.max_accel * stop_dist) 
             # the fastest we can be going now in order to hit zero m/s in the given dist at given decel
             self.stopsign_state = "APPROACHING_STOP" if self.current_speed_mps > STOPPED_SPEED else "STOPPED"
             self.stop_dist = stop_dist
@@ -421,18 +437,29 @@ class Autopilot():
         #         print(f"Lead dist {round(self.lead_dist, 2)} speed {round(self.lead_relative_speed, 2)}")
         #     if self.stopsign_state != "NONE":
         #         print(self.stopsign_state, round(stop_dist, 2), round(stop_sign_constrained_speed, 2))
+        #     if self.is_rando_yielding:
+        #         print("Rando yielding", self.rando_yield_counter)
 
         if self.obeys_stops:
             target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
         else:
             target_speed = min(curvature_constrained_speed, self.speed_limit)
 
-        target_speed = target_speed if not self.should_yield else 0
+        # rando yielding to break speed / stopsign corr
+        if (self.overall_frame_counter % self.RANDO_YIELD_FREQ == 0):
+            self.is_rando_yielding = True
+        if self.is_rando_yielding:
+            self.rando_yield_counter += 1
+        if self.rando_yield_counter > self.RANDO_YIELD_DURATION:
+            self.is_rando_yielding = False
+            self.rando_yield_counter = 0
 
+        target_speed = target_speed if not (self.should_yield or self.is_rando_yielding) else 0
         max_accel_frame = self.max_accel / FPS # 
         delta = target_speed - self.current_speed_mps
         delta = np.clip(delta, -max_accel_frame, max_accel_frame)
         self.current_speed_mps += delta #(delta)*self.long_kP
+        self.current_speed_mps = np.clip(self.current_speed_mps, 0, np.inf)
 
         # negotiation traj
         m_per_wp = self.current_speed_mps * self.S_PER_WP
@@ -444,10 +471,20 @@ class Autopilot():
 
 
     def reset_dagger(self):
+        # Get max dagger shift
+
+        normal_shift = random.uniform(NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX)
+        self.normal_shift = normal_shift if random.random()<.5 else -normal_shift
+
+        # reset state
         self.is_doing_dagger = False
         self.dagger_counter = 0
-        self.shift_x, self.shift_y = 0, 0
-        self.normal_shift = NORMAL_SHIFT_MAX if random.random()<.5 else -NORMAL_SHIFT_MAX
+        self.shift_x, self.shift_y, self.dagger_shift = 0, 0, 0
+
+        # How long dagger will take, ie this is what ap will follow. Based on normal shift, but with some randomness bc
+        # doesn't need to be tied, and want agent to be able to not be too distracted when off policy human driving.
+        self.dagger_duration = int(self._sec_to_undagger(normal_shift)*2*FPS*random.uniform(.6, 1.1)) # frames
+
 
     def reset_drive_style(self):
         rr = random.random() 
@@ -464,7 +501,8 @@ class Autopilot():
         self.curve_speed_mult = random.uniform(.7, 1.25)
         self.turn_slowdown_sec_before = random.uniform(.25, .75)
         self.max_accel = random.uniform(1.5, 4.5)
-        self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,4)
 
-        OBEYS_STOPS_PROB = .1
-        self.obeys_stops = random.random()<OBEYS_STOPS_PROB
+
+
+NORMAL_SHIFT_MIN = .4
+NORMAL_SHIFT_MAX = .8 #1.0

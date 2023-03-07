@@ -50,52 +50,78 @@ def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0)
 
     for i in range(len(wps_2d)):
         wp = tuple(wps_2d[i][0].astype(int))
-        image = cv2.circle(image, wp, radius=4, color=color, thickness=thickness)
+        image = cv2.circle(image, wp, radius=3, color=color, thickness=thickness)
     return image
 
 
 def get_text_box(d):
     n_entries = len(d)
     f = 12 # font mult
-    text_box = np.zeros((n_entries*f, 140, 3))
+    text_box = np.zeros((n_entries*f, 160, 3))
     for i, text in enumerate(d):
         text_box = cv2.putText(text_box, text, (0, f*i+f//2), cv2.FONT_HERSHEY_SIMPLEX, .33, white, 1)
     return text_box
 
+black = (0,0,0)
 
-def enrich_img(img=None, wps=None, wps_p=None, aux=None, aux_targets_p=None, obsnet_out=None):
-    # takes in img np (h, w, c), denormed. Adds trajs and info to it.
-
-    img = img.copy() # have to do this bc otherwise was strange error w our new lstm loader. 
-
-    # Trajs, targets if have them
-    angles_p, curvatures_p, headings_p, rolls_p, zs_p = np.split(wps_p, 5, -1)
-    speed = aux["speed"]
-    img = draw_wps(img, angles_p, speed_mps=speed)
-    if wps is not None:
-        angles, curvatures, headings, rolls, zs = np.split(wps, 5, -1)
-        img = draw_wps(img, angles, color=(100, 200, 200), speed_mps=speed)
+def add_traj_preds(img, angles_p, speed, color=(255, 10, 10)):
+    # Traj pred
+    img = draw_wps(img, angles_p, speed_mps=speed, color=color, thickness=-1)
 
     # Target wp, pred
     target_wp_angle, wp_dist, _ = get_target_wp(angles_p, speed)
-    img = draw_wps(img, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=(200, 50, 100), thickness=-1)
-
-    # Target wp, actual. Using common wp dist, which is fine bc just based on speed. The only actual wp rw has
-    img = draw_wps(img, np.array([aux["tire_angle"]]), wp_dists=np.array([wp_dist]), color=(50, 150, 150), thickness=-1)
+    img = draw_wps(img, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=color, thickness=-1)
+    img = draw_wps(img, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=black, thickness=1)
 
     # Longitudinal wp, ie end of traj, pred
     far_long_wp_dist = max_pred_m_from_speeds(speed)
     far_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(angles_p, far_long_wp_dist)
-    img = draw_wps(img, np.array([far_long_wp_angle]), wp_dists=np.array([far_long_wp_dist]), color=(50, 50, 255), thickness=-1)
+    img = draw_wps(img, np.array([far_long_wp_angle]), wp_dists=np.array([far_long_wp_dist]), color=color, thickness=-1)
+    img = draw_wps(img, np.array([far_long_wp_angle]), wp_dists=np.array([far_long_wp_dist]), color=black, thickness=1)
+    return img
 
-    # Additional props. Put in aux so gets caught up below
-    aux["ccs_p"] = get_curve_constrained_speed(curvatures_p, speed)
+def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_targets_p=None, aux_targets_p2=None, obsnet_out=None):
+    # takes in img np (h, w, c), denormed. Adds trajs and info to it.
+
+    img = img.copy() # have to do this bc otherwise was strange error w our new lstm loader. 
+    # Trajs, targets if have them
+    speed = aux["speed"]
+
+    ##########
+    # Pred wps
+    ##########
+    if wps_p2 is not None:
+        angles_p2, curvatures_p2, headings_p2, rolls_p2, zs_p2 = np.split(wps_p2, 5, -1)
+        img = add_traj_preds(img, angles_p2, speed, color=(125, 45, 45)) # brown
+
+    angles_p, curvatures_p, headings_p, rolls_p, zs_p = np.split(wps_p, 5, -1)
+    img = add_traj_preds(img, angles_p, speed, color=(255, 40, 40))
+
+
+    ##########
+    # Target wps
+    ##########
+
+    # if have target traj, draw it
+    if wps is not None:
+        angles, curvatures, headings, rolls, zs = np.split(wps, 5, -1)
+        img = draw_wps(img, angles, color=(100, 200, 200), speed_mps=speed)
+
+    # Target wp, actual. The only actual wp rw has
+    wp_dist = get_target_wp_dist(speed)
+    img = draw_wps(img, np.array([aux["tire_angle"]]), wp_dists=np.array([wp_dist]), color=(100, 200, 200), thickness=-1)
+
+
+    ##########
+    # Aux info
+    ##########
 
     # text box
     if aux_targets_p is not None:
-        a = [f"{p}: {round(aux_targets_p[p],2)}, {round(aux[p], 2)}" for p in AUX_TARGET_PROPS]
-        v = [vv for vv in VIEW_INFO_PROPS if vv not in AUX_TARGET_PROPS] # clean up the rest
-        a += [f"{p}: {round(aux[p],2)}" for p in v]
+        a = [f"{p}: {round(aux_targets_p[p],2)}, {round(aux_targets_p2[p],2) if aux_targets_p2 is not None else ''}, {round(aux[p], 2)}" for p in AUX_TARGET_PROPS]
+        ccs = f"{round(get_curve_constrained_speed(curvatures_p, speed), 0)}"
+        ccs2 = f"{round(get_curve_constrained_speed(curvatures_p2, speed),0)}" if wps_p2 is not None else ""
+        a += [f"ccs: {ccs}, {ccs2}"]
     else:
         a = []
 
@@ -108,9 +134,9 @@ def enrich_img(img=None, wps=None, wps_p=None, aux=None, aux_targets_p=None, obs
     _, _, target_wp_ix = get_target_wp(rolls_p, speed) # doesn't matter if rolls or whatever, we're just getting ix
     target_wp_ix = int(target_wp_ix)
     if wps is not None:
-        a.append(f"roll: {round(float(rolls_p[target_wp_ix]), 3)}, {round(float(rolls[target_wp_ix]), 3)}")
+        a.append(f"roll: {round(float(rolls_p[target_wp_ix]), 2)}, {round(float(rolls[target_wp_ix]), 2)}")
     else:
-        a.append(f"roll: {round(float(rolls_p[target_wp_ix]), 3)}")
+        a.append(f"roll: {round(float(rolls_p[target_wp_ix]), 2)}, {round(float(rolls_p2[target_wp_ix]), 2) if wps_p2 is not None else ''}")
 
     text_box = get_text_box(a)
     h,w,_ = text_box.shape
@@ -193,24 +219,27 @@ def combine_img_actgrad(img, actgrad, color=(8,255,8)):
     return img_actgrad
 
 
-def make_enriched_vid(model_stem, run_id):
+def make_enriched_vid(run_id, model_stem, model_stem_b=None):
     rollout = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem}_rollout.pkl")
+    if model_stem_b is not None: rollout_b = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem_b}_rollout.pkl")
     run = load_object(f"{SSD_ROOT}/runs/{run_id}.pkl")
 
     height, width, channels = IMG_HEIGHT, IMG_WIDTH, 3
     fps = 20
-    filename = f"{rollout.run_id}_{rollout.model_stem}"
+    filename = f"{rollout.run_id}_{rollout.model_stem}" if model_stem_b is None else f"{rollout.run_id}_{rollout.model_stem}_VS_{rollout_b.model_stem}"
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
 
     for i in range(len(run.img_chunk[0])):
         if i%1000==0: print(i)
-        img = run.img_chunk[0][i]
-        aux = rollout.aux[i]
-        wps_p = rollout.wps_p[i]
-        aux_targets_p = rollout.aux_targets_p[i]
-        obsnet_outs = rollout.obsnet_outs[i]
-        img = enrich_img(img=img[:,:,:3], wps_p=wps_p, aux_targets_p=aux_targets_p, 
-                                aux=aux, obsnet_out=obsnet_outs)
+        wps_p2, aux_targets_p2 = None, None
+        if model_stem_b is not None:
+            wps_p2 = rollout_b.wps_p[i]
+            aux_targets_p2 = rollout_b.aux_targets_p[i]
+        img = enrich_img(img=run.img_chunk[0][i][:,:,:3], 
+                         wps_p=rollout.wps_p[i], wps_p2=wps_p2, 
+                         aux_targets_p=rollout.aux_targets_p[i], aux_targets_p2=aux_targets_p2,
+                        aux=rollout.aux[i], 
+                        obsnet_out=rollout.obsnet_outs[i])
         video.write(img[:,:,::-1])
 
     video.release()

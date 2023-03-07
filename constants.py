@@ -222,7 +222,6 @@ def get_mins_since_slowest_runner_reported():
 # Datagen sim
 ###########################
 
-NORMAL_SHIFT_MAX = 1.0
 ROUTE_LEN_M = 1700
 WP_SPACING = .1
 TRAJ_WP_IXS = np.round(np.array(TRAJ_WP_DISTS) / WP_SPACING).astype('int')
@@ -281,6 +280,12 @@ def load_object(filename):
 
 def moving_average(arr, w):
     return np.convolve(arr, np.ones(w), 'same') / w
+
+def moving_average_batch(arr, w):
+    arr = arr.copy()
+    for i in range(arr.shape[0]):
+        arr[i] = moving_average(arr[i], w)
+    return arr
 
 def moving_average_n(arr, w):
     # moving average over seq of n dims, rather than single
@@ -534,4 +539,3 @@ AUX_NORM_SHIFTS = propref.norm_shift.values
 AUX_NORM_SCALES = propref.norm_scale.values
 
 SHOW_WORST_PROPS = list(propref[propref.show_worst==1].prop.values)
-VIEW_INFO_PROPS = list(propref[propref.view_info==1].prop.values)

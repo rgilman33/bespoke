@@ -33,12 +33,16 @@ def angle_to_wp_from_dist_along_traj(traj, dist_m):
 
     return target_wp_angle, wp_dist, wp_ix
 
-
-def get_target_wp(traj, speed_mps, wp_m_offset=0):
-    # negative values of wp_m_offset brings target wp closer along the traj, making turns more centered. Pos makes further, making turns tighter
+def get_target_wp_dist(speed_mps, wp_m_offset=0):
+    # takes in speed, returns dist along traj to target wp
     wp_m = np.interp(speed_mps, 
                     min_dist_bps, 
                     [v+wp_m_offset for v in min_dist_vals]) 
+    return wp_m
+
+def get_target_wp(traj, speed_mps, wp_m_offset=0):
+    # negative values of wp_m_offset brings target wp closer along the traj, making turns more centered. Pos makes further, making turns tighter
+    wp_m = get_target_wp_dist(speed_mps, wp_m_offset=wp_m_offset)
 
     target_wp_angle, wp_dist, wp_ix = angle_to_wp_from_dist_along_traj(traj, wp_m)
 
@@ -252,7 +256,7 @@ def max_pred_m_from_speeds(speeds_mps):
 
     max_pred_dists_m = speeds_mps * max_pred_s
 
-    max_pred_dists_m = np.clip(max_pred_dists_m, MIN_M_TRAJ_PRED, np.inf) # always pred out to at least 10m, even when stopped
+    max_pred_dists_m = np.clip(max_pred_dists_m, MIN_M_TRAJ_PRED, np.inf) # always pred out to at least n meters, even when stopped
 
     return max_pred_dists_m
 

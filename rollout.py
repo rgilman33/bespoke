@@ -87,7 +87,9 @@ def calc_rollout_results(rollout):
     for b in range(rollout.bs):
         additional_results[b, :, "tire_angle_p"] = gather_preds(wp_angles_p[b], speeds[b])
 
-    additional_results[:,:,'te'] = get_te(additional_results[:,:,'tire_angle_p'])
+    # additional_results[:,:,'te'] = get_te(additional_results[:,:,'tire_angle_p'])
+    additional_results[:,:,'te'] = get_te_windowed(additional_results[:,:,'tire_angle_p'])
+    
     speed_mask = get_speed_mask(speeds)
     additional_results[:,:,'traj_max_angle_p'] = np.abs((wp_angles_p * speed_mask)).max(axis=-1)
 
@@ -150,6 +152,12 @@ def get_te(tire_angle):
     te[:,1:] = abs(tire_angle[:, 1:] - tire_angle[:, :-1]) # first entry is a zero
     return te
 
+
+def get_te_windowed(tire_angle):
+    # bs, seqlen
+    tire_angle_smoothed = moving_average_batch(tire_angle, 5)
+    te = abs(tire_angle_smoothed - tire_angle)
+    return te
 
 import threading
 def evaluate_run(run, m, save_rollouts,trt,bptt, a):

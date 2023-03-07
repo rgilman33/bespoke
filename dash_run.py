@@ -16,14 +16,18 @@ from PIL import Image
 from dash_utils import *
 
 run_ids = ["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
-model_stem = "2.10_e34"
 run_id = run_ids[0]
-run_id_2 = 'none'
+model_stem = "2.22_e79"
+model_stem_b = "2.10_e4"
 
-rollout, imgs = None, None
+
+rollout, rollout_b, imgs = None, None, None
 def update_rollout():
-    global rollout, imgs
+    global rollout, rollout_b, imgs
     rollout = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem}_rollout.pkl")
+    if model_stem_b is not None:
+        rollout_b = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem_b}_rollout.pkl")
+    
     imgs = load_object(f"{SSD_ROOT}/runs/{run_id}.pkl").img_chunk[0] #rollout.img
 
 update_rollout()
@@ -56,51 +60,70 @@ def update_timeline_fig_layout(fig, title='', xaxis_visible=False, height=120):
         width=1800,
         height=height,
         xaxis_visible=xaxis_visible,
-        margin=dict(l=20, r=20, t=0, b=0)
+        margin=dict(l=20, r=20, t=0, b=0), 
+        showlegend=False,
     )
-    fig.update_layout(legend=dict(
-        yanchor="top",
-        y=0.99,
-        xanchor="left",
-        x=0.01
-    ))
+    # fig.update_layout(legend=dict(
+    #     yanchor="top",
+    #     y=0.99,
+    #     xanchor="left",
+    #     x=0.01
+    # ))
     fig.update_traces(
         hoverinfo="none",
         hovertemplate=None,
     )
 
-fig, fig_unc, fig_lane_width, clfs, speed, dagger_shift = None, None, None, None, None, None
+fig, fig_unc, fig_lane_width, stop, lead, speed, dagger_shift = None, None, None, None, None, None, None
 def refresh_charts():
-    global fig, fig_unc, fig_lane_width, clfs, speed, dagger_shift
+    global fig, fig_unc, fig_lane_width, stop, lead, speed, dagger_shift
+
     # Tire angle
-    fig = go.Figure(data=[get_scatter('tire_angle', rollout.aux[:, "tire_angle"]*-1, 'blue'), 
-                            get_scatter('tire_angle_p', rollout.additional_results[:, "tire_angle_p"]*-1, 'orange')])
+    tire_angle_data = [get_scatter('tire_angle', rollout.aux[:, "tire_angle"]*-1, 'blue')]
+    if model_stem_b is not None:
+        tire_angle_data += [get_scatter('tire_angle_p2', rollout_b.additional_results[:, "tire_angle_p"]*-1, 'brown')]
+    tire_angle_data += [get_scatter('tire_angle_p', rollout.additional_results[:, "tire_angle_p"]*-1, 'red')]
+    fig = go.Figure(data=tire_angle_data)
     update_timeline_fig_layout(fig, "Tire Angle")
 
-    fig_unc = go.Figure(data=[
-                            # get_scatter('loss', tl, 'aqua'), 
-                            get_scatter('unc', rollout.obsnet_outs[:, "unc_p"], 'red'), 
-                            # get_scatter('acts mean', rollout.final_acts_mean/rollout.final_acts_mean.max(), 'orange'),
-                            # get_scatter('acts std', rollout.final_acts_std/rollout.final_acts_std.max(), 'salmon')
-                            ])
-    update_timeline_fig_layout(fig_unc, "Uncertainty", height=80)
-
-    # Stop and lead
-    clfs = go.Figure(data=[get_scatter('has stop p', sigmoid_python(rollout.aux_targets_p[:, "has_stop"]), 'red'),
-        get_scatter('has lead p', sigmoid_python(rollout.aux_targets_p[:, "has_lead"]), 'blue')])
-    update_timeline_fig_layout(clfs, "Stops + Leads", height=80)
-
     # Speed
-    speed = go.Figure(data=[get_scatter('speed', rollout.aux[:,"speed"], 'blue'), 
-                            get_scatter('ccs', rollout.additional_results[:,"ccs_p"], 'orange')])
+    speed_data = [get_scatter('speed', rollout.aux[:,"speed"], 'blue')]
+    if model_stem_b is not None:
+        speed_data += [get_scatter('ccs', rollout_b.additional_results[:,"ccs_p"], 'brown')]
+    speed_data += [get_scatter('ccs', rollout.additional_results[:,"ccs_p"], 'red')]
+    speed = go.Figure(data=speed_data)
     update_timeline_fig_layout(speed, "Speed", xaxis_visible=True, height=80)
 
+    # Uncertainty
+    unc_data = [get_scatter('uncertainty p2', rollout_b.additional_results[:, "te"], 'brown')] if model_stem_b is not None else []
+    unc_data += [get_scatter('uncertainty p', rollout.additional_results[:, "te"], 'red')]
+    fig_unc = go.Figure(data=unc_data)
+    update_timeline_fig_layout(fig_unc, "te", height=80)
+
+    # Stop
+    C = 5
+    stop_data = [get_scatter('has stop p2', np.clip(rollout_b.aux_targets_p[:, "has_stop"], -C, C), 'brown')] if model_stem_b is not None else []
+    stop_data += [get_scatter('has stop p', np.clip(rollout.aux_targets_p[:, "has_stop"], -C, C), 'red')]
+    stop = go.Figure(data=stop_data)
+    update_timeline_fig_layout(stop, "Stop", height=50)
+
+    # Lead
+    lead_data = [get_scatter('has lead p2', np.clip(rollout_b.aux_targets_p[:, "has_lead"], -C, C), 'brown')] if model_stem_b is not None else []
+    lead_data += [get_scatter('has lead p', np.clip(rollout.aux_targets_p[:, "has_lead"], -C, C), 'red')]
+    lead = go.Figure(data=lead_data)
+    update_timeline_fig_layout(lead, "Lead", height=50)
+
     # Dagger shift
-    dagger_shift = go.Figure(data=[get_scatter('dagger_shift', rollout.aux_targets_p[:,"dagger_shift"], 'blue')])
-    update_timeline_fig_layout(dagger_shift, "dagger_shift", xaxis_visible=True, height=80)
+    dagger_data = [get_scatter('dagger shift p2', rollout_b.aux_targets_p[:, "dagger_shift"], 'brown')] if model_stem_b is not None else []
+    dagger_data += [get_scatter('dagger shift p', rollout.aux_targets_p[:, "dagger_shift"], 'red')]
+    dagger_shift = go.Figure(data=dagger_data)
+    update_timeline_fig_layout(dagger_shift, "dagger", xaxis_visible=True, height=80)
     
-    fig_lane_width = go.Figure(data=[get_scatter('lane_width', rollout.aux_targets_p[:,"lane_width"], 'blue'), ])
-    update_timeline_fig_layout(fig_lane_width, "lane_width", height=80)
+    # lane width
+    lane_width_data = [get_scatter('lane_width', rollout_b.aux_targets_p[:,"lane_width"], 'brown')] if model_stem_b is not None else []
+    lane_width_data += [get_scatter('lane_width', rollout.aux_targets_p[:,"lane_width"], 'red')]
+    fig_lane_width = go.Figure(data=lane_width_data)
+    update_timeline_fig_layout(fig_lane_width, "L width", height=50)
 refresh_charts()
 
 
@@ -157,7 +180,7 @@ app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 # blank_img[:,:,:] = 200
 # im_url = np_image_to_base64(blank_img)
 
-plots = [fig, fig_unc, fig_lane_width, clfs, speed, dagger_shift]
+plots = (fig, speed, fig_unc, fig_lane_width, stop, lead, dagger_shift)
 
 app.layout = html.Div(
     className="container",
@@ -173,13 +196,7 @@ app.layout = html.Div(
                     dcc.Dropdown(
                             run_ids,
                             value=run_ids[0],
-                            id='_rollout1',
-                            style={"width": "200px"}
-                        ),
-                    dcc.Dropdown(
-                            run_ids,
-                            value=run_ids[-1],
-                            id='_rollout2',
+                            id='_run_id',
                             style={"width": "200px"}
                         ),
                     dcc.Dropdown(
@@ -273,8 +290,11 @@ def display_hover(hover_data, click_data, relayout_data):
             actgrad = get_actgrad_by_ix(num)
             image_display = combine_img_actgrad(image, actgrad)
 
-        image_display = enrich_img(img=image_display, wps_p=rollout.wps_p[num], aux_targets_p=rollout.aux_targets_p[num], 
-                                        aux=rollout.aux[num],obsnet_out=rollout.obsnet_outs[num])
+        image_display = enrich_img(img=image_display, 
+                                   wps_p=rollout.wps_p[num], wps_p2=rollout_b.wps_p[num] if rollout_b is not None else None,
+                                   aux_targets_p=rollout.aux_targets_p[num], aux_targets_p2=rollout_b.aux_targets_p[num] if rollout_b is not None else None,
+                                   aux=rollout.aux[num],
+                                   obsnet_out=rollout.obsnet_outs[num])
 
         update_fig_img()
         #im_url = np_image_to_base64(img)
@@ -291,20 +311,19 @@ def display_hover(hover_data, click_data, relayout_data):
 outputs = [Output(f'graph-{i}', 'figure') for i in range(len(plots))]
 @app.callback(
     *outputs,
-    Input('_rollout1', 'value'),
-    Input('_rollout2', 'value'),
+    Input('_run_id', 'value'),
     Input('_actgrad_source', 'value'),
     Input('_actgrad_target', 'value'),
     )
-def update_graph(_rollout1, _rollout2, _actgrad_source, _actgrad_target):
-    global run_id, run_id_2, actgrad_source, actgrad_target
-    run_id, run_id_2 = _rollout1, _rollout2
+def update_graph(_run_id, _actgrad_source, _actgrad_target):
+    global run_id, actgrad_source, actgrad_target
+    run_id = _run_id
     actgrad_source = _actgrad_source
     actgrad_target = _actgrad_target
     update_rollout()
     refresh_charts()
 
-    return fig, fig_unc, fig_lane_width, clfs, speed, dagger_shift
+    return fig, speed, fig_unc, fig_lane_width, stop, lead, dagger_shift
 
 
 @app.callback(
