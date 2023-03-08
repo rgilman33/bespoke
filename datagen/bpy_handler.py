@@ -379,7 +379,7 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     print("get wp df", time.time() - t0)
 
     # single-rd. Maybe just straight maybe turns ok.
-    JUST_GO_STRAIGHT_PROB = .5
+    JUST_GO_STRAIGHT_PROB = .2
     just_go_straight = random.random()<JUST_GO_STRAIGHT_PROB
     episode_info.just_go_straight = just_go_straight
     if episode_info.is_single_rd:

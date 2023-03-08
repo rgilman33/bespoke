@@ -241,9 +241,9 @@ class CurveConstrainedSpeedCalculator():
 
 # "A Policy on Geometric Design of Highways and Streets recommends 3.4 m/s2
 # a comfortable deceleration rate for most drivers, as the deceleration threshold for determining adequate stopping sight distance"
-SPEED_MASK_DECEL = 2.5 # m/s/s # NOTE pay attn to this, are we still training far enough on the traj? Tradeoff here in terms of apportioning trn load
-MAX_PRED_S = 6.0
-MIN_M_TRAJ_PRED = 16.
+SPEED_MASK_DECEL = 2.0 #2.5 # m/s/s # NOTE pay attn to this, are we still training far enough on the traj? Tradeoff here in terms of apportioning trn load
+MAX_PRED_S = 8.0 #6.0
+MIN_M_TRAJ_PRED = 26.
 
 def max_pred_m_from_speeds(speeds_mps):
     # can be single obs, seq, or batch,seq. Returns same dims, just swaps speeds for meters.

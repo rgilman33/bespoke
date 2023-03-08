@@ -95,7 +95,7 @@ class Autopilot():
     def set_route(self, route):
 
         self.waypoints = np.empty((len(route), 3), dtype="float64")
-        XY_SMOOTH = 120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
+        XY_SMOOTH = 180 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
         # NOTE will have to be wary of this smoothing when we're doing intersections, as this may be too much. Also our close wp dist.
         self.waypoints[:,0] = moving_average(route.pos_x.to_numpy(), XY_SMOOTH)
         self.waypoints[:,1] = moving_average(route.pos_y.to_numpy(), XY_SMOOTH)
@@ -209,8 +209,8 @@ class Autopilot():
         right_turn = any(self.is_right_turn[current_wp_ix:current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
 
         if self.save_data:
-            HAS_MAP_PROB = .8 if self.episode_info.just_go_straight else 1
-            HAS_ROUTE_PROB = .9 if self.episode_info.just_go_straight else 1
+            HAS_MAP_PROB = .5 if self.episode_info.just_go_straight else 1
+            HAS_ROUTE_PROB = .5 if self.episode_info.just_go_straight else 1
             if self.overall_frame_counter < 10: HAS_MAP_PROB, HAS_ROUTE_PROB = 0, 0 # First few obs, no maps bc heading tracker janky and rds cutoff
             # Navmap
             # gps doesn't refresh as fast as do frames. 
@@ -268,7 +268,7 @@ class Autopilot():
             angle_to_wp_d, _, _ = get_target_wp(angles_to_wps_d, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
             self.tire_angles_hist.append(angle_to_wp_d)
 
-            get_clf_range = lambda s : np.clip(s*4.0, 30., 100) # looking four seconds out, but clamped. TODO should prob be more sec ahead
+            get_clf_range = lambda s : np.clip(s*5.0, 40., 100) # looking five seconds out, but clamped. TODO should prob be more sec ahead
             r = get_clf_range(self.current_speed_mps)
             
             HAS_TIRE_ANGLE_PROB = 0 #.6
@@ -325,8 +325,9 @@ class Autopilot():
 
         ############
         # target wp close to vehicle, used for steering AP to keep it tight on traj
-        # This just follows the cos dagger traj directly. This is the wp we aim towards, not the wp we use for targets
-        CLOSE_WP_DIST = np.interp(self.current_speed_mps, [9, 30], [5., 11.]) #
+        # This just follows the cos dagger traj directly. This is the wp AP aims towards, not the wp we use for targets
+        # CLOSE_WP_DIST = np.interp(self.current_speed_mps, [9, 30], [5., 11.]) #
+        CLOSE_WP_DIST = np.interp(self.current_speed_mps, [9, 30], [3., 8.]) #
         # The above is an important number. If cutting turns too close in AP w traj still in middle, model thinks traj is usually on the right
         # during turns, ie it only sees turns from that perspective. Want to keep agent on traj as much as possible, while also balancing smoothness,
         # bc if too on top of target wp, jittery
@@ -352,7 +353,7 @@ class Autopilot():
         dist_car_travelled = self.current_speed_mps * (1 / fps) if self.current_speed_mps>0 else 0
 
         # always using close wp for ap, to keep right on traj
-        _wheelbase = 1.6 #CRV_WHEELBASE # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
+        _wheelbase = CRV_WHEELBASE #1.6 #CRV_WHEELBASE # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
         _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/_wheelbase) # rad/sec # Tire angle from prev step
         vehicle_heading_delta = _vehicle_turn_rate * (1/fps) # radians
         
