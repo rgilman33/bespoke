@@ -172,7 +172,7 @@ def evaluate_run(run, m, save_rollouts,trt,bptt, a):
 import multiprocessing
 from loaders import *
 class RwEvaluator():
-    def __init__(self, m, wandb=None, save_rollouts=False, trt=False, run_ids=None, bptt=None):
+    def __init__(self, m, wandb=None, save_rollouts=False, trt=False, run_ids=None, bptt=None, do_sim=True):
         run_ids = run_ids if run_ids is not None else ["run_555a", "run_556a", "run_556b", "run_556c", "run_555b", "run_556d"]
         self.run_paths = [f"{SSD_ROOT}/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
         self.wandb = wandb
@@ -180,6 +180,7 @@ class RwEvaluator():
         self.save_rollouts = save_rollouts
         self.trt = trt
         self.bptt = bptt
+        self.do_sim = do_sim
 
     def evaluate(self):
         # threads = [] # not using multiprocessing Process bc of complications with gpu
@@ -192,9 +193,10 @@ class RwEvaluator():
             evaluate_run(run, self.m, self.save_rollouts, self.trt, self.bptt, a)
         
         # Do a single sim run each round
-        run_paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/*/run*/", recursive=True)
-        run = RunLoader(random.choice(run_paths), is_rw=False) # this takes awhile itself, ~50s (when other trn is going on though)
-        evaluate_run(run, self.m, self.save_rollouts, self.trt, self.bptt, a)
+        if self.do_sim:
+            run_paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/*/run*/", recursive=True)
+            run = RunLoader(random.choice(run_paths), is_rw=False) # this takes awhile itself, ~50s (when other trn is going on though)
+            evaluate_run(run, self.m, self.save_rollouts, self.trt, self.bptt, a)
 
         # for t in threads:t.join()
         print("down w rollouts, reporting")
