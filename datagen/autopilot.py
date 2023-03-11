@@ -95,7 +95,7 @@ class Autopilot():
     def set_route(self, route):
 
         self.waypoints = np.empty((len(route), 3), dtype="float64")
-        XY_SMOOTH = 180 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
+        XY_SMOOTH = 160 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
         # NOTE will have to be wary of this smoothing when we're doing intersections, as this may be too much. Also our close wp dist.
         self.waypoints[:,0] = moving_average(route.pos_x.to_numpy(), XY_SMOOTH)
         self.waypoints[:,1] = moving_average(route.pos_y.to_numpy(), XY_SMOOTH)
@@ -268,8 +268,11 @@ class Autopilot():
             angle_to_wp_d, _, _ = get_target_wp(angles_to_wps_d, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
             self.tire_angles_hist.append(angle_to_wp_d)
 
-            get_clf_range = lambda s : np.clip(s*5.0, 40., 100) # looking five seconds out, but clamped. TODO should prob be more sec ahead
-            r = get_clf_range(self.current_speed_mps)
+            # get_clf_range = lambda s : np.clip(s*5.0, 40., 100) # looking five seconds out, but clamped. TODO should prob be more sec ahead
+            # r = get_clf_range(self.current_speed_mps)
+
+            stop_angle, _,_ = angle_to_wp_from_dist_along_traj(angles_to_wps, self.stop_dist)
+            lead_angle, _,_ = angle_to_wp_from_dist_along_traj(angles_to_wps, self.lead_dist)
             
             HAS_TIRE_ANGLE_PROB = 0 #.6
             self.aux[c, "speed"] = self.current_speed_mps
@@ -277,9 +280,9 @@ class Autopilot():
             self.aux[c, "tire_angle_dagger_corrected"] = angle_to_wp
             self.aux[c, "tire_angle_lagged"] = self.tire_angles_hist[-self.tire_angles_lag] + self.tire_angle_noise[self.overall_frame_counter]
             self.aux[c, "has_tire_angle"] = int(random.random() < HAS_TIRE_ANGLE_PROB)
-            self.aux[c, "has_stop"] = self.stop_dist < r #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
+            self.aux[c, "has_stop"] = self.stop_dist < 60 and (abs(stop_angle) < .35) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
             self.aux[c, "stop_dist"] = self.stop_dist
-            self.aux[c, "has_lead"] = self.lead_dist < r #smooth_dist_clf(self.lead_dist, 80, 100)
+            self.aux[c, "has_lead"] = (self.lead_dist < 80) and (abs(lead_angle) < .35) #smooth_dist_clf(self.lead_dist, 80, 100)
             self.aux[c, "lead_dist"] = self.lead_dist
             self.aux[c, "lead_speed"] = self.lead_relative_speed
             self.aux[c, "should_yield"] = self.should_yield

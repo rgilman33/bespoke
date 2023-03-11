@@ -218,11 +218,31 @@ def combine_img_actgrad(img, actgrad, color=(8,255,8)):
     img_actgrad = (actgrad_fillin + img*(1-actgrad)).astype('uint8')
     return img_actgrad
 
+def make_enriched_vid_trn(rollout):
+    # quick hack to get it to work w sim, mostly just the fn below
+    height, width, channels = IMG_HEIGHT, IMG_WIDTH, 3
+    fps = 20
+    filename = f"sim_{rollout.model_stem}"
+    video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
 
-def make_enriched_vid(run_id, model_stem, model_stem_b=None):
+    for i in range(len(rollout.img)):
+        if i%1000==0: print(i)
+        wps_p2, aux_targets_p2 = None, None
+        img = enrich_img(img=rollout.img[i][:,:,:3], 
+                         wps=rollout.wps[i],
+                         wps_p=rollout.wps_p[i], wps_p2=wps_p2, 
+                         aux_targets_p=rollout.aux_targets_p[i], aux_targets_p2=aux_targets_p2,
+                        aux=rollout.aux[i], 
+                        obsnet_out=rollout.obsnet_outs[i])
+        video.write(img[:,:,::-1])
+
+    video.release()
+    print(f"{filename} done!")
+
+def make_enriched_vid(run_id, model_stem, model_stem_b=None): # rw
     rollout = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem}_rollout.pkl")
     if model_stem_b is not None: rollout_b = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem_b}_rollout.pkl")
-    run = load_object(f"{SSD_ROOT}/runs/{run_id}.pkl")
+    run = load_object(f"{BESPOKE_ROOT}/tmp/runs/{run_id}.pkl")
 
     height, width, channels = IMG_HEIGHT, IMG_WIDTH, 3
     fps = 20

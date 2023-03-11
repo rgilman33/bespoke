@@ -36,8 +36,8 @@ MAP_HEIGHT = 180 #120 #IMG_HEIGHT
 # WPs
 ###########################
 
-MIN_WP_M = 6 #8
-TRAJ_WP_DISTS = [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25] + [35, 45, 55, 65, 75, 85, 95, 105, 115, 125]
+MIN_WP_M = 4 #6 #8
+TRAJ_WP_DISTS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] + [33, 43, 53, 63, 73, 83, 93, 103, 113, 123]
 assert MIN_WP_M==TRAJ_WP_DISTS[0]
 N_WPS = len(TRAJ_WP_DISTS)
 
@@ -48,8 +48,8 @@ LAST_NEAR_WP_DIST_M = 25
 LAST_NEAR_WP_IX = 19
 # These are the dists at all the midway pts btwn our wps, plus a zero in the beginning
 # they're staggered by .5m for closer wps, then 5m for farther ones
-WP_HALFWAYS = [6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 23.5, 24.5, 30.0] 
-WP_HALFWAYS += [40, 50, 60, 70, 80, 90, 100, 110, 120] # last heading is the one btwn our second to last and our last wp
+WP_HALFWAYS = [4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 28.0] 
+WP_HALFWAYS += [38, 48, 58, 68, 78, 88, 98, 108, 118] # last heading is the one btwn our second to last and our last wp
 # halfways are the halfway pt on each segment, there is one less than the number of wps
 
 HEADING_BPS = [0] + WP_HALFWAYS
@@ -67,14 +67,26 @@ mph_to_mps = lambda x : x*.44704
 # rw
 ###########################
 
-# 6.3, still using 6.7
-min_dist_lookup = [ # TODO change this name to be more accurate. NOTE are we looking up constant time here? ie is this a constant mult of eg .8s ahead?
-    (8.33, 6.), #18 mph (speed mps, wp dist m)
-    (11.11, 7.5), # 24 mph
+# # 6.3, still using 6.7. Ended up using this for almost a year
+# min_dist_lookup = [ # TODO change this name to be more accurate. NOTE are we looking up constant time here? ie is this a constant mult of eg .8s ahead?
+#     (8.33, 6.), #18 mph (speed mps, wp dist m)
+#     (11.11, 7.5), # 24 mph
+#     (13.89, 9.5), # 30 mph
+#     (16.67, 12), # 36 mph
+#     (19.44, 16.5), # 43 mph
+#     (22.22, 22), # 50 mph
+# ]
+
+# 3.11.23 updating 
+ # similar to above, but closer wps moved inwards. Changed after lengthening wheelbase and wps smoothing (not sure which) made traj tighter closer to ego, but similar further out
+min_dist_lookup = [
+    (6.5, 4), # 14.5 mph
+    (8.33, 5.), #18 mph (speed mps, wp dist m)
+    (11.11, 7.0), # 24 mph
     (13.89, 9.5), # 30 mph
-    (16.67, 12), # 36 mph
+    (16.2, 12), # 36 mph
     (19.44, 16.5), # 43 mph
-    (22.22, 22), # 50 mph
+    (22.5, 22), # 50 mph
 ]
 min_dist_bps = [x[0] for x in min_dist_lookup]
 min_dist_vals = [x[1] for x in min_dist_lookup]

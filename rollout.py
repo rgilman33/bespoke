@@ -164,7 +164,7 @@ def evaluate_run(run, m, save_rollouts,trt,bptt, a):
     # run is a Run object, m is a model
     run.bs = 1 #TODO get rid of this
     if bptt is not None: run.bptt = bptt
-    rollout = Rollout(run, model_stem=m.model_stem, m=m, store_imgs=save_rollouts, trt=trt)
+    rollout = Rollout(run, model_stem=m.model_stem, m=m, store_imgs=False, trt=trt)
     if save_rollouts:
         save_object(rollout, f"{BESPOKE_ROOT}/tmp/{rollout.run_id}_{m.model_stem}_rollout.pkl")
     a.append(rollout)
@@ -174,7 +174,7 @@ from loaders import *
 class RwEvaluator():
     def __init__(self, m, wandb=None, save_rollouts=False, trt=False, run_ids=None, bptt=None, do_sim=True):
         run_ids = run_ids if run_ids is not None else ["run_555a", "run_556a", "run_556b", "run_556c", "run_555b", "run_556d"]
-        self.run_paths = [f"{SSD_ROOT}/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
+        self.run_paths = [f"{BESPOKE_ROOT}/tmp/runs/{run_id}.pkl" for run_id in run_ids] # loading from pickled Run object rather than from scratch
         self.wandb = wandb
         self.m = m
         self.save_rollouts = save_rollouts

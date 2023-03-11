@@ -422,11 +422,11 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
         timer.log("calc wp targets")
 
         # Mask
-        MAX_ANGLE_TO_PRED = .48 #.36 #.18 #.16 #TODO get rid of this, along w loss weights
+        MAX_ANGLE_TO_PRED = .48 #.36 #.18 #.16 
         to_pred_mask = (np.abs(wp_angles) < MAX_ANGLE_TO_PRED).astype(np.float16)
         to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
 
-        ZERO_THRESH = 1.0
+        ZERO_THRESH = .7 #1.0
         zero_mask = (np.abs(wp_angles) < ZERO_THRESH).astype(np.float16)
         to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
 

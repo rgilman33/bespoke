@@ -47,7 +47,7 @@ class LossManager():
                     "wp_angles": 1,
                     "wp_curvatures":.2,
                     "wp_headings":.02,
-                    "wp_rolls":.05,
+                    "wp_rolls":.2,
                     "wp_zs":.02,
                     }
         for k,v in wps_losses.items():
@@ -214,7 +214,7 @@ class Trainer():
 
             if update_counter % 20 == 0:
                 print(curvatures_loss.max().item(), curvatures_loss_i.max().item(), headings_loss_i.max().item(), headings_loss.max().item(), angles_loss_i.max().item(), angles_loss.max().item(), zs_loss_i.max().item(), zs_loss.max().item(), rolls_loss_i.max().item(), rolls_loss.max().item())
-            _mm = 500
+            _mm = 400
             cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
             losses = {
                 "wp_angles_i": cm(angles_loss_i),
