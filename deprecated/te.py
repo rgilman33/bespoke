@@ -3,11 +3,6 @@
 
 TIME_DELTA_PER_STEP = .05 # 1 / hz #TODO this should probably be in constants
  
-def rotate_around_origin(x, y, angle):
-    xx = x * np.cos(angle) + y * np.sin(angle)
-    yy = -x * np.sin(angle) + y * np.cos(angle)
-
-    return xx, yy
 
 def temporal_consistency_loss(model_out, speeds_mps_all, tire_angles_rad_all, wheelbase=CRV_WHEELBASE):
     temporal_error = torch.FloatTensor([0]).to('cuda')

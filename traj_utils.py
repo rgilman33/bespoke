@@ -14,7 +14,7 @@ def wp_ix_from_dist_along_traj(dist_m):
     wp_ix = min(max(0, wp_ix), len(TRAJ_WP_DISTS)-1) # ix can't be less than our closest wp or more than our farthest wp
 
     return wp_ix
-    
+
 #TODO make sure we're also always capping min max on distance as well, in all parts of codebase
 
 
@@ -35,9 +35,9 @@ def angle_to_wp_from_dist_along_traj(traj, dist_m):
 
 def get_target_wp_dist(speed_mps, wp_m_offset=0):
     # takes in speed, returns dist along traj to target wp
-    wp_m = np.interp(speed_mps, 
-                    min_dist_bps, 
-                    [v+wp_m_offset for v in min_dist_vals]) 
+    wp_m = np.interp(speed_mps,
+                    min_dist_bps,
+                    [v+wp_m_offset for v in min_dist_vals])
     return wp_m
 
 def get_target_wp(traj, speed_mps, wp_m_offset=0):
@@ -51,43 +51,121 @@ def get_target_wp(traj, speed_mps, wp_m_offset=0):
 
 
 def gather_preds(preds_all, speeds):
-    """ takes in preds for entire traj (seqlen, n_preds), 
-    gathers them based on the given speed kph (seqlen, 1). """ 
-    
+    """ takes in preds for entire traj (seqlen, n_preds),
+    gathers them based on the given speed kph (seqlen, 1). """
+
     wp_angles = []
     for i in range(len(preds_all)):
         traj = preds_all[i]
         s = speeds[i]
         angle_to_wp, _, _ = get_target_wp(traj, s)
         wp_angles.append(angle_to_wp)
-    return np.array(wp_angles) 
+    return np.array(wp_angles)
 
 
 # Dumb, but have to do this bc can't get the jitter out of blender curve
+# i don't like this fn
 def smooth_near_wps(traj):
     # Only use for headings and for wp_angles, as those are both zero at ego origin
     traj_orig = traj.copy()
 
     # Value is zero at origin. Including beginning and end tips to aid the smoothing
-    t = np.insert(traj, 0, 0)
-    tt = np.interp(list(range(0,40)), [0]+TRAJ_WP_DISTS, t)
+    meterly_values = np.interp(list(range(0,40)), [0]+TRAJ_WP_DISTS, np.insert(traj, 0, 0)) # getting a value for every meter from 0 to 40
 
-    # tt returns same size as the original, so we only want from six to 26
-    traj_orig[0:20] = moving_average(tt, 5)[6:26]
+    # tt returns same size as the original, so we only want first part
+    traj_orig[0:N_DENSE_WPS] = moving_average(meterly_values, 5)[MIN_WP_M:MIN_WP_M+N_DENSE_WPS]
 
     return traj_orig
 
 
-def get_headings_from_traj(wp_angles, wp_dists):
+def get_heading_and_pos_delta(tire_angle, speed, wheelbase=CRV_WHEELBASE, n_sec=1/FPS):
+    # TODO use this same fn in model wrapper
+
+    curvature = tire_angle/wheelbase # rad/m
+    vehicle_turn_rate_sec = curvature * speed # rad/sec
+    future_vehicle_heading = vehicle_turn_rate_sec * n_sec # radians, w respect to original ego heading
+
+    dist_travelled = speed * n_sec # meters
+    r = dist_travelled / (future_vehicle_heading)
+    future_vehicle_y = np.sin(future_vehicle_heading)*r
+    future_vehicle_x = r - (np.cos(future_vehicle_heading)*r)
+
+    return future_vehicle_heading, future_vehicle_x, future_vehicle_y
+
+# def get_te_loss(wp_angles, wp_dists, aux):
+#     # batch, seq, n
+#     xs, ys = xy_from_angle_dist(wp_angles, wp_dists)
+#     t0_xs, t0_ys = xs[:,:-1], ys[:,:-1]
+#     t1_xs, t1_ys = xs[:,1:], ys[:,1:]
+
+#     # shift and rotate t1 according to vehicle motion. Using aux values (tire angle, speed) from t0
+#     # this puts the t1 values in the coord space of t0
+#     t1h, t1x, t1y = get_heading_and_pos_delta(aux[:,:-1,'tire_angle'], aux[:,:-1,'speed']) #TODO change to tire_angle_ap
+#     t1_xs += t1x
+#     t1_ys += t1y
+#     t1_xs, t1_ys = rotate_around_origin(t1_xs, t1_ys, t1h)
+
+#     # Now all in absolute coords relative to t0
+
+#     #TODO instead, rotate t0 points to get traj_consistency targets for t1. Can get those fully in np, detached,
+#     # and then use them as targets
+
+#     # This is where t1 points should be, if they remain on t0 traj
+#     dist_travelled = aux[:,:-1,'speed'] * (1/FPS) # m
+#     t1_xs_targets = np.interp(TRAJ_WP_DISTS+dist_travelled, TRAJ_WP_DISTS, t0_xs)
+#     t1_ys_targets = np.interp(TRAJ_WP_DISTS+dist_travelled, TRAJ_WP_DISTS, t0_ys)
+
+#     loss = np.sqrt((t1_xs_targets - t1_xs)**2 + (t1_ys_targets - t1_ys)**2) # loss for each wp
+#     loss = loss[:,:,:20] # just for the first 20, can refine this later
+#     loss = loss.mean()
+
+#     return loss
+
+def get_consistency_targets(wp_angles, wp_dists, aux):
+    """
+    Given traj at t0, and vehicle movement, what will targets be at t1 to remain completely on the traj?
+    """
+    # batch, seq, n
+    xs, ys = xy_from_angle_dist(wp_angles, wp_dists)
+
+    # puts the t0 xy values in the coord space of t1
+    hd, xd, yd = get_heading_and_pos_delta(aux[:,:,'tire_angle_ap'], aux[:,:,'speed'])
+    xs -= xd; ys -= yd
+    xs, ys = rotate_around_origin(xs, ys, hd)
+
+    # This is where t1 points should be, if they remain on t0 traj
+    dist_travelled = aux[:,:,'speed'] * (1/FPS) # m
+    xs_targets = np.interp(TRAJ_WP_DISTS-dist_travelled, TRAJ_WP_DISTS, xs)
+    ys_targets = np.interp(TRAJ_WP_DISTS-dist_travelled, TRAJ_WP_DISTS, ys)
+
+    wp_angles_t = np.arctan2(xs_targets, ys_targets)
+    wp_angles_t = wp_angles_t[:,:-1,:] # not taking last one as there's no interp target
+
+    return wp_angles_t
+
+
+def rotate_around_origin(x, y, angle):
+    xx = x * np.cos(angle) + y * np.sin(angle)
+    yy = -x * np.sin(angle) + y * np.cos(angle)
+
+    return xx, yy
+
+def xy_from_angle_dist(wp_angles, wp_dists):
     #NOTE this should always be done in full float precision
     wp_xs = np.sin(wp_angles) * wp_dists
     wp_ys = np.cos(wp_angles) * wp_dists
+
+    return wp_xs, wp_ys
+
+def get_headings_from_traj(wp_angles, wp_dists):
+    #NOTE this should always be done in full float precision
+    wp_xs, wp_ys = xy_from_angle_dist(wp_angles, wp_dists)
 
     # these headings are at half-wp marks
     headings = np.arctan2(wp_xs[1:] - wp_xs[:-1], wp_ys[1:] - wp_ys[:-1])
     # cat a zero on the front bc we know the heading is zero at vehicle, by definition
     headings = np.concatenate([np.array([0], dtype=np.float32), headings])
-    
+
     # interp back to our original wp dists so they're aligned w our other data
     headings = np.interp(TRAJ_WP_DISTS, HEADING_BPS, headings)
 
@@ -129,13 +207,13 @@ def get_headings_from_traj_batch(wp_angles, wp_dists):
 
 
 def get_curvatures_from_headings(headings):
-    
+
     # these will be at the half-wp marks
     curvatures = (headings[1:] - headings[:-1]) / SEGMENT_DISTS # rad / m
-    
+
     # we're extrapolating for both the first and last wp, that's fine
     curvatures = np.interp(TRAJ_WP_DISTS, WP_HALFWAYS, curvatures)
-    
+
     return curvatures
 
 def get_curvatures_from_headings_batch(headings):
@@ -190,7 +268,7 @@ def get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACC
 
     # this magic is in addition to the magic number in curve-to-speeds formula above
     ccs *= np.interp(mps_to_mph(current_speed_mps), [20, 40], [1.0, 1.12]) # rw driving we seem to accept more torque at higher speeds? maybe not, maybe rds are generally banked at higher speeds?
-    
+
     return ccs
 
 
@@ -198,30 +276,30 @@ def get_angles_to(xs, ys, heading):
     # wps w respect to current pos, ie centered at zero, ie pos already subtracted out. Radians in and out.
     # current heading can be range 0 to 2*pi or -pi to pi
     # replacing below function "get_angle_to" so 1) i can understand it and 2) is vectorized
-    
+
     angles = np.arctan2(xs, ys) # from -pi to pi, zero is up
-    
+
     angles[angles<0] += 2*np.pi # rotate to range 0 to 2*pi
-    
+
     angles -= heading # subtract out current heading
-    
+
     # rotate into range -pi to pi
-    angles[angles<-np.pi] += 2*np.pi 
+    angles[angles<-np.pi] += 2*np.pi
     angles[angles>np.pi] -= 2*np.pi
-    
+
     return angles
 
 
-MAX_CCS_UNROLL_ACCEL = .6 #1.0
+MAX_CCS_UNROLL_ACCEL = 1.0
 class CurveConstrainedSpeedCalculator():
     def __init__(self):
         self.reset()
-    
+
     def step(self, wp_curvatures, current_speed):
         # Curve constrained speed
         curve_constrained_speed_mps = get_curve_constrained_speed(wp_curvatures, current_speed)
         self.curve_speeds_history.append(curve_constrained_speed_mps)
-        
+
         CURVE_SPEED_UNROLL_DELAY_S = 5.0
         FPS = 20
         CURVE_SPEED_UNROLL_DELAY_IX = int(CURVE_SPEED_UNROLL_DELAY_S*FPS)
@@ -243,11 +321,11 @@ class CurveConstrainedSpeedCalculator():
 # a comfortable deceleration rate for most drivers, as the deceleration threshold for determining adequate stopping sight distance"
 SPEED_MASK_DECEL = 2.0 #2.5 # m/s/s # NOTE pay attn to this, are we still training far enough on the traj? Tradeoff here in terms of apportioning trn load
 MAX_PRED_S = 8.0 #6.0
-MIN_M_TRAJ_PRED = 26.
+MIN_M_TRAJ_PRED = 40.
 
 def max_pred_m_from_speeds(speeds_mps):
     # can be single obs, seq, or batch,seq. Returns same dims, just swaps speeds for meters.
-    
+
     # Pred out as far as it will take us to comfortably to get to full stop
     max_pred_s = speeds_mps / SPEED_MASK_DECEL
 
@@ -269,7 +347,7 @@ def get_speed_mask(speed):
     max_pred_dists_m = max_pred_m_from_speeds(speed)
 
     # Pad to broadcast. Result is eg (batch,seq,30) if input have batch seq, or ()
-    speed_mask = (np.array(TRAJ_WP_DISTS) <= max_pred_dists_m[...,None]).astype(np.float32) 
+    speed_mask = (np.array(TRAJ_WP_DISTS) <= max_pred_dists_m[...,None]).astype(np.float32)
 
     return speed_mask[0] # otherwise padded first dim
 
@@ -299,8 +377,8 @@ class TorqueLimiter():
         torque_limited_angle_deg = np.clip(desired_tire_angle_deg, -max_angle_bc_abs_torque, max_angle_bc_abs_torque)
         is_abs_torque_limited = torque_limited_angle_deg != desired_tire_angle_deg
 
-        td_limited_angle_deg = np.clip(desired_tire_angle_deg, 
-                                        BASELINE - max_angle_delta_bc_td, 
+        td_limited_angle_deg = np.clip(desired_tire_angle_deg,
+                                        BASELINE - max_angle_delta_bc_td,
                                         BASELINE + max_angle_delta_bc_td)
         is_td_limited = td_limited_angle_deg != desired_tire_angle_deg
 

@@ -38,7 +38,7 @@ class Autopilot():
         self.RANDO_YIELD_DURATION = random.randint(30, 120)
 
         self.N_NEGOTIATION_WPS = 100
-        NEGOTIATION_TRAJ_LEN_SEC = random.uniform(2.0, 3.5) # follow dist. TODO uncouple follow dist and negotiation traj
+        NEGOTIATION_TRAJ_LEN_SEC = random.uniform(2.5, 3.5) # follow dist. TODO uncouple follow dist and negotiation traj
         self.S_PER_WP = NEGOTIATION_TRAJ_LEN_SEC / self.N_NEGOTIATION_WPS
 
         ######
@@ -95,7 +95,7 @@ class Autopilot():
     def set_route(self, route):
 
         self.waypoints = np.empty((len(route), 3), dtype="float64")
-        XY_SMOOTH = 160 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
+        XY_SMOOTH = 180 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
         # NOTE will have to be wary of this smoothing when we're doing intersections, as this may be too much. Also our close wp dist.
         self.waypoints[:,0] = moving_average(route.pos_x.to_numpy(), XY_SMOOTH)
         self.waypoints[:,1] = moving_average(route.pos_y.to_numpy(), XY_SMOOTH)
@@ -188,10 +188,10 @@ class Autopilot():
         if abs(self.dagger_shift):
             sec_to_undagger = self._sec_to_undagger(self.dagger_shift)
             meters_to_undagger = self.current_speed_mps * sec_to_undagger
-            meters_to_undagger = max(meters_to_undagger, 8)
+            meters_to_undagger = max(meters_to_undagger, 12)
             
-            perc_into_undaggering = TRAJ_WP_DISTS_NP / meters_to_undagger 
-            p = np.clip(linear_to_sin_decay(perc_into_undaggering), 0, 1)
+            perc_into_undaggering = np.clip(TRAJ_WP_DISTS_NP/meters_to_undagger, 0, 1)
+            p = linear_to_sin_decay(perc_into_undaggering)
             xs += self.shift_x*p
             ys += self.shift_y*p
 
@@ -277,12 +277,13 @@ class Autopilot():
             HAS_TIRE_ANGLE_PROB = 0 #.6
             self.aux[c, "speed"] = self.current_speed_mps
             self.aux[c, "tire_angle"] = angle_to_wp_d #self.current_tire_angle
+            self.aux[c, "tire_angle_ap"] = self.current_tire_angle # actual tire angle used for ap steering
             self.aux[c, "tire_angle_dagger_corrected"] = angle_to_wp
-            self.aux[c, "tire_angle_lagged"] = self.tire_angles_hist[-self.tire_angles_lag] + self.tire_angle_noise[self.overall_frame_counter]
+            # self.aux[c, "tire_angle_lagged"] = self.tire_angles_hist[-self.tire_angles_lag] + self.tire_angle_noise[self.overall_frame_counter]
             self.aux[c, "has_tire_angle"] = int(random.random() < HAS_TIRE_ANGLE_PROB)
-            self.aux[c, "has_stop"] = self.stop_dist < 60 and (abs(stop_angle) < .35) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
+            self.aux[c, "has_stop"] = self.stop_dist < 60 and (abs(stop_angle) < .65) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
             self.aux[c, "stop_dist"] = self.stop_dist
-            self.aux[c, "has_lead"] = (self.lead_dist < 80) and (abs(lead_angle) < .35) #smooth_dist_clf(self.lead_dist, 80, 100)
+            self.aux[c, "has_lead"] = (self.lead_dist < 80) and (abs(lead_angle) < .65) # .65 is directly out of frame #smooth_dist_clf(self.lead_dist, 80, 100)
             self.aux[c, "lead_dist"] = self.lead_dist
             self.aux[c, "lead_speed"] = self.lead_relative_speed
             self.aux[c, "should_yield"] = self.should_yield
@@ -467,6 +468,8 @@ class Autopilot():
 
         # negotiation traj
         m_per_wp = self.current_speed_mps * self.S_PER_WP
+        min_traj_m = 12
+        m_per_wp = max(m_per_wp, min_traj_m/self.N_NEGOTIATION_WPS)
         frame_steps_per_wp = max(int(round(m_per_wp / WP_SPACING)), 1)
         self.negotiation_traj_ixs[:] = list(range(0, frame_steps_per_wp*self.N_NEGOTIATION_WPS, frame_steps_per_wp))
         negotiation_wps_ixs = current_wp_ix + self.negotiation_traj_ixs
@@ -504,7 +507,7 @@ class Autopilot():
         # self.long_kP = .5 #random.uniform(.02, .05)
         self.curve_speed_mult = random.uniform(.7, 1.25)
         self.turn_slowdown_sec_before = random.uniform(.25, .75)
-        self.max_accel = random.uniform(1.5, 4.5)
+        self.max_accel = random.uniform(2.6, 3.5) #
 
 
 

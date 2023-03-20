@@ -80,7 +80,7 @@ def make_episode():
     is_single_rd = random.random() < 1 
     get_node("is_single_rd", get_variables_nodes).outputs["Value"].default_value = 1 if is_single_rd else 0
 
-    HAS_LANELINES_PROB = .8
+    HAS_LANELINES_PROB = .7 # .8
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
     is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, no bumps, more often banked, no smaller-scale XY noise
@@ -95,7 +95,13 @@ def make_episode():
         lane_width = 3.4
         left_shift = -random.uniform(.4, 1.7)
 
+    has_stops = 1 if rd_is_lined or (lane_width+left_shift)>2.6 else 0 # wide gravel also can have stops
+    get_node("has_stops", get_variables_nodes).outputs["Value"].default_value = has_stops
+    
+    is_wide_laned = lane_width>3.4 or wide_shoulder_add>0
+
     get_node("lane_width", get_variables_nodes).outputs["Value"].default_value = lane_width
+    get_node("lane_width_actual", get_variables_nodes).outputs["Value"].default_value = lane_width + left_shift
 
     get_node("has_lanelines", get_variables_nodes).outputs["Value"].default_value = 1 if rd_is_lined else 0
 
@@ -105,7 +111,9 @@ def make_episode():
 
     IS_COUNTRY_MTN_PROB = .2 # interspersed very curvy with totally straight. Train slowdowns and sharp curves.
     is_country_mtn = random.random() < IS_COUNTRY_MTN_PROB and lane_width < 3.6 and not (is_highway or is_just_straight)
-    # NOTE prob don't do country_mtn when doing intersection turning. There is sometimes some extreme curves, which overlap sometimes at high noise levels.
+    just_mtn = random.random() < .1 # subset of country_mtn, curviness without the straights
+    get_node("country_mtn_border_noise", rd_noise_nodes).outputs["Value"].default_value = 0 if just_mtn else 16
+
     # CRV is 1.85m wide. 
     # dist from back wheel to cam loc is 1.78m
     # i believe cam was ~1.45m from the ground, should measure again. These values are hardcoded in the blendfile. Cam is also hardcoded to
@@ -115,10 +123,9 @@ def make_episode():
     RD_IS_BANKED_PROB = 0 if (not rd_is_lined or is_just_straight) else .7 if is_highway else .4
     rd_is_banked = random.random()<RD_IS_BANKED_PROB
     get_node("max_rd_roll", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.02, .05) if is_country_mtn else random.uniform(.1, .14) # max roll is 8 deg (.14 rad) on rural rds in WY
-    get_node("max_roll_at_this_curvature", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.08, .16)
+    get_node("max_roll_at_this_curvature", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.06, .16)
     get_node("rd_is_banked", z_adjustment_nodes).outputs["Value"].default_value = 1 if rd_is_banked else 0
 
-    is_wide_laned = lane_width>3.4 or wide_shoulder_add>0
 
     get_node("loop_random_seed_x", rd_noise_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6) # TODO different noises should get their own seeds, to increase combinations
     get_node("loop_random_seed_y", rd_noise_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
@@ -136,7 +143,7 @@ def make_episode():
     get_node("loop_noise_scale_2", rd_noise_nodes).outputs["Value"].default_value = noise_scale_2
     nm2_r = random.random()
     no_noise_2 = (nm2_r<.7 or is_highway or is_wide_laned or is_just_straight)
-    nm2 = random.uniform(100,250) if is_country_mtn else 0 if no_noise_2 else random.uniform(20, 60) if nm2_r<.9 else random.uniform(60, 100)
+    nm2 = random.uniform(150,300) if is_country_mtn else 0 if no_noise_2 else random.uniform(20, 60) if nm2_r<.9 else random.uniform(60, 100)
     get_node("loop_noise_mult_2", rd_noise_nodes).outputs["Value"].default_value = nm2
 
     # Z noise
@@ -148,10 +155,11 @@ def make_episode():
 
     # small rises
     z1_scale = .5 * 10**random.uniform(0, 1) # /= 100 in blender
-    z1_mult_max = np.interp(z1_scale, [.5, 1, 3, 5], [25, 18, 6, 3]) * .8 #manually bringing down a bit, too intense
+    z1_mult_max_mult = 1 if is_country_mtn else .8
+    z1_mult_max = np.interp(z1_scale, [.5, 1, 3, 5], [25, 18, 6, 3]) * z1_mult_max_mult # too much large-scale hills makes intx strange
     z1_mult_max = z1_mult_max*.3 if rd_is_banked else z1_mult_max # small scale hills w banking isn't realistic, i don't think. Pay attn. 
     get_node("loop_noise_scale_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_scale
-    z1_mult = 0 if random.random() < .1 else random.uniform(0, z1_mult_max/2) if random.random() < .8 else random.uniform(z1_mult_max/2, z1_mult_max)
+    z1_mult = 0 if random.random()<.05 else random.uniform(0, z1_mult_max/2) if random.random()<.8 else random.uniform(z1_mult_max/2, z1_mult_max)
     get_node("loop_noise_mult_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_mult
 
     # rd bumpiness
@@ -186,7 +194,7 @@ def make_episode():
     BASE_PITCH = 89
     BASE_YAW = 180
     pitch_perturbation = random.uniform(-2, 2)
-    yaw_perturbation = random.uniform(-2, 2)
+    yaw_perturbation = 0 #random.uniform(-2, 2)
     bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation)
     bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation)
 
@@ -282,7 +290,7 @@ def make_episode():
 
     get_node("hdri_hue", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.45, .55)
     get_node("hdri_sat", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.5, 1.5)
-    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.3, 2)
+    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.3, 4)
 
     ######################
     # Lanelines, material
@@ -333,15 +341,17 @@ def make_episode():
 
     ############### # all is relative to edge of rd, ie outer white line
     # inner_shoulder is the same surface as rd
-    inner_shoulder_width = .25 if is_only_yellow_lined or not rd_is_lined else (wide_shoulder_add*.5 + random.uniform(.3, .9))
+
+    inner_shoulder_width = .25 if (is_only_yellow_lined or not rd_is_lined) else (wide_shoulder_add*.5 + random.uniform(.3, .9))
 
     # outer shoulder is different surface from rd
     outer_shoulder_width = random.uniform(0.01, .3)
 
     # constant inner-shoulder width when only-yellow or dirt-gravel. 
     rd_start_fade = inner_shoulder_width 
-    # relatively crisp rd-shoulder edge when no white line support
-    rd_fade_width = random.uniform(0.1, .15) if is_only_yellow_lined or not rd_is_lined else random.uniform(0.1, 1.0)
+    # # relatively crisp rd-shoulder edge when no white line support
+    # rd_fade_width = random.uniform(0.1, .15) if is_only_yellow_lined or not rd_is_lined else random.uniform(0.1, 1.0)
+    rd_fade_width = .3*(10**random.uniform(0, 1.))
     outer_shoulder_start_fade = rd_start_fade + outer_shoulder_width # inner + outer shoulder widths
     outer_shoulder_fade_width = random.uniform(0.1, 1.)
 
@@ -372,7 +382,8 @@ def make_episode():
 
     ##
     get_node("rd_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = 10**random.uniform(1.0, 4.0)
-    get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, 1.0) if is_only_yellow_lined else random.uniform(.3, 2.0)
+    # get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, 1.0) if is_only_yellow_lined else random.uniform(.3, 2.0)
+    get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = .1*(10**random.uniform(0, 2.0))
 
     get_node("shoulder_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = 10**random.uniform(1.0, 4.0)
     get_node("shoulder_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, 6.0)
@@ -415,7 +426,7 @@ def make_episode():
 
 
     # Directionality
-    HAS_DIRECTIONALITY_PROB = .15 if rd_is_lined else .8 #.1 if rd_is_lined else .6
+    HAS_DIRECTIONALITY_PROB = .25 if rd_is_lined else 1.0 #.1 if rd_is_lined else .6
     directionality_mult = random.uniform(.1, .8) if random.random()<HAS_DIRECTIONALITY_PROB else 0
     get_node("directionality_mult", dirt_gravel_nodes).outputs["Value"].default_value = directionality_mult
     # get_node("directionality_maskout_noise_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
@@ -700,6 +711,7 @@ def make_episode():
     episode_info.lane_width = lane_width+left_shift # left shift is zero for lined, for dirtgravel this gives effective lane width. left shift is neg
     episode_info.shadow_strength = shadow_strength
     episode_info.directionality_mult = directionality_mult
+    episode_info.has_stops = has_stops
 
     return episode_info
 

@@ -37,15 +37,18 @@ MAP_HEIGHT = 180 #120 #IMG_HEIGHT
 ###########################
 
 MIN_WP_M = 4 #6 #8
-TRAJ_WP_DISTS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23] + [33, 43, 53, 63, 73, 83, 93, 103, 113, 123]
+N_DENSE_WPS = 20
+DENSE_WP_DISTS = [4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+assert len(DENSE_WP_DISTS)==N_DENSE_WPS
+TRAJ_WP_DISTS = DENSE_WP_DISTS + [33, 43, 53, 63, 73, 83, 93, 103, 113, 123]
 assert MIN_WP_M==TRAJ_WP_DISTS[0]
 N_WPS = len(TRAJ_WP_DISTS)
 
 N_WPS_TARGETS = N_WPS*5 # currently is wp_angle, curvature, heading, roll, z-delta
 
 SPACING_BTWN_FAR_WPS = 10
-LAST_NEAR_WP_DIST_M = 25
-LAST_NEAR_WP_IX = 19
+LAST_NEAR_WP_DIST_M = DENSE_WP_DISTS[-1]
+LAST_NEAR_WP_IX = N_DENSE_WPS-1
 # These are the dists at all the midway pts btwn our wps, plus a zero in the beginning
 # they're staggered by .5m for closer wps, then 5m for farther ones
 WP_HALFWAYS = [4.5, 5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5, 13.5, 14.5, 15.5, 16.5, 17.5, 18.5, 19.5, 20.5, 21.5, 22.5, 28.0] 
@@ -291,7 +294,11 @@ def load_object(filename):
         return obj
 
 def moving_average(arr, w):
-    return np.convolve(arr, np.ones(w), 'same') / w
+    if w%2==0: w+=1 # must be odd
+    pad = (w-1)//2
+    arr_s = np.convolve(arr, np.ones(w), 'valid') / w
+    arr[pad:-pad] = arr_s
+    return arr
 
 def moving_average_batch(arr, w):
     arr = arr.copy()
@@ -476,15 +483,15 @@ def get_hud(aux):
     has_map_route[:, :,:,1] = (aux[:, "has_route"]*255)[:, None,None]
     has_map_route[:, :,:,2] = ((aux[:, "has_route"]*-1+1)*255)[:, None,None]
 
-    # Current tire angle
-    tire_angle = get_hud_square()
-    m = .05
-    has_tire_angle = aux[:, "has_tire_angle"][:, None,None]
-    tire_angle[:, :,:,0] = np.interp(aux[:, "tire_angle_lagged"], [-m, m], [0, 255])[:, None,None] * has_tire_angle
-    tire_angle[:, :,:,1] = np.interp(aux[:, "tire_angle_lagged"], [m*6, -m*6], [0, 255])[:, None,None] * has_tire_angle
-    tire_angle[:, :,:,2] = has_tire_angle * 255
+    # # Current tire angle
+    # tire_angle = get_hud_square()
+    # m = .05
+    # has_tire_angle = aux[:, "has_tire_angle"][:, None,None]
+    # tire_angle[:, :,:,0] = np.interp(aux[:, "tire_angle_lagged"], [-m, m], [0, 255])[:, None,None] * has_tire_angle
+    # tire_angle[:, :,:,1] = np.interp(aux[:, "tire_angle_lagged"], [m*6, -m*6], [0, 255])[:, None,None] * has_tire_angle
+    # tire_angle[:, :,:,2] = has_tire_angle * 255
 
-    hud = np.concatenate([tire_angle, has_map_route, speed], axis=-3) # stack on height dim. New elements put in front
+    hud = np.concatenate([has_map_route, speed], axis=-3) # stack on height dim. New elements put in front
     return hud
     
 ###########################

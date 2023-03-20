@@ -76,7 +76,7 @@ class LossManager():
     def step(self, losses_dict, logger=None):
         total_loss = torch.HalfTensor([0]).to(device)
         for loss_name, loss_value in losses_dict.items():
-            if self.counter%100==0: print(loss_name, loss_value)
+            # if self.counter%100==0: print(loss_name, loss_value)
             # weighted_loss = self._step_loss(loss_name, (loss_value*LOSS_SCALER if loss_name==self.baseline_loss_name else loss_value)) #NOTE this is strange and sensitive. Pay attn. 
             weighted_loss = self._step_loss(loss_name, loss_value)
             total_loss += weighted_loss
@@ -165,6 +165,7 @@ class Trainer():
         model.reset_hidden(dataloader.bs)
         self.reset_worsts()
 
+        f = lambda t : (~torch.isfinite(t)).any() # True if has infs or nans
         for update_counter in range(self.updates_per_epoch):
             t1 = time.time()
             timer = Timer("trn update")
@@ -182,7 +183,13 @@ class Trainer():
                 #with torch.cuda.amp.autocast(): model_out = model.forward_rnn(img, aux)
             else:
                 img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
-                assert torch.isnan(img).sum() == 0, f"img has nans: {img}"
+                # assert not f(img), f"img has nans: {img}"
+                # # batch_item_img_means = img.reshape(dataloader.bs, -1).mean(-1)
+                # # if update_counter % 100 == 0:
+                # #     print("batch_item_img_means", batch_item_img_means)
+                # assert not f(aux).sum(), f"aux has nans: {aux}"
+                # assert not f(wps).sum(), f"wps has nans: {wps}"
+                # assert not f(to_pred_mask), f"to_pred_mask has nans: {to_pred_mask}"
 
                 with torch.cuda.amp.autocast(): model_out= model.forward_cnn(img, aux)
 
@@ -197,10 +204,27 @@ class Trainer():
             #############
             weights = (to_pred_mask*self.LOSS_WEIGHTS).repeat((1,1,5))
             assert torch.isnan(wps).sum() == 0, f"wps has nans: {wps}"
-            assert torch.isnan(wps_p).sum() == 0, f"wps_p has nans: {wps_p}"
-            assert torch.isnan(aux_targets_p).sum() == 0, f"aux_targets_p has nans: {wps_p}"
-            assert torch.isnan(obsnet_out).sum() == 0, f"obsnet_out has nans: {obsnet_out}"
-        
+
+            if f(wps_p):
+                print("wps_p has nans", wps_p)
+                self.should_stop = True
+                break
+            if f(aux_targets_p):
+                print("aux_targets_p has nans")
+                self.should_stop = True
+                break
+            if f(obsnet_out).sum():
+                print("obsnet_out has nans")
+                self.should_stop = True
+                break
+            # if state_dict_has_nans(model.state_dict()): #NOTE this takes 50ms, so maybe shouldn't do so often
+            #     print("model has nans")
+            #     self.img_for_viewing = img # for inspection
+            #     self.nans_counter += 1
+            #     self.should_stop = True
+            #     break
+            self.img_for_viewing = img # for inspection
+
             _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights)
             _wps_loss *= LOSS_SCALER
 
@@ -212,8 +236,8 @@ class Trainer():
             angles_loss_i, headings_loss_i, curvatures_loss_i, rolls_loss_i, zs_loss_i = torch.chunk(_wps_loss_intersection, 5, -1)
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
 
-            if update_counter % 20 == 0:
-                print(curvatures_loss.max().item(), curvatures_loss_i.max().item(), headings_loss_i.max().item(), headings_loss.max().item(), angles_loss_i.max().item(), angles_loss.max().item(), zs_loss_i.max().item(), zs_loss.max().item(), rolls_loss_i.max().item(), rolls_loss.max().item())
+            # if update_counter % 20 == 0:
+            #     print(curvatures_loss.max().item(), curvatures_loss_i.max().item(), headings_loss_i.max().item(), headings_loss.max().item(), angles_loss_i.max().item(), angles_loss.max().item(), zs_loss_i.max().item(), zs_loss.max().item(), rolls_loss_i.max().item(), rolls_loss.max().item())
             _mm = 400
             cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
             losses = {
@@ -240,8 +264,25 @@ class Trainer():
             #############
             # aux losses
             #############
+
             aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
             aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
+
+            #######################
+            # Zero out a buffer right at end of horizon, no need to be strict about exact horizon end
+            aux_np = unprep_aux(aux)
+            stop_dist = aux_np[:,:,"stop_dist"]
+            lead_dist = aux_np[:,:,"lead_dist"]
+            lead_buffer = torch.from_numpy(((lead_dist < 80) | (lead_dist > 90)).astype(int)).to(device) #TODO these shouldn't be hardcoded if we keep this approach
+            stop_buffer = torch.from_numpy(((stop_dist < 60) | (stop_dist > 70)).astype(int)).to(device)
+            stop_buffer_close = torch.from_numpy((stop_dist > 4).astype(int)).to(device)
+
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")] *= lead_buffer
+
+            # when cnn only, don't enforce stops when up close
+            if not self.rnn_only: aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer_close
+            #######################
 
             # Only enforce stops and lead metrics when we have stops and leads
             has_stop, has_lead = aux_targets[:,:,AUX_TARGET_PROPS.index("has_stop")], aux_targets[:,:,AUX_TARGET_PROPS.index("has_lead")]
@@ -424,6 +465,29 @@ def get_snr(opt):
     return snrs #, mms.mean(), vms.mean()
 
 
+def state_dict_has_nans(state_dict):
+    for k,v in state_dict.items():
+        if torch.isnan(v).sum()>0:
+            print(k, "has nans")
+            return True
+    return False
+
+class ClipActivationHook(): # Doesn't do anything, just prints out big activations. Modified from gpt.
+    def __init__(self, min_val=-2**15, max_val=2**15-1):
+        self.min_val = min_val
+        self.max_val = max_val
+        
+    def __call__(self, module, _input):
+        #if isinstance(module, torch.nn.modules.activation.Activation):
+        #_input[0].clamp_(self.min_val, self.max_val)
+        _max = _input[0].flatten().max().item()
+        if _max > 2**15: print("\n BIG ACTIVATION", module.__class__.__name__, _max)
+
+def clip_activations(model, min_val=-2**15, max_val=2**15-1):
+    clip_hook = ClipActivationHook(min_val, max_val)
+    for module in model.modules():
+        handle = module.register_forward_pre_hook(clip_hook)
+    return model
 
 ###########################################
 # lives here so don't break OP. OP env doesn't have alb, bc it breaks the cv2 version or something? could debug easily, but no need

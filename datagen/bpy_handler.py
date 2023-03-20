@@ -300,6 +300,8 @@ class TrafficManager():
         self.ego.lead_dist = DIST_NA_PLACEHOLDER
 
         for npc in self.npcs:
+            npc_dist_to_ego = dist(npc.ap.current_pos[:2], self.ego.current_pos[:2])
+
             if npc.ap.route_is_done:
                 npc.blender_object.hide_render = True
                 npc.is_done = True
@@ -307,7 +309,7 @@ class TrafficManager():
 
             npc.ap.set_should_yield(False)
 
-            if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < TRAJ_WP_DISTS[-1]: # Only check detailed trajs if within distance TODO this dist should be dynamic based on the speeds of both parties
+            if npc_dist_to_ego < TRAJ_WP_DISTS[-1]: # Only check detailed trajs if within distance TODO this dist should be dynamic based on the speeds of both parties
                 # Checking for collisions, setting yield states
                 ego_traj = self.ego.negotiation_traj[:, :2]
                 npc_traj = npc.ap.negotiation_traj[:, :2]
@@ -335,15 +337,21 @@ class TrafficManager():
                     if lead_dist < self.ego.lead_dist:
                         self.ego.lead_dist = lead_dist
                         self.ego.lead_relative_speed = npc.ap.current_speed_mps - self.ego.current_speed_mps
+                        
+                        # hack for now, tm needs some redoing anyways. Disappearing lead if too close
+                        npc_too_close = npc_dist_to_ego < 8 
+                        if npc_too_close: 
+                            npc.ap.route_is_done = True
+                            npc.blender_object.hide_render = True # hiding immediately
 
             # move if visible to ego
-            if dist(npc.ap.current_pos[:2], self.ego.current_pos[:2]) < npc.dist_from_ego_start_go:
+            if npc_dist_to_ego < npc.dist_from_ego_start_go:
                 npc.ap.step()
                 update_ap_object(npc.nodes, npc.ap)
 
         self.npcs = [npc for npc in self.npcs if not npc.is_done] 
 
-def check_map_has_overlapping_rds(df):
+def check_map_has_overlapping_rds(df, episode_info):
     t0 = time.time()
     df = df[df.is_curve_tip==False]
     h = df[df.core_h][["pos_x", "pos_y"]].values
@@ -356,7 +364,8 @@ def check_map_has_overlapping_rds(df):
     m = result.min()
     print("Min distance btwn v and h rds", m)
     #print("Checking distance took", time.time()-t0)
-    return m < 3.5 # chosen manually. Tips are 10m. This should be greater than dists btwn those pts themselves, which is currently 2m. Also using to keep intersections not too sharp.
+    t = 3.5 if (episode_info.rd_is_lined or episode_info.has_stops) else 1.5 # only narrow gravel can be this close
+    return m < t # chosen manually. Tips are 10m. This should be greater than dists btwn those pts themselves, which is currently 2m. Also using to keep intersections not too sharp.
 
 
 def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=None):
@@ -370,7 +379,7 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     wps_holder_object = bpy.data.objects["wps_holder"].evaluated_get(dg)
     wp_df = get_wp_df(wps_holder_object)
     coarse_map_df = wp_df[wp_df.wps==False]
-    map_has_overlapping_rds = check_map_has_overlapping_rds(coarse_map_df)
+    map_has_overlapping_rds = check_map_has_overlapping_rds(coarse_map_df, episode_info)
     if map_has_overlapping_rds:
         print("Map has overlapping rds. Trying again.")
         return False

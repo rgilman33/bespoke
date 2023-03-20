@@ -109,11 +109,11 @@ class EffNet(nn.Module):
                 x = mm(x)
                 name = i
                 print(f"{i} isnan:{x.isnan().sum().item()} max:{x.max().item()} min:{x.min().item()} std:{x.std().item()} mean:{x.mean().item()} {x.shape}")
-                if i==self.viz_ix:
-                    # Store the activations
-                    self.acts[name] = x.detach().cpu().numpy()
-                    # Instruct to store the gradients if necessary
-                    x.register_hook(self.get_hook(name))
+                # if i==self.viz_ix: TODO UNDO
+                #     # Store the activations
+                #     self.acts[name] = x.detach().cpu().numpy()
+                #     # Instruct to store the gradients if necessary
+                #     x.register_hook(self.get_hook(name))
 
         elif self.backbone_is_trt:
             # inference
