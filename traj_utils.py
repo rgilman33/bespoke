@@ -124,7 +124,7 @@ def get_heading_and_pos_delta(tire_angle, speed, wheelbase=CRV_WHEELBASE, n_sec=
 def get_consistency_targets(wp_angles, wp_dists, aux):
     """
     Given traj at t0, and vehicle movement, what will targets be at t1 to remain completely on the traj?
-    """
+    """ # TODO plug this in sometime soon. 
     # batch, seq, n
     xs, ys = xy_from_angle_dist(wp_angles, wp_dists)
 

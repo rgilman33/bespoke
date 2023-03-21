@@ -62,7 +62,7 @@ class LossManager():
 
     def _step_loss(self, loss_name, loss):
         if not np.isfinite(loss.item()):
-            print(f"loss is nan for {loss_name}. Skipping")
+            print(f"loss is not finite ({loss}) for {loss_name}. Skipping")
             return torch.HalfTensor([0]).to(device)
 
         # update avg
@@ -77,7 +77,6 @@ class LossManager():
         total_loss = torch.HalfTensor([0]).to(device)
         for loss_name, loss_value in losses_dict.items():
             # if self.counter%100==0: print(loss_name, loss_value)
-            # weighted_loss = self._step_loss(loss_name, (loss_value*LOSS_SCALER if loss_name==self.baseline_loss_name else loss_value)) #NOTE this is strange and sensitive. Pay attn. 
             weighted_loss = self._step_loss(loss_name, loss_value)
             total_loss += weighted_loss
             if logger: logger.log({loss_name:loss_value.item()/(LOSS_SCALER if "wp_" in loss_name else 1)})

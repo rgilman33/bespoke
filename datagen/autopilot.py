@@ -95,7 +95,7 @@ class Autopilot():
     def set_route(self, route):
 
         self.waypoints = np.empty((len(route), 3), dtype="float64")
-        XY_SMOOTH = 180 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. 
+        XY_SMOOTH = 160 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. less than 160 is not sharp enough w some settings
         # NOTE will have to be wary of this smoothing when we're doing intersections, as this may be too much. Also our close wp dist.
         self.waypoints[:,0] = moving_average(route.pos_x.to_numpy(), XY_SMOOTH)
         self.waypoints[:,1] = moving_average(route.pos_y.to_numpy(), XY_SMOOTH)
@@ -145,6 +145,8 @@ class Autopilot():
 
         self.route_curvature = route.route_curvature.to_numpy()
 
+        self._route_way_ids = list(route.way_id.unique())
+
     def set_nav_map(self, coarse_map_df):
         self.way_ids = coarse_map_df.way_id.to_numpy()
         self.map_xs, self.map_ys = coarse_map_df.pos_x.to_numpy(), coarse_map_df.pos_y.to_numpy()
@@ -153,6 +155,13 @@ class Autopilot():
 
         self.refresh_nav_map_freq = random.choice([3,4,5]) # alternatively, can use vehicle speed and heading to interpolate ala kalman TODO
         self.small_map = None # doesn't update every frame
+
+        route_df = coarse_map_df[coarse_map_df.way_id.isin(self._route_way_ids)]
+        # route_df['way_id'] = pd.Categorical(route_df['way_id'], categories=self._route_way_ids, ordered=True)
+        # route_df = route_df.sort_values('way_id')
+        # route_df.reset_index(drop=True, inplace=True)
+        self.route_xs, self.route_ys = route_df.pos_x.to_numpy(), route_df.pos_y.to_numpy()
+        self.route_way_ids = route_df.way_id.to_numpy()
 
         self.heading_tracker = HeadingTracker()
 
@@ -225,22 +234,23 @@ class Autopilot():
                                                         y=current_y, 
                                                         current_speed_mps=self.current_speed_mps) #+ self.maps_noise_heading[self.overall_frame_counter]                 
 
-                BEHIND_BUFFER_M, FORWARD_BUFFER_M = 80, 400
-                _min = max(1, current_wp_ix-int(BEHIND_BUFFER_M/WP_SPACING)) # this has to be one. Cuts off the first route wp. Don't fully understand, it's buggy. With zero, get janky route line connecting to origin.
-                _max = current_wp_ix+int(FORWARD_BUFFER_M/WP_SPACING)
-                route_wps = self.waypoints[_min:_max]
-                route_wps_normals = self.wp_normals[_min:_max] # shift on normals, otherwise route is on right side of rd
-                is_route_wps_ixs = self.is_route_wps[_min:_max]
-                route_wps = route_wps[is_route_wps_ixs]
-                route_wps_normals = route_wps_normals[is_route_wps_ixs]
-                route_wps -= route_wps_normals*self.route_normal_shift
-                route_xs, route_ys = route_wps[:, 0], route_wps[:, 1]
+                # BEHIND_BUFFER_M, FORWARD_BUFFER_M = 80, 400
+                # _min = max(1, current_wp_ix-int(BEHIND_BUFFER_M/WP_SPACING)) # this has to be one. Cuts off the first route wp. Don't fully understand, it's buggy. With zero, get janky route line connecting to origin.
+                # _max = current_wp_ix+int(FORWARD_BUFFER_M/WP_SPACING)
+                # route_wps = self.waypoints[_min:_max]
+                # route_wps_normals = self.wp_normals[_min:_max] # shift on normals, otherwise route is on right side of rd
+                # is_route_wps_ixs = self.is_route_wps[_min:_max]
+                # route_wps = route_wps[is_route_wps_ixs]
+                # route_wps_normals = route_wps_normals[is_route_wps_ixs]
+                # route_wps -= route_wps_normals*self.route_normal_shift
+                # route_xs, route_ys = route_wps[:, 0], route_wps[:, 1]
 
                 self.small_map = get_map(self.map_xs, 
                                         self.map_ys, 
                                         self.way_ids, 
-                                        route_xs,
-                                        route_ys,
+                                        self.route_xs,
+                                        self.route_ys,
+                                        self.route_way_ids,
                                         current_x, 
                                         current_y,
                                         heading_for_map,

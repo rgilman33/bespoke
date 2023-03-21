@@ -59,32 +59,31 @@ def prepare_small_map_nodes(xs, ys, way_ids, current_x, current_y, vehicle_headi
     
     return xs, ys, way_ids
 
-def draw_small_map(xs, ys, way_ids, route_xs=None, route_ys=None):
-    
+
+def _draw_map(small_map, xs, ys, way_ids, color=(255, 0, 0), thickness=3):    
     # We'll draw each line using open-cv. We want to draw each separately so as to not connect ends of some rds w starts of others.
     is_last_node_on_way_filter = (way_ids[:-1] != way_ids[1:])
     ixs_of_last_nodes_on_ways = list(is_last_node_on_way_filter.nonzero()[0]+1) # this is actually first node of next way?
     ixs_of_last_nodes_on_ways = [0] + ixs_of_last_nodes_on_ways + [len(xs)]
     
-    small_map = np.zeros((MAP_SZ_PX, MAP_SZ_PX, 3), dtype='uint8')    
     pts = np.stack([xs, ys], axis=-1)
     pts = pts.reshape((-1, 1, 2))  # quirk of cv2
     
     # Drawing
     isClosed = False
-    color = (255, 0, 0)
-    thickness = 3
-
     for i in range(len(ixs_of_last_nodes_on_ways)-1):
         start_ix, end_ix = ixs_of_last_nodes_on_ways[i], ixs_of_last_nodes_on_ways[i+1]
         ptsSegment = pts[start_ix:end_ix,:,:]
         small_map = cv2.polylines(small_map, [ptsSegment], isClosed, color, thickness)
     
-    # route
-    if route_xs is not None:
-        route_pts = np.stack([route_xs, route_ys], axis=-1)
-        route_pts = route_pts.reshape((-1, 1, 2))  # just copying above convention, don't even know what shape this is now
-        small_map = cv2.polylines(small_map, [route_pts], isClosed, (150,150,255), 2)
+    return small_map
+
+
+def draw_small_map(xs, ys, way_ids, route_xs=None, route_ys=None, route_way_ids=None):
+    
+    small_map = np.zeros((MAP_SZ_PX, MAP_SZ_PX, 3), dtype='uint8')   
+    small_map = _draw_map(small_map, xs, ys, way_ids, color=(255, 0, 0), thickness=3)
+    if route_xs is not None: small_map = _draw_map(small_map, route_xs, route_ys, route_way_ids, color=(150,150,255), thickness=2)
 
     # ego vehicle, for human viewing. Center of current square.
     h = MAP_SZ_PX//2
@@ -99,7 +98,7 @@ def draw_small_map(xs, ys, way_ids, route_xs=None, route_ys=None):
     return small_map
 
 
-def get_map(map_xs, map_ys, way_ids, route_xs, route_ys, current_x, current_y, vehicle_heading, close_buffer, draw_route=False):
+def get_map(map_xs, map_ys, way_ids, route_xs, route_ys, route_way_ids, current_x, current_y, vehicle_heading, close_buffer, draw_route=False):
     # helper, wrap the two big fns above
 
     # background map, filtered down and rotated
@@ -107,8 +106,9 @@ def get_map(map_xs, map_ys, way_ids, route_xs, route_ys, current_x, current_y, v
 
     # route
     if draw_route:
-        route_xs, route_ys, _ = prepare_small_map_nodes(route_xs, route_ys, np.ones(len(route_xs)), current_x, current_y, vehicle_heading, close_buffer)
-        small_map = draw_small_map(xs, ys, way_ids, route_xs=route_xs, route_ys=route_ys)
+        # route_way_ids = np.ones(len(route_xs))
+        route_xs, route_ys, route_way_ids = prepare_small_map_nodes(route_xs, route_ys, route_way_ids, current_x, current_y, vehicle_heading, close_buffer)
+        small_map = draw_small_map(xs, ys, way_ids, route_xs=route_xs, route_ys=route_ys, route_way_ids=route_way_ids)
     else:
         small_map = draw_small_map(xs, ys, way_ids)
 
