@@ -274,15 +274,15 @@ class Autopilot():
             self.targets_container[c, N_WPS*3:] = deltas[:,2] # z delta w respect to ego
 
             # aux
-            angle_to_wp, _, _ = get_target_wp(angles_to_wps, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
-            angle_to_wp_d, _, _ = get_target_wp(angles_to_wps_d, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
+            angle_to_wp = get_target_wp_angle(angles_to_wps, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
+            angle_to_wp_d = get_target_wp_angle(angles_to_wps_d, self.current_speed_mps) # gathering this here for convenience, just for logging. The target wp for rw driver, not the close up one ap is using.
             self.tire_angles_hist.append(angle_to_wp_d)
 
             # get_clf_range = lambda s : np.clip(s*5.0, 40., 100) # looking five seconds out, but clamped. TODO should prob be more sec ahead
             # r = get_clf_range(self.current_speed_mps)
 
-            stop_angle, _,_ = angle_to_wp_from_dist_along_traj(angles_to_wps, self.stop_dist)
-            lead_angle, _,_ = angle_to_wp_from_dist_along_traj(angles_to_wps, self.lead_dist)
+            stop_angle = angle_to_wp_from_dist_along_traj(angles_to_wps, self.stop_dist)
+            lead_angle = angle_to_wp_from_dist_along_traj(angles_to_wps, self.lead_dist)
             
             HAS_TIRE_ANGLE_PROB = 0 #.6
             self.aux[c, "speed"] = self.current_speed_mps

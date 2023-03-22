@@ -81,15 +81,27 @@ mph_to_mps = lambda x : x*.44704
 # ]
 
 # 3.11.23 updating 
- # similar to above, but closer wps moved inwards. Changed after lengthening wheelbase and wps smoothing (not sure which) made traj tighter closer to ego, but similar further out
+#  # similar to above, but closer wps moved inwards. Changed after lengthening wheelbase and wps smoothing (not sure which) made traj tighter closer to ego, but similar further out
+# min_dist_lookup = [ was still too close, i believe after our wheelbase change
+#     (4.5, 3), # 10 mph
+#     (6.5, 4), # 14.5 mph
+#     (8.33, 5.), #18 mph (speed mps, wp dist m)
+#     (11.11, 7.0), # 24 mph
+#     (13.89, 9.5), # 30 mph
+#     (16.2, 12), # 36 mph
+#     (19.44, 16.5), # 43 mph
+#     (22.5, 22), # 50 mph
+# ]
+# 3.22, updating to bring in closer, using the new apparatus that allows to interp closer than our closest wp
 min_dist_lookup = [
-    (6.5, 4), # 14.5 mph
-    (8.33, 5.), #18 mph (speed mps, wp dist m)
-    (11.11, 7.0), # 24 mph
-    (13.89, 9.5), # 30 mph
-    (16.2, 12), # 36 mph
-    (19.44, 16.5), # 43 mph
-    (22.5, 22), # 50 mph
+    (4.5, 3), # 10 mph
+    (6.5, 3.6), # 14.5 mph
+    (8.33, 4.5), #18 mph (speed mps, wp dist m)
+    (11.11, 6.), # 24 mph
+    (13.89, 8), # 30 mph
+    (16.2, 10.), # 36 mph
+    (19.44, 13), # 43 mph
+    (22.5, 16), # 50 mph
 ]
 min_dist_bps = [x[0] for x in min_dist_lookup]
 min_dist_vals = [x[1] for x in min_dist_lookup]

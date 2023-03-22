@@ -3,35 +3,12 @@ import numpy as np
 import math
 
 
-def wp_ix_from_dist_along_traj(dist_m):
-    # Returns a float where the decimal is the fraction the pt is btwn the two wps
-    if dist_m <= LAST_NEAR_WP_DIST_M:
-        wp_ix = dist_m - MIN_WP_M # at dist of 25.0, will return wp ix 19, which is our last one-meter spaced wp
-    else:
-        n_wps_into_five_m_wps = (dist_m - LAST_NEAR_WP_DIST_M ) / SPACING_BTWN_FAR_WPS # Now the decimal is perc out of 10
-        wp_ix = LAST_NEAR_WP_IX + n_wps_into_five_m_wps
-
-    wp_ix = min(max(0, wp_ix), len(TRAJ_WP_DISTS)-1) # ix can't be less than our closest wp or more than our farthest wp
-
-    return wp_ix
-
-#TODO make sure we're also always capping min max on distance as well, in all parts of codebase
-
-
 def angle_to_wp_from_dist_along_traj(traj, dist_m):
+    # only works w angles and headings, which are zero at zero dist. Do not use w curv or roll
+    target_wp_angle = np.interp(dist_m, [0]+TRAJ_WP_DISTS, np.insert(traj,0,0)) 
 
-    wp_ix = wp_ix_from_dist_along_traj(dist_m)
+    return target_wp_angle
 
-    wp_ix_0, wp_ix_1 = math.floor(wp_ix), math.ceil(wp_ix)
-    perc_along_inbetween = wp_ix - wp_ix_0 # btwn zero and one, closer wps this is perc out of one, further it's perc out of five
-
-    # weighted avg for wp_dist #TODO why don't we just use dist_m...
-    wp_dist = TRAJ_WP_DISTS[wp_ix_1]*perc_along_inbetween + TRAJ_WP_DISTS[wp_ix_0]*(1-perc_along_inbetween)
-
-    # weighted avg for angle to wp
-    target_wp_angle = traj[wp_ix_1]*perc_along_inbetween + traj[wp_ix_0]*(1-perc_along_inbetween)
-
-    return target_wp_angle, wp_dist, wp_ix
 
 def get_target_wp_dist(speed_mps, wp_m_offset=0):
     # takes in speed, returns dist along traj to target wp
@@ -40,14 +17,13 @@ def get_target_wp_dist(speed_mps, wp_m_offset=0):
                     [v+wp_m_offset for v in min_dist_vals])
     return wp_m
 
-def get_target_wp(traj, speed_mps, wp_m_offset=0):
+def get_target_wp_angle(traj, speed_mps, wp_m_offset=0):
     # negative values of wp_m_offset brings target wp closer along the traj, making turns more centered. Pos makes further, making turns tighter
     wp_m = get_target_wp_dist(speed_mps, wp_m_offset=wp_m_offset)
 
-    target_wp_angle, wp_dist, wp_ix = angle_to_wp_from_dist_along_traj(traj, wp_m)
+    target_wp_angle = angle_to_wp_from_dist_along_traj(traj, wp_m)
 
-    return target_wp_angle, wp_dist, wp_ix
-
+    return target_wp_angle
 
 
 def gather_preds(preds_all, speeds):
@@ -58,7 +34,7 @@ def gather_preds(preds_all, speeds):
     for i in range(len(preds_all)):
         traj = preds_all[i]
         s = speeds[i]
-        angle_to_wp, _, _ = get_target_wp(traj, s)
+        angle_to_wp = get_target_wp_angle(traj, s)
         wp_angles.append(angle_to_wp)
     return np.array(wp_angles)
 
@@ -233,7 +209,8 @@ def tire_angles_to_max_speeds(tire_angles):
 
 def max_ix_from_speed(speed_mps):
     long_consideration_max_m = max_pred_m_from_speeds(speed_mps)
-    long_consideration_max_ix = math.ceil(wp_ix_from_dist_along_traj(long_consideration_max_m))
+    long_consideration_max_ix = np.interp(long_consideration_max_m, TRAJ_WP_DISTS, list(range(len(TRAJ_WP_DISTS))))
+    long_consideration_max_ix = math.ceil(long_consideration_max_ix)
     return long_consideration_max_ix
 
 MAX_SPEED_CCS = 30.0

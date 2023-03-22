@@ -50,6 +50,8 @@ def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0)
 
     for i in range(len(wps_2d)):
         wp = tuple(wps_2d[i][0].astype(int))
+        # clip y so never go out of bounds
+        wp = (wp[0], np.clip(wp[1], 0, IMG_HEIGHT-1))
         image = cv2.circle(image, wp, radius=3, color=color, thickness=thickness)
     return image
 
@@ -69,13 +71,15 @@ def add_traj_preds(img, angles_p, speed, color=(255, 10, 10)):
     img = draw_wps(img, angles_p, speed_mps=speed, color=color, thickness=-1)
 
     # Target wp, pred
-    target_wp_angle, wp_dist, _ = get_target_wp(angles_p, speed)
+    target_wp_angle = get_target_wp_angle(angles_p, speed)
+    wp_dist = get_target_wp_dist(speed)
+
     img = draw_wps(img, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=color, thickness=-1)
     img = draw_wps(img, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=black, thickness=1)
 
     # Longitudinal wp, ie end of traj, pred
     far_long_wp_dist = max_pred_m_from_speeds(speed)
-    far_long_wp_angle, _, _ = angle_to_wp_from_dist_along_traj(angles_p, far_long_wp_dist)
+    far_long_wp_angle = angle_to_wp_from_dist_along_traj(angles_p, far_long_wp_dist)
     img = draw_wps(img, np.array([far_long_wp_angle]), wp_dists=np.array([far_long_wp_dist]), color=color, thickness=-1)
     img = draw_wps(img, np.array([far_long_wp_angle]), wp_dists=np.array([far_long_wp_dist]), color=black, thickness=1)
     return img
@@ -130,13 +134,11 @@ def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_target
 
     # a.append(f"maps, route: {aux['has_map']}, {aux['has_route']}")
 
-    # Roll
-    _, _, target_wp_ix = get_target_wp(rolls_p, speed) # doesn't matter if rolls or whatever, we're just getting ix
-    target_wp_ix = int(target_wp_ix)
+    # Roll, using value closest to ego
     if wps is not None:
-        a.append(f"roll: {round(float(rolls_p[target_wp_ix]), 2)}, {round(float(rolls[target_wp_ix]), 2)}")
+        a.append(f"roll: {round(float(rolls_p[0]), 2)}, {round(float(rolls[0]), 2)}")
     else:
-        a.append(f"roll: {round(float(rolls_p[target_wp_ix]), 2)}, {round(float(rolls_p2[target_wp_ix]), 2) if wps_p2 is not None else ''}")
+        a.append(f"roll: {round(float(rolls_p[0]), 2)}, {round(float(rolls_p2[0]), 2) if wps_p2 is not None else ''}")
 
     text_box = get_text_box(a)
     h,w,_ = text_box.shape
