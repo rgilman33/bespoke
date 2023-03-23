@@ -267,7 +267,7 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, rolls=None, max_
 
     return curve_constrained_speed
 
-def get_curve_constrained_speed(curvatures, rolls, current_speed_mps, max_accel=MAX_ACCEL):
+def get_curve_constrained_speed(curvatures, current_speed_mps, rolls=None, max_accel=MAX_ACCEL):
     # returns mps
     ccs = min([_get_curve_constrained_speed(curvatures, current_speed_mps, rolls=rolls, preempt_sec=s, max_accel=MAX_ACCEL) for s in [0.1, .5, 1.0, 1.5, 2.0]])
 
@@ -326,7 +326,7 @@ class StopSignManager():
     def __init__(self):
         self.reset()
         self.eps = 0.1
-        self.decel = 2.5
+        self.decel = 1.0
 
     def reset(self):
         #print("Resetting stopsign manager")
@@ -342,15 +342,17 @@ class StopSignManager():
         if self.is_stopped:
             print("waiting at stopsign")
             self.stopped_counter += 1
-            if self.stopped_counter > 20:
+            if self.stopped_counter > 20*2:
                 self.reset()
                 self.just_stopped = True
         elif self.just_stopped: # for a second after stopsign, keep stopsign apparatus off
             print("just stopped, stopsigns disabled for a sec")
             self.just_stopped_counter += 1
-            self.reset()
-            if self.just_stopped_counter > 20:
-                self.just_stopped = False
+            self.stopsign_speed = 30
+            self.has_stop = 0
+            # self.reset()
+            if self.just_stopped_counter > 20*6:
+                self.reset()
         else: # normal operation
             self.has_stop = self.eps*has_stop_p + (1-self.eps)*self.has_stop # doing this before the sigmoid
             self.has_stop = sigmoid_python(self.has_stop)
@@ -360,9 +362,9 @@ class StopSignManager():
 
                 print("Stopsign approaching!", round(self.stop_dist, 2))
 
-                if self.stop_dist < 1.5:
+                if self.stop_dist < 1.0:
                     print("In stop zone, stopping", self.stop_dist)
-                    self.stopsign_speed = 0
+                    self.stopsign_speed = .2 #TODO revisit
                     self.is_stopped = True
                 else:
                     # the max speed we can be going at this moment to hit zero at the stop sign w a given decel

@@ -94,8 +94,8 @@ mph_to_mps = lambda x : x*.44704
 # ]
 # 3.22, updating to bring in closer, using the new apparatus that allows to interp closer than our closest wp
 min_dist_lookup = [
-    (4.5, 3), # 10 mph
-    (6.5, 3.6), # 14.5 mph
+    (4.5, 2.7), # 10 mph
+    (6.5, 3.3), # 14.5 mph
     (8.33, 4.5), #18 mph (speed mps, wp dist m)
     (11.11, 6.), # 24 mph
     (13.89, 8), # 30 mph
