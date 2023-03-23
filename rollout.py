@@ -82,10 +82,13 @@ def calc_rollout_results(rollout):
     wp_angles_p, wp_headings_p, wp_curvatures_p, wp_rolls_p, wp_zs_p = np.split(rollout.wps_p, 5, -1)
 
     additional_results = na(np.zeros((rollout.bs, rollout.seq_len, len(ROLLOUT_PROPS))), ROLLOUT_PROPS)
-    # Calculate some derivative properties #TODO not inside the rollout
+    
+    # Calculate some derivative properties
     speeds = rollout.aux[:, :, 'speed']
     for b in range(rollout.bs):
-        additional_results[b, :, "tire_angle_p"] = gather_preds(wp_angles_p[b], speeds[b])
+        tire_angles, tire_angles_no_rc = get_tire_angles(wp_angles_p[b], wp_rolls_p[b], speeds[b])
+        additional_results[b, :, "tire_angle_p"] = tire_angles
+        additional_results[b, :, "tire_angle_p_no_rc"] = tire_angles_no_rc
 
     # additional_results[:,:,'te'] = get_te(additional_results[:,:,'tire_angle_p'])
     additional_results[:,:,'te'] = get_te_windowed(additional_results[:,:,'tire_angle_p'])
@@ -93,12 +96,19 @@ def calc_rollout_results(rollout):
     speed_mask = get_speed_mask(speeds)
     additional_results[:,:,'traj_max_angle_p'] = np.abs((wp_angles_p * speed_mask)).max(axis=-1)
 
-    # ccs 
+    # ccs, stops
     for b in range(rollout.bs):
         curve_constrained_speed_calculator = CurveConstrainedSpeedCalculator()
+        stopsign_manager = StopSignManager()
         for i in range(rollout.seq_len):
+            # ccs
             ccs = curve_constrained_speed_calculator.step(wp_curvatures_p[b, i], speeds[b, i])
             additional_results[b,i,'ccs_p'] = ccs
+
+            # stops
+            aux_targets_p = rollout.aux_targets_p[b, i,:]
+            stopsign_speed = stopsign_manager.step(aux_targets_p['has_stop'], aux_targets_p['stop_dist'])
+            additional_results[b,i,'sss_p'] = stopsign_speed
 
     additional_results[:,:,'tire_angle_loss'] = abs(rollout.aux[:,:,"tire_angle"] - additional_results[:,:,"tire_angle_p"])
 

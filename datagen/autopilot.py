@@ -284,13 +284,9 @@ class Autopilot():
             stop_angle = angle_to_wp_from_dist_along_traj(angles_to_wps, self.stop_dist)
             lead_angle = angle_to_wp_from_dist_along_traj(angles_to_wps, self.lead_dist)
             
-            HAS_TIRE_ANGLE_PROB = 0 #.6
             self.aux[c, "speed"] = self.current_speed_mps
             self.aux[c, "tire_angle"] = angle_to_wp_d #self.current_tire_angle
             self.aux[c, "tire_angle_ap"] = self.current_tire_angle # actual tire angle used for ap steering
-            self.aux[c, "tire_angle_dagger_corrected"] = angle_to_wp
-            # self.aux[c, "tire_angle_lagged"] = self.tire_angles_hist[-self.tire_angles_lag] + self.tire_angle_noise[self.overall_frame_counter]
-            self.aux[c, "has_tire_angle"] = int(random.random() < HAS_TIRE_ANGLE_PROB)
             self.aux[c, "has_stop"] = self.stop_dist < 60 and (abs(stop_angle) < .65) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
             self.aux[c, "stop_dist"] = self.stop_dist
             self.aux[c, "has_lead"] = (self.lead_dist < 80) and (abs(lead_angle) < .65) # .65 is directly out of frame #smooth_dist_clf(self.lead_dist, 80, 100)

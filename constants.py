@@ -495,14 +495,6 @@ def get_hud(aux):
     has_map_route[:, :,:,1] = (aux[:, "has_route"]*255)[:, None,None]
     has_map_route[:, :,:,2] = ((aux[:, "has_route"]*-1+1)*255)[:, None,None]
 
-    # # Current tire angle
-    # tire_angle = get_hud_square()
-    # m = .05
-    # has_tire_angle = aux[:, "has_tire_angle"][:, None,None]
-    # tire_angle[:, :,:,0] = np.interp(aux[:, "tire_angle_lagged"], [-m, m], [0, 255])[:, None,None] * has_tire_angle
-    # tire_angle[:, :,:,1] = np.interp(aux[:, "tire_angle_lagged"], [m*6, -m*6], [0, 255])[:, None,None] * has_tire_angle
-    # tire_angle[:, :,:,2] = has_tire_angle * 255
-
     hud = np.concatenate([has_map_route, speed], axis=-3) # stack on height dim. New elements put in front
     return hud
     

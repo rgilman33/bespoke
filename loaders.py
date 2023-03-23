@@ -78,7 +78,6 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset,
     timer.log("aug imgs")
 
     # Assemble img for model
-    aux_chunk[b,:,"has_tire_angle"] = 0 # temporary
     img_chunk[b,:, :,:,:] = cat_imgs(imgs[FS_LOOKBACK:], imgs_bw[:-FS_LOOKBACK], maps, aux_chunk[b,:,:]) # each has seq dim, no batch
     timer.log("assemble img")
 

@@ -17,26 +17,52 @@ def get_target_wp_dist(speed_mps, wp_m_offset=0):
                     [v+wp_m_offset for v in min_dist_vals])
     return wp_m
 
-def get_target_wp_angle(traj, speed_mps, wp_m_offset=0):
+def get_target_wp_angle(wp_angles, speed_mps, wp_m_offset=0):
     # negative values of wp_m_offset brings target wp closer along the traj, making turns more centered. Pos makes further, making turns tighter
     wp_m = get_target_wp_dist(speed_mps, wp_m_offset=wp_m_offset)
 
-    target_wp_angle = angle_to_wp_from_dist_along_traj(traj, wp_m)
+    target_wp_angle = angle_to_wp_from_dist_along_traj(wp_angles, wp_m)
 
     return target_wp_angle
 
 
-def gather_preds(preds_all, speeds):
-    """ takes in preds for entire traj (seqlen, n_preds),
-    gathers them based on the given speed kph (seqlen, 1). """
+def get_tire_angle(wp_angles, roll_at_ego, speed_mps, wp_m_offset=0):
+    target_wp_angle = get_target_wp_angle(wp_angles, speed_mps, wp_m_offset=wp_m_offset)
+    tire_angle = correct_for_roll(target_wp_angle, roll_at_ego) # roll at ego
+    return tire_angle, target_wp_angle
 
-    wp_angles = []
-    for i in range(len(preds_all)):
-        traj = preds_all[i]
-        s = speeds[i]
-        angle_to_wp = get_target_wp_angle(traj, s)
-        wp_angles.append(angle_to_wp)
-    return np.array(wp_angles)
+def correct_for_roll(tire_angle_orig, roll_at_ego):
+    tire_angle = tire_angle_orig - roll_at_ego*.4 # roll at ego, multiplied by magic number
+    #if not (tire_angle_orig>0==tire_angle>0): tire_angle = 0 # if roll correction flips sign, peg at zero
+
+    return tire_angle
+
+
+class RollsManager(): # for smoothing out roll predictions
+    def __init__(self):
+        self.eps = .08 # eyeballed along w the ix below
+        self.reset()
+
+    def step(self, wp_rolls): # takes in entire rolls traj
+        current_roll = wp_rolls[:16].mean() # avg of near traj
+        self.roll = self.roll*(1-self.eps) + current_roll*self.eps
+        return self.roll
+
+    def reset(self):
+        self.roll = 0
+
+
+def get_tire_angles(wp_angles, wp_rolls, speeds):
+    """ takes in preds for entire traj (seqlen, n_preds),
+    gathers them based on the given speed (seqlen, 1). """
+    rm = RollsManager()
+    tire_angles, tire_angles_no_rc = [], []
+    for i in range(len(wp_angles)):
+        r = rm.step(wp_rolls[i])
+        tire_angle, tire_angle_no_rc = get_tire_angle(wp_angles[i], r, speeds[i])
+        tire_angles.append(tire_angle)
+        tire_angles_no_rc.append(tire_angle_no_rc)
+    return np.array(tire_angles), np.array(tire_angles_no_rc)
 
 
 # Dumb, but have to do this bc can't get the jitter out of blender curve
@@ -215,16 +241,18 @@ def max_ix_from_speed(speed_mps):
 
 MAX_SPEED_CCS = 30.0
 
-def _get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACCEL, preempt_sec=1.0):
-    # given a traj, what is the max speed we can be going right now to ensure we're able to hit all the upcoming wps at a speed appropriate for each one?
+def _get_curve_constrained_speed(curvatures, current_speed_mps, rolls=None, max_accel=MAX_ACCEL, preempt_sec=1.0):
+    # given a traj, what is the max speed we can be going right now to ensure we're able to hit all 
+    # the upcoming wps at a speed appropriate for each one?
     # and given a maximum allowed deceleration. This speed may be higher than the speed limit, it is simply the speed based on upcoming curvature, so
     # in theory a perfectly straight rd could have limit of infinity
     # current_speed_mps is only used to truncate the results bc we don't need to support beyond 5s
     # returns mps
     if current_speed_mps < 5: return 30
 
-    #curvatures = get_curvatures_from_headings(headings)
     tire_angles = curvatures * CRV_WHEELBASE
+    # if rolls is not None:
+    #     tire_angles = correct_for_roll(tire_angles, rolls) #TODO this magic might be different than lateral adj magic
     max_speeds_at_each_wp = tire_angles_to_max_speeds(tire_angles)
 
     curve_preempt_m = preempt_sec * current_speed_mps # we want to be going the desired speed BEFORE we hit the wp, not AT the wp, is that true?
@@ -239,9 +267,9 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_AC
 
     return curve_constrained_speed
 
-def get_curve_constrained_speed(curvatures, current_speed_mps, max_accel=MAX_ACCEL):
+def get_curve_constrained_speed(curvatures, rolls, current_speed_mps, max_accel=MAX_ACCEL):
     # returns mps
-    ccs = min([_get_curve_constrained_speed(curvatures, current_speed_mps, preempt_sec=s, max_accel=MAX_ACCEL) for s in [0.1, .5, 1.0, 1.5, 2.0]])
+    ccs = min([_get_curve_constrained_speed(curvatures, current_speed_mps, rolls=rolls, preempt_sec=s, max_accel=MAX_ACCEL) for s in [0.1, .5, 1.0, 1.5, 2.0]])
 
     # this magic is in addition to the magic number in curve-to-speeds formula above
     ccs *= np.interp(mps_to_mph(current_speed_mps), [20, 40], [1.0, 1.12]) # rw driving we seem to accept more torque at higher speeds? maybe not, maybe rds are generally banked at higher speeds?
@@ -272,15 +300,15 @@ class CurveConstrainedSpeedCalculator():
     def __init__(self):
         self.reset()
 
-    def step(self, wp_curvatures, current_speed):
+    def step(self, wp_curvatures, wp_rolls, current_speed):
         # Curve constrained speed
-        curve_constrained_speed_mps = get_curve_constrained_speed(wp_curvatures, current_speed)
+        curve_constrained_speed_mps = get_curve_constrained_speed(wp_curvatures, current_speed, rolls=wp_rolls)
         self.curve_speeds_history.append(curve_constrained_speed_mps)
 
-        CURVE_SPEED_UNROLL_DELAY_S = 5.0
+        CURVE_SPEED_UNROLL_DELAY_S = 5.0 #TODO less?
         FPS = 20
         CURVE_SPEED_UNROLL_DELAY_IX = int(CURVE_SPEED_UNROLL_DELAY_S*FPS)
-        curve_constrained_speed_mps = min(self.curve_speeds_history[-CURVE_SPEED_UNROLL_DELAY_IX:])
+        curve_constrained_speed_mps = min(self.curve_speeds_history[-CURVE_SPEED_UNROLL_DELAY_IX:]) 
 
         # don't accel after a turn too quickly
         max_speed_increase_per_step = MAX_CCS_UNROLL_ACCEL / FPS
@@ -292,6 +320,58 @@ class CurveConstrainedSpeedCalculator():
     def reset(self):
         self.curve_speeds_history = [MAX_SPEED_CCS for _ in range(20)]
         self.prev_commanded_ccs = MAX_SPEED_CCS
+
+
+class StopSignManager():
+    def __init__(self):
+        self.reset()
+        self.eps = 0.1
+        self.decel = 2.5
+
+    def reset(self):
+        #print("Resetting stopsign manager")
+        self.has_stop = 0
+        self.stop_dist = 60
+        self.is_stopped = False
+        self.just_stopped = False
+        self.just_stopped_counter = 0
+        self.stopped_counter = 0
+        self.stopsign_speed = 30 # use same placeholder as ccs
+
+    def step(self, has_stop_p, stop_dist_p):
+        if self.is_stopped:
+            print("waiting at stopsign")
+            self.stopped_counter += 1
+            if self.stopped_counter > 20:
+                self.reset()
+                self.just_stopped = True
+        elif self.just_stopped: # for a second after stopsign, keep stopsign apparatus off
+            print("just stopped, stopsigns disabled for a sec")
+            self.just_stopped_counter += 1
+            self.reset()
+            if self.just_stopped_counter > 20:
+                self.just_stopped = False
+        else: # normal operation
+            self.has_stop = self.eps*has_stop_p + (1-self.eps)*self.has_stop # doing this before the sigmoid
+            self.has_stop = sigmoid_python(self.has_stop)
+
+            if self.has_stop > .5:
+                self.stop_dist = self.eps*stop_dist_p + (1-self.eps)*self.stop_dist # TODO this should use current speed, update like kalman filter
+
+                print("Stopsign approaching!", round(self.stop_dist, 2))
+
+                if self.stop_dist < 1.5:
+                    print("In stop zone, stopping", self.stop_dist)
+                    self.stopsign_speed = 0
+                    self.is_stopped = True
+                else:
+                    # the max speed we can be going at this moment to hit zero at the stop sign w a given decel
+                    self.stopsign_speed = np.sqrt(self.stop_dist*self.decel)
+            else:
+                self.reset() # in case run stopsign, need to reset apparatus. May not want to do this, or only do it after a period of time
+
+        return self.stopsign_speed
+        
 
 
 # "A Policy on Geometric Design of Highways and Streets recommends 3.4 m/s2
