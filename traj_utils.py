@@ -337,12 +337,13 @@ class StopSignManager():
         self.just_stopped_counter = 0
         self.stopped_counter = 0
         self.stopsign_speed = 30 # use same placeholder as ccs
+        self.no_stop_counter = 0
 
     def step(self, has_stop_p, stop_dist_p):
         if self.is_stopped:
             print("waiting at stopsign")
             self.stopped_counter += 1
-            if self.stopped_counter > 20*2:
+            if self.stopped_counter > 20*3:
                 self.reset()
                 self.just_stopped = True
         elif self.just_stopped: # for a second after stopsign, keep stopsign apparatus off
@@ -351,26 +352,32 @@ class StopSignManager():
             self.stopsign_speed = 30
             self.has_stop = 0
             # self.reset()
-            if self.just_stopped_counter > 20*6:
+            STOPSIGN_RECHARGE_TIME = 20
+            if self.just_stopped_counter > 20*STOPSIGN_RECHARGE_TIME:
                 self.reset()
         else: # normal operation
             self.has_stop = self.eps*has_stop_p + (1-self.eps)*self.has_stop # doing this before the sigmoid
             self.has_stop = sigmoid_python(self.has_stop)
 
-            if self.has_stop > .5:
+            STOPSIGN_THRESH = 0.4
+            if self.has_stop > STOPSIGN_THRESH:
+                self.no_stop_counter = 0
                 self.stop_dist = self.eps*stop_dist_p + (1-self.eps)*self.stop_dist # TODO this should use current speed, update like kalman filter
 
                 print("Stopsign approaching!", round(self.stop_dist, 2))
 
                 if self.stop_dist < 1.0:
                     print("In stop zone, stopping", self.stop_dist)
-                    self.stopsign_speed = .2 #TODO revisit
+                    self.stopsign_speed = .3 #TODO revisit
                     self.is_stopped = True
                 else:
                     # the max speed we can be going at this moment to hit zero at the stop sign w a given decel
                     self.stopsign_speed = np.sqrt(self.stop_dist*self.decel)
             else:
-                self.reset() # in case run stopsign, need to reset apparatus. May not want to do this, or only do it after a period of time
+                self.no_stop_counter += 1
+                if self.no_stop_counter > 20*10:
+                    self.reset()
+                    # in case run stopsign, need to reset apparatus. Otherwise not needed
 
         return self.stopsign_speed
         

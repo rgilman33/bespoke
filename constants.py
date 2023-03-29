@@ -70,28 +70,6 @@ mph_to_mps = lambda x : x*.44704
 # rw
 ###########################
 
-# # 6.3, still using 6.7. Ended up using this for almost a year
-# min_dist_lookup = [ # TODO change this name to be more accurate. NOTE are we looking up constant time here? ie is this a constant mult of eg .8s ahead?
-#     (8.33, 6.), #18 mph (speed mps, wp dist m)
-#     (11.11, 7.5), # 24 mph
-#     (13.89, 9.5), # 30 mph
-#     (16.67, 12), # 36 mph
-#     (19.44, 16.5), # 43 mph
-#     (22.22, 22), # 50 mph
-# ]
-
-# 3.11.23 updating 
-#  # similar to above, but closer wps moved inwards. Changed after lengthening wheelbase and wps smoothing (not sure which) made traj tighter closer to ego, but similar further out
-# min_dist_lookup = [ was still too close, i believe after our wheelbase change
-#     (4.5, 3), # 10 mph
-#     (6.5, 4), # 14.5 mph
-#     (8.33, 5.), #18 mph (speed mps, wp dist m)
-#     (11.11, 7.0), # 24 mph
-#     (13.89, 9.5), # 30 mph
-#     (16.2, 12), # 36 mph
-#     (19.44, 16.5), # 43 mph
-#     (22.5, 22), # 50 mph
-# ]
 # 3.22, updating to bring in closer, using the new apparatus that allows to interp closer than our closest wp
 min_dist_lookup = [
     (4.5, 2.7), # 10 mph
@@ -104,7 +82,11 @@ min_dist_lookup = [
     (22.5, 16), # 50 mph
 ]
 min_dist_bps = [x[0] for x in min_dist_lookup]
-min_dist_vals = [x[1] for x in min_dist_lookup]
+# min_dist_vals = [x[1] for x in min_dist_lookup]
+min_dist_vals = [v*.6-.5 for v in min_dist_bps] # 3.29
+# this brings in the closest wp, keeps mid similar, and strongly brings in far wps, compared w above
+# just eyeballed this in trn-hq notebook
+# keep an eye on this once back in silverton w curvy but non-rolled rds
 
 
 CRV_WHEELBASE = 2.66 # both OP and internet agree, rw measurement confirms

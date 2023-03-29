@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 from dash_utils import *
 
-run_ids = ["run_555b"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
+run_ids = ["run_608", "run_609"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
 run_id = run_ids[0]
 model_stem = "3.20_e158"
 model_stem_b = None #"2.10_e4"
@@ -78,9 +78,9 @@ def update_timeline_fig_layout(fig, title='', xaxis_visible=False, height=120):
         hovertemplate=None,
     )
 
-fig, fig_unc, fig_lane_width, stop, lead, speed, dagger_shift = None, None, None, None, None, None, None
+fig, fig_unc, fig_lane_width, stop, stop_dist, lead, speed, dagger_shift = None, None, None, None, None, None, None, None
 def refresh_charts():
-    global fig, fig_unc, fig_lane_width, stop, lead, speed, dagger_shift
+    global fig, fig_unc, fig_lane_width, stop, stop_dist, lead, speed, dagger_shift
 
     # Tire angle
     tire_angle_data = [get_scatter('tire_angle', rollout.aux[MIN_PT:MAX_PT, "tire_angle"]*-1, 'blue')]
@@ -99,17 +99,27 @@ def refresh_charts():
     update_timeline_fig_layout(speed, "Speed", xaxis_visible=True, height=80)
 
     # Uncertainty
-    unc_data = [get_scatter('uncertainty p2', rollout_b.additional_results[MIN_PT:MAX_PT, "te"], 'brown')] if model_stem_b is not None else []
-    unc_data += [get_scatter('uncertainty p', rollout.additional_results[MIN_PT:MAX_PT, "te"], 'red')]
+    c = lambda x : np.clip(x, 0, .002)
+    unc_data = [get_scatter('uncertainty p2', c(rollout_b.additional_results[MIN_PT:MAX_PT, "te"]), 'brown')] if model_stem_b is not None else []
+    unc_data += [get_scatter('uncertainty p', c(rollout.additional_results[MIN_PT:MAX_PT, "te"]), 'red')]
     fig_unc = go.Figure(data=unc_data)
     update_timeline_fig_layout(fig_unc, "te", height=80)
 
     # Stop
     C = 5
+    _has_stop = np.clip(rollout.aux_targets_p[MIN_PT:MAX_PT, "has_stop"], -C, C)
     stop_data = [get_scatter('has stop p2', np.clip(rollout_b.aux_targets_p[MIN_PT:MAX_PT, "has_stop"], -C, C), 'brown')] if model_stem_b is not None else []
-    stop_data += [get_scatter('has stop p', np.clip(rollout.aux_targets_p[MIN_PT:MAX_PT, "has_stop"], -C, C), 'red')]
+    stop_data += [get_scatter('has stop p', _has_stop, 'red')]
     stop = go.Figure(data=stop_data)
     update_timeline_fig_layout(stop, "Stop", height=50)
+
+    # Stop dist
+    _stop_dist = rollout.aux_targets_p[MIN_PT:MAX_PT, "stop_dist"].copy() # copy otherwise alters underlying rollout
+    _stop_dist[_has_stop < 0] = 70 # manually peg to max when no stop is indicated. For visual cleanliness
+    stop_dist_data = [get_scatter('stop dist p2', rollout_b.aux_targets_p[MIN_PT:MAX_PT, "stop_dist"], 'brown')] if model_stem_b is not None else []
+    stop_dist_data += [get_scatter('stop dist', _stop_dist, 'red')]
+    stop_dist = go.Figure(data=stop_dist_data)
+    update_timeline_fig_layout(stop_dist, "Stop dist", height=50)
 
     # Lead
     lead_data = [get_scatter('has lead p2', np.clip(rollout_b.aux_targets_p[MIN_PT:MAX_PT, "has_lead"], -C, C), 'brown')] if model_stem_b is not None else []
@@ -185,7 +195,7 @@ app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 # blank_img[:,:,:] = 200
 # im_url = np_image_to_base64(blank_img)
 
-plots = (fig, speed, fig_unc, fig_lane_width, stop, lead, dagger_shift)
+plots = (fig, speed, fig_unc, fig_lane_width, stop, stop_dist, lead, dagger_shift)
 
 app.layout = html.Div(
     className="container",
@@ -217,7 +227,7 @@ app.layout = html.Div(
                             style={"width": "200px"}
                         ),
                     dcc.Dropdown(
-                            [0, 4000, 8000, 12000, 16000],
+                            [0, 4000, 8000, 12000, 16000, 20000],
                             value=0,
                             id='_start_ix',
                             style={"width": "200px"}
@@ -341,7 +351,7 @@ def update_graph(_run_id, _actgrad_source, _actgrad_target, _start_ix):
         update_rollout()
     refresh_charts()
 
-    return fig, speed, fig_unc, fig_lane_width, stop, lead, dagger_shift
+    return fig, speed, fig_unc, fig_lane_width, stop, stop_dist, lead, dagger_shift
 
 
 @app.callback(

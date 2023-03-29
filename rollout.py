@@ -82,7 +82,7 @@ def calc_rollout_results(rollout):
     wp_angles_p, wp_headings_p, wp_curvatures_p, wp_rolls_p, wp_zs_p = np.split(rollout.wps_p, 5, -1)
 
     additional_results = na(np.zeros((rollout.bs, rollout.seq_len, len(ROLLOUT_PROPS))), ROLLOUT_PROPS)
-    
+
     # Calculate some derivative properties
     speeds = rollout.aux[:, :, 'speed']
     for b in range(rollout.bs):
@@ -102,7 +102,7 @@ def calc_rollout_results(rollout):
         stopsign_manager = StopSignManager()
         for i in range(rollout.seq_len):
             # ccs
-            ccs = curve_constrained_speed_calculator.step(wp_curvatures_p[b, i], speeds[b, i])
+            ccs = curve_constrained_speed_calculator.step(wp_curvatures_p[b, i], wp_rolls_p[b,i], speeds[b, i])
             additional_results[b,i,'ccs_p'] = ccs
 
             # stops
