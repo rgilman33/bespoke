@@ -360,24 +360,19 @@ class Autopilot():
         if self.overall_frame_counter % self.DRIVE_STYLE_CHANGE_IX: self.reset_drive_style()
 
         fps = np.clip(random.gauss(20, 2), 17, 23)
+
+
         dist_car_travelled = self.current_speed_mps * (1 / fps) if self.current_speed_mps>0 else 0
 
         # always using close wp for ap, to keep right on traj
-        _wheelbase = CRV_WHEELBASE #1.6 #CRV_WHEELBASE # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
+        _wheelbase = CRV_WHEELBASE #1.6 #CRV_WHEELBASE 
+        # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
+        # this only goes into the turn_rate below, it's essentially just a turn-rate multiplier.
         _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/_wheelbase) # rad/sec # Tire angle from prev step
         vehicle_heading_delta = _vehicle_turn_rate * (1/fps) # radians
         
-        self.current_tire_angle += (angle_to_target_wp_ap - self.current_tire_angle) * self.lateral_kP # update tire angle for next round
-        # This is not the same as tire_angle in our aux, bc there we're aiming further ahead, in same way as drive rw.
-
-        # we get slightly out of sync bc our wps are going along based on curve, but we're controlling cube like a vehicle. 
-        # Keeping totally synced so wp angles remain perfect.
-        correction = (MIN_WP_M - wp_dists_actual[0])*.05 
-        dist_car_travelled_corrected = dist_car_travelled + correction
-        self.distance_along_loop += dist_car_travelled_corrected
-
         _current_heading = self.current_rotation[2]+(np.pi/2) # TODO can rationalize this away
-        angle_to_future_vehicle_loc = _current_heading - (vehicle_heading_delta/2) # this isn't the exact calc. See rollout_utils for more accurate version
+        angle_to_future_vehicle_loc = _current_heading - (vehicle_heading_delta/2) # this isn't the exact calc. See rollout_utils for more accurate version. Approximating it w a triangle.
         delta_x = dist_car_travelled*np.cos(angle_to_future_vehicle_loc)
         delta_y = (dist_car_travelled*np.sin(angle_to_future_vehicle_loc))
 
@@ -388,6 +383,17 @@ class Autopilot():
         self.current_pos[0] += delta_x
         self.current_pos[1] += delta_y
         self.current_pos[2] = self.waypoints[current_wp_ix][2] # Just setting this manually to the wp itself. Not "driving" it like XY
+
+
+        # updating for next round
+        self.current_tire_angle += (angle_to_target_wp_ap - self.current_tire_angle) * self.lateral_kP # update tire angle for next round
+        # This is not the same as tire_angle in our aux, bc there we're aiming further ahead, in same way as drive rw.
+
+        # we get slightly out of sync bc our wps are going along based on curve, but we're controlling cube like a vehicle. 
+        # Keeping totally synced so wp angles remain perfect.
+        correction = (MIN_WP_M - wp_dists_actual[0])*.05 
+        dist_car_travelled_corrected = dist_car_travelled + correction
+        self.distance_along_loop += dist_car_travelled_corrected
 
         ###############
         # Update speed

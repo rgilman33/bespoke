@@ -71,23 +71,28 @@ mph_to_mps = lambda x : x*.44704
 ###########################
 
 # 3.22, updating to bring in closer, using the new apparatus that allows to interp closer than our closest wp
-min_dist_lookup = [
+# min_dist_lookup = [
+#     (4.5, 2.7), # 10 mph
+#     (6.5, 3.3), # 14.5 mph
+#     (8.33, 4.5), #18 mph (speed mps, wp dist m)
+#     (11.11, 6.), # 24 mph
+#     (13.89, 8), # 30 mph
+#     (16.2, 10.), # 36 mph
+#     (19.44, 13), # 43 mph
+#     (22.5, 16), # 50 mph
+# ]
+min_dist_lookup = [ # 3.29
     (4.5, 2.7), # 10 mph
-    (6.5, 3.3), # 14.5 mph
-    (8.33, 4.5), #18 mph (speed mps, wp dist m)
+    (6.5, 3.5), # 14.5 mph
+    (8.33, 4.4), #18 mph (speed mps, wp dist m)
     (11.11, 6.), # 24 mph
-    (13.89, 8), # 30 mph
-    (16.2, 10.), # 36 mph
-    (19.44, 13), # 43 mph
-    (22.5, 16), # 50 mph
+    (13.89, 7.7), # 30 mph
+    (16.2, 9.3), # 36 mph
+    (19.44, 11.5), # 43 mph
+    (22.5, 13.5), # 50 mph
 ]
 min_dist_bps = [x[0] for x in min_dist_lookup]
-# min_dist_vals = [x[1] for x in min_dist_lookup]
-min_dist_vals = [v*.6-.5 for v in min_dist_bps] # 3.29
-# this brings in the closest wp, keeps mid similar, and strongly brings in far wps, compared w above
-# just eyeballed this in trn-hq notebook
-# keep an eye on this once back in silverton w curvy but non-rolled rds
-
+min_dist_vals = [x[1] for x in min_dist_lookup]
 
 CRV_WHEELBASE = 2.66 # both OP and internet agree, rw measurement confirms
 STEER_RATIO = 16. # taken from OP, specific for crv-5g. Don't change this willy nilly

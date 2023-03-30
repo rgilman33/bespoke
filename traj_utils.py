@@ -359,7 +359,7 @@ class StopSignManager():
             self.has_stop = self.eps*has_stop_p + (1-self.eps)*self.has_stop # doing this before the sigmoid
             self.has_stop = sigmoid_python(self.has_stop)
 
-            STOPSIGN_THRESH = 0.4
+            STOPSIGN_THRESH = 0.6
             if self.has_stop > STOPSIGN_THRESH:
                 self.no_stop_counter = 0
                 self.stop_dist = self.eps*stop_dist_p + (1-self.eps)*self.stop_dist # TODO this should use current speed, update like kalman filter
@@ -374,10 +374,10 @@ class StopSignManager():
                     # the max speed we can be going at this moment to hit zero at the stop sign w a given decel
                     self.stopsign_speed = np.sqrt(self.stop_dist*self.decel)
             else:
-                self.no_stop_counter += 1
-                if self.no_stop_counter > 20*10:
-                    self.reset()
-                    # in case run stopsign, need to reset apparatus. Otherwise not needed
+                # self.no_stop_counter += 1
+                # if self.no_stop_counter > 20*10:
+                self.reset()
+                # in case run stopsign, need to reset apparatus. Otherwise not needed
 
         return self.stopsign_speed
         
