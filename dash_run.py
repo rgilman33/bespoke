@@ -17,8 +17,8 @@ from dash_utils import *
 
 run_ids = ["run_608", "run_609"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
 run_id = run_ids[0]
-model_stem = "3.20_e158"
-model_stem_b = None #"2.10_e4"
+model_stem = "4.5_e68"
+model_stem_b = "3.20_e158" #"2.10_e4"
 
 MIN_PT = 0
 L = 4000

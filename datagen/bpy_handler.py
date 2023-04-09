@@ -109,7 +109,7 @@ def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False,
     _route_len = 0
     counter = 0
     max_curve = np.inf
-    while _route_len < route_len or max_curve > .25: # .25 chosen manually, cuts out about 1 in ten routes, is still pretty sharp. Can maybe go up to .3
+    while _route_len < route_len or max_curve > .3: # .25 chosen manually, cuts out about 1 in ten routes, is still pretty sharp. Can maybe go up to .3
         route = _get_route(wp_df, start_locs_df, route_len, just_go_straight, is_ego)
         max_curve = route.route_curvature.abs().max()
         _route_len = len(route)*WP_SPACING

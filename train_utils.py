@@ -192,6 +192,7 @@ class Trainer():
 
                 with torch.cuda.amp.autocast(): model_out= model.forward_cnn(img, aux)
 
+            self.img_for_viewing = img # for inspection
             wps_p, aux_targets_p, obsnet_out = model_out
             #assert torch.isnan(aux).sum() == 0, f"aux has nans: {aux}"
             timer.log("model forward")
@@ -206,8 +207,9 @@ class Trainer():
 
             if f(wps_p):
                 print("wps_p has nans", wps_p)
-                self.should_stop = True
-                break
+                # self.should_stop = True
+                # break
+                continue
             if f(aux_targets_p):
                 print("aux_targets_p has nans")
                 self.should_stop = True
@@ -222,7 +224,6 @@ class Trainer():
             #     self.nans_counter += 1
             #     self.should_stop = True
             #     break
-            self.img_for_viewing = img # for inspection
 
             _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights)
             _wps_loss *= LOSS_SCALER
@@ -506,7 +507,7 @@ def get_transform(seqlen):
             A.ISONoise(intensity=(.2, .5), p=.4),
         ]),
         A.OneOf([ # distractors
-            A.CoarseDropout(p=.1, max_holes=40, max_height=120, max_width=120, min_holes=10, min_height=10, min_width=10, fill_value=random_color(), mask_fill_value=None),
+            A.CoarseDropout(p=.05, max_holes=40, max_height=60, max_width=60, min_holes=10, min_height=5, min_width=5, fill_value=random_color(), mask_fill_value=None),
             A.Spatter(p=.1, mean=(0.63, 0.67), std=(0.25, 0.35), gauss_sigma=(1.8, 2.0), intensity=(-.4, 0.4), cutout_threshold=(0.65, 0.72), mode=['rain', 'mud']),
             A.PixelDropout(p=.1, dropout_prob=random.uniform(.01, .05), per_channel=random.choice([0,1]), drop_value=random_color(), mask_drop_value=None),
         ]),
@@ -516,15 +517,14 @@ def get_transform(seqlen):
             A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=.4)
         ]),
         A.OneOf([ # brightness
-            A.RandomGamma(gamma_limit=(30,150), p=.4), # higher is darker
-            A.RandomBrightness(p=.5, limit=(-0.35, 0.35)),
+            A.RandomGamma(gamma_limit=(50,130), p=.4), # higher is darker
+            A.RandomBrightness(p=.5, limit=(-0.25, 0.25)),
         ]),
         A.OneOf([  # other 
             # A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)),
             A.CLAHE(p=.1, clip_limit=(1, 4), tile_grid_size=(8, 8)),
             A.Emboss(p=.1, alpha=(0.2, 0.5), strength=(0.2, 0.7)),
         ])
-
     ]
     random.shuffle(transforms)
     transform = A.Compose(transforms, additional_targets={f"image{i}":"image" for i in range(seqlen)})

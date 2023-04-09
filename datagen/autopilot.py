@@ -19,7 +19,7 @@ class Autopilot():
 
         # doing these here so they don't change mid stopsign
         self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,4)
-        OBEYS_STOPS_PROB = .5
+        OBEYS_STOPS_PROB = .3
         self.obeys_stops = random.random()<OBEYS_STOPS_PROB
 
         self.reset_dagger()
@@ -34,7 +34,7 @@ class Autopilot():
 
         self.is_rando_yielding = False
         self.rando_yield_counter = 0
-        self.RANDO_YIELD_FREQ = random.randint(400, 800) if not (episode_info.is_highway or random.random()<.5) else 10_000
+        self.RANDO_YIELD_FREQ = random.randint(600, 800) if not (episode_info.is_highway or random.random()<.4) else 10_000
         self.RANDO_YIELD_DURATION = random.randint(30, 120)
 
         self.N_NEGOTIATION_WPS = 100
@@ -170,7 +170,7 @@ class Autopilot():
         
     def _sec_to_undagger(self, dagger_shift):
         # fixed, for targets. Constant time return to proper traj based on dagger shift
-        return np.interp(abs(dagger_shift), [NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX], [2, 4]) #2
+        return np.interp(abs(dagger_shift), [NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX], [2, 4]) #2 NOTE these need to remain scaled
 
     def step(self):
 
@@ -365,10 +365,14 @@ class Autopilot():
         dist_car_travelled = self.current_speed_mps * (1 / fps) if self.current_speed_mps>0 else 0
 
         # always using close wp for ap, to keep right on traj
-        _wheelbase = CRV_WHEELBASE #1.6 #CRV_WHEELBASE 
+        #_wheelbase = CRV_WHEELBASE #1.6 #CRV_WHEELBASE 
+        # CRV * 4, get big oscillations, turns too slow then has to cut back in sharp. Can see ego drift far from lead wp
+        # crv wheelbase can also see get a bit off traj on the outside, making it look like traj is sharper on the inside, which is
+        # exactly why we implemented it this way. Smaller wheelbase stays directly on traj
+
         # NOTE CRV wheelbase may make it turn too wide. That's why was using smaller wheelbase. This interacts w kP and with target wp ix interp
         # this only goes into the turn_rate below, it's essentially just a turn-rate multiplier.
-        _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/_wheelbase) # rad/sec # Tire angle from prev step
+        _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/self.wheelbase) # rad/sec # Tire angle from prev step
         vehicle_heading_delta = _vehicle_turn_rate * (1/fps) # radians
         
         _current_heading = self.current_rotation[2]+(np.pi/2) # TODO can rationalize this away
@@ -434,7 +438,7 @@ class Autopilot():
 
         # if recently stopped, but now leaving stop-zone, reset stopsign apparatus
         # LEAVING_STOP -> NONE
-        RESET_STOPSIGN_M = 5
+        RESET_STOPSIGN_M = 10
         if self.stopsign_state == "LEAVING_STOP" and (current_wp_ix-self.stopped_at_ix) > RESET_STOPSIGN_M/WP_SPACING:
             self.stopsign_state = "NONE"
 
@@ -456,6 +460,9 @@ class Autopilot():
         #         print(self.stopsign_state, round(stop_dist, 2), round(stop_sign_constrained_speed, 2))
         #     if self.is_rando_yielding:
         #         print("Rando yielding", self.rando_yield_counter)
+        #     if abs(self.dagger_shift) > .0:
+        #         print("Dagger shift", self.dagger_shift)
+
 
         if self.obeys_stops:
             target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
@@ -521,7 +528,9 @@ class Autopilot():
         self.turn_slowdown_sec_before = random.uniform(.25, .75)
         self.max_accel = random.uniform(2.6, 3.5) #
 
+        self.wheelbase = random.uniform(2., 2.66) # crv is 2.66, but that begins to be too slow on the turns, like a yacht
 
 
-NORMAL_SHIFT_MIN = .4
-NORMAL_SHIFT_MAX = .8 #1.0
+
+NORMAL_SHIFT_MIN = .5
+NORMAL_SHIFT_MAX = 1.0
