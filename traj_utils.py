@@ -327,7 +327,7 @@ class StopSignManager():
         self.reset()
         self.eps = 0.1
         self.decel = 1.2
-        self.accel = .8
+        self.accel = 1.0
         self.max_speed_increase_per_step = self.accel / FPS
 
     def reset(self):
@@ -347,6 +347,7 @@ class StopSignManager():
             self.stopped_counter += 1
             if self.stopped_counter > 20*3:
                 self.reset()
+                self.stopsign_speed = 0 # we'll accel controlled from here
                 self.just_stopped = True
         elif self.just_stopped: # for a second after stopsign, keep stopsign apparatus off
             print("just stopped, stopsigns disabled for a sec")
