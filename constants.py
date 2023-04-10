@@ -81,15 +81,24 @@ mph_to_mps = lambda x : x*.44704
 #     (19.44, 13), # 43 mph
 #     (22.5, 16), # 50 mph
 # ]
-min_dist_lookup = [ # 3.29
-    (4.5, 2.7), # 10 mph
-    (6.5, 3.5), # 14.5 mph
-    (8.33, 4.4), #18 mph (speed mps, wp dist m)
-    (11.11, 6.), # 24 mph
-    (13.89, 7.7), # 30 mph
-    (16.2, 9.3), # 36 mph
-    (19.44, 11.5), # 43 mph
-    (22.5, 13.5), # 50 mph
+
+# min_dist_lookup = [ 
+#     (6.5, 4.), # 14.5 mph
+#     (8.33, 4.9), #18 mph (speed mps, wp dist m)
+#     (11.11, 6.4), # 24 mph
+#     (13.89, 8), # 30 mph
+#     (16.2, 9.5), # 36 mph
+#     (19.44, 12), # 43 mph
+#     (22.5, 14.6), # 50 mph
+# ]
+min_dist_lookup = [ 
+    (6.5, 4.), # 14.5 mph
+    (8.33, 5.0), #18 mph (speed mps, wp dist m)
+    (11.11, 6.7), # 24 mph
+    (13.89, 8.5), # 30 mph
+    (16.2, 10.1), # 36 mph
+    (19.44, 12.6), # 43 mph
+    (22.5, 15.), # 50 mph
 ]
 min_dist_bps = [x[0] for x in min_dist_lookup]
 min_dist_vals = [x[1] for x in min_dist_lookup]
