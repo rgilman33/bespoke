@@ -24,7 +24,7 @@ importlib.reload(bpy_handler)
 bpy_handler.reset_npc_objects(bpy)
 episode_info = episode.make_episode() 
 bpy_handler.set_frame_change_post_handler(bpy, episode_info, save_data=False)
-
-
+     
+ 
  
  

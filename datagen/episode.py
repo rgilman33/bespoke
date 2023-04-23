@@ -63,12 +63,13 @@ rd_surface_keywords = ["gravel", "rock", "concrete", "soil", "mud", "asphalt", "
 
 rd_surfaces = [s for s in all_albedos if len([k for k in rd_surface_keywords if k in s])>0]
 snow_surfaces = [s for s in all_albedos if "snow" in s]
-rd_surfaces += snow_surfaces # These generally look good, no need to deal w separately. There were 14 of them vs 390 of others last time counted
+#rd_surfaces += snow_surfaces # These generally look good, no need to deal w separately. There were 14 of them vs 390 of others last time counted
 
 print(f"{len(all_albedos)} total surfaces. {len(rd_surfaces)} appropriate for rd surface. {len(snow_surfaces)} snow surfaces.")
 
-slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr", "houseplant_flowering_vgztealha", "plant_shrub_wdvhberja"]
+slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr", "houseplant_flowering_vgztealha", "plant_shrub_wdvhberja", "ground cover_plant_vdfnehiia"]
 # /home/beans/static/Megascans Library/Downloaded/3dplant/plants_3d_slfpffjr/Var4/Var4_LOD3.fbx
+# /home/beans/static/Megascans Library/Downloaded/3dplant/ground cover_plant_vdfnehiia/Var7/Var7_LOD3.fbx
 
 plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
 plants_folders = [f for f in plants_folders if len([s for s in slow_grasses if s in f])==0]
@@ -77,14 +78,14 @@ def make_episode():
 
     episode_info = EpisodeInfo() 
 
-    is_single_rd = random.random() < 1 
+    is_single_rd = True #random.random() < 1 
     get_node("is_single_rd", get_variables_nodes).outputs["Value"].default_value = 1 if is_single_rd else 0
 
     HAS_LANELINES_PROB = .7 # .8
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
     is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, no bumps, more often banked, no smaller-scale XY noise
-    wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0
+    wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0 # no wide shoulder add when dirtgravel
 
     is_just_straight = random.random()<.01
 
@@ -92,19 +93,15 @@ def make_episode():
     if rd_is_lined:
         lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.8, 3.9)
     else: # dirt gravel
-        lane_width = random.uniform(3.4, 6)
-        left_shift = -np.interp(lane_width, [3.4, 6], [1.7, 2])
+        if random.random()<.8:
+            lane_width = 4.
+            left_shift = -random.uniform(.4, lane_width/2)
+        else: # narrow dirt gravel
+            lane_width = 2.2 #random.uniform(2.4, 4)
+            left_shift = -lane_width/2
 
     lane_width_actual = lane_width + left_shift
 
-    has_directionality = True if not rd_is_lined else random.random() < .2
-    get_node("directionality_w", dirt_gravel_nodes).outputs["Value"].default_value = lane_width + left_shift
-    get_node("d_gate_normal", dirt_gravel_nodes).mute = not has_directionality # Directly muting these, otherwise still get slowdown. Mute node is only way to avoid slowdown, setting to zero still get slowdown.
-    get_node("d_gate_albedo", dirt_gravel_nodes).mute = not has_directionality
-
-
-    get_node("directionality_override", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.4, .8) if rd_is_lined else random.uniform(.3, .5)
-    # one overrides to just use underlying, non-directioned material. .3 is pretty directioned
     has_stops = 1 if rd_is_lined or lane_width_actual>3. else 0 # wide gravel also can have stops
     get_node("has_stops", get_variables_nodes).outputs["Value"].default_value = has_stops
     
@@ -189,14 +186,14 @@ def make_episode():
     get_node("rdside_hills_noise_mult", main_map_nodes).outputs["Value"].default_value = 3 * 10**random.uniform(0, 1)
 
 
-    # gutter
-    # if wide shoulder add, no gutter
-    get_node("gutter_noise_in", main_map_nodes).outputs["Value"].default_value = 1 if rd_is_lined else 3. # needs to travel w shift to remain aligned
-    get_node("gutter_noise_mult", main_map_nodes).outputs["Value"].default_value = 0 if wide_shoulder_add>0 else random.uniform(.4, 1.6)
-    get_node("gutter_shift", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 1.5) if rd_is_lined else random.uniform(0, 1.5)
-    get_node("gutter_hwidth", main_map_nodes).outputs["Value"].default_value = random.uniform(.2, 1.2)
-    has_gutter = random.random() < .6 and not wide_shoulder_add>0 
-    get_node("gutter_depth_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(.5, .8) if has_gutter else 0
+    # # gutter
+    # # if wide shoulder add, no gutter
+    # get_node("gutter_noise_in", main_map_nodes).outputs["Value"].default_value = 1 if rd_is_lined else 3. # needs to travel w shift to remain aligned
+    # get_node("gutter_noise_mult", main_map_nodes).outputs["Value"].default_value = 0 if wide_shoulder_add>0 else random.uniform(.4, 1.6)
+    # get_node("gutter_shift", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 1.5) if rd_is_lined else random.uniform(0, 1.5)
+    # get_node("gutter_hwidth", main_map_nodes).outputs["Value"].default_value = random.uniform(.2, 1.2)
+    # has_gutter = random.random() < .6 and not wide_shoulder_add>0 
+    # get_node("gutter_depth_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(.5, .8) if has_gutter else 0
 
 
 
@@ -229,7 +226,6 @@ def make_episode():
     get_node("yellow_hwidth", meshify_lines_nodes).outputs["Value"].default_value = random.uniform(.04, .12)
     get_node("white_hwidth", meshify_lines_nodes).outputs["Value"].default_value = random.uniform(.04, .12)
 
-    #TODO these should prob be randomized directly in blendfile
     # lanelines mod 
     get_node("y_mod_period", get_section_nodes).outputs["Value"].default_value = random.uniform(8, 24) 
     get_node("y_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .8)
@@ -288,7 +284,6 @@ def make_episode():
         set_intersection_property_all(rd, "v_yellow_top_is_dashed", yellow_is_dashed)
         set_intersection_property_all(rd, "left_shift", left_shift) # Used for dirtgravel. Shifts lane markings and wps to the left, creates overlap in the middle.
 
-
     for rd in horizontal_rds:
         set_intersection_property_all(rd, "h_has_left_turn_lane", False)
         set_intersection_property_all(rd, "h_top_has_l2", False)
@@ -313,7 +308,7 @@ def make_episode():
 
     get_node("hdri_hue", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.45, .55)
     get_node("hdri_sat", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.5, 1.5)
-    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.3, 4)
+    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.3, 3.5)
 
     ######################
     # Lanelines, material
@@ -323,9 +318,9 @@ def make_episode():
     white_lines_opacity = get_node("white_line_opacity", dirt_gravel_nodes)
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes)
 
-    if rd_is_lined:
-        white_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .05 * 10**random.uniform(0, 1.5) # Deleting the mesh itself now when only yellow
-        yellow_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .1 * 10**random.uniform(0, 1.) # less than this, sometimes just not visible, especially w aug
+    if rd_is_lined: # can consider going back down to min .2, just that sometimes too hard to see when combined w noise
+        white_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .25 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
+        yellow_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .25 * 10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
     else:
         white_lines_opacity.outputs["Value"].default_value = 0
         yellow_lines_opacity.outputs["Value"].default_value = 0
@@ -341,6 +336,8 @@ def make_episode():
 
     get_node("yellow_line_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.2, .5)
     get_node("yellow_line_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .7)
+    get_node("white_line_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.2, .5)
+    get_node("white_line_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .7)
 
     mm = random.uniform(.4, .8)
     get_node("white_line_mid", dirt_gravel_nodes).outputs["Value"].default_value = mm
@@ -352,7 +349,7 @@ def make_episode():
     ######################
 
     rd_img_albedo = random.choice(rd_surfaces)
-    shoulder_img_albedo = rd_img_albedo if random.random()<.2 else random.choice(rd_surfaces)
+    shoulder_img_albedo = rd_img_albedo if random.random()<.2 else random.choice(rd_surfaces+snow_surfaces)
 
     get_node("rd_img_albedo", dirt_gravel_nodes).image.filepath = rd_img_albedo
     get_node("shoulder_img_albedo", dirt_gravel_nodes).image.filepath = shoulder_img_albedo #rd_img_albedo if random.random() < SHOULDER_SAME_ALBEDO_AS_RD_PROB else random.choice(all_albedos)
@@ -365,23 +362,21 @@ def make_episode():
     ############### # all is relative to edge of rd, ie outer white line
     # inner_shoulder is the same surface as rd
 
-    inner_shoulder_width = .25 if (is_only_yellow_lined) else (wide_shoulder_add*.5 + random.uniform(.25, 1.2))
+    inner_shoulder_width = .25 if is_only_yellow_lined else .8 if not rd_is_lined else (wide_shoulder_add*.5 + random.uniform(.2, 1.5))
 
     # outer shoulder is different surface from rd
     outer_shoulder_width = random.uniform(0.01, .3)
 
-    # constant inner-shoulder width when only-yellow
+    # constant inner-shoulder width when only-yellow or dirtgravel, and narrower edge fade (.3 -> 1.5) rather than (.3, 3.0)
     rd_start_fade = inner_shoulder_width 
-    rd_fade_width = .3*(10**random.uniform(0, 1.))
+    rd_fade_width = .3*(10**random.uniform(0, .7)) if (is_only_yellow_lined or not rd_is_lined) else .3*(10**random.uniform(0, 1.))
     outer_shoulder_start_fade = rd_start_fade + outer_shoulder_width # inner + outer shoulder widths
     outer_shoulder_fade_width = random.uniform(0.1, 1.)
 
     get_node("rd_start_fade", dirt_gravel_nodes).outputs["Value"].default_value = rd_start_fade
-    get_node("rd_fade_width", dirt_gravel_nodes).outputs["Value"].default_value = 100 if ((not rd_is_lined) and random.random()<.2) else rd_fade_width
-    # dirtgravel sometimes just rd texture, have to use directionality and z to discern traj
+    get_node("rd_fade_width", dirt_gravel_nodes).outputs["Value"].default_value = rd_fade_width
     get_node("shoulder_start_fade", dirt_gravel_nodes).outputs["Value"].default_value = outer_shoulder_start_fade
-    get_node("shoulder_fade_width", dirt_gravel_nodes).outputs["Value"].default_value = 100 if random.random()<.5 else outer_shoulder_fade_width 
-    # sometimes no terrain, just shoulder all the way
+    get_node("shoulder_fade_width", dirt_gravel_nodes).outputs["Value"].default_value = outer_shoulder_fade_width 
     #################
 
     # small scale z noise and shift that begins where outer shoulder ends. Smaller scale and more constant than rdside hills
@@ -392,21 +387,21 @@ def make_episode():
     get_node("terrain_up_falloff_range", main_map_nodes).outputs["Value"].default_value  = random.uniform(1.0, 3.0)
 
 
-
-    get_node("rd_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, .8) if rd_is_lined else random.uniform(0, 3)
+    get_node("rd_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, 2.)
     get_node("shoulder_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, 5)
 
     get_node("rd_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .9)
     get_node("shoulder_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.6, 1.0)
 
     get_node("rd_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.0, .5)
+    get_node("shoulder_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.0, .5)
 
-    get_node("rd_overlay_mixer", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.2, .9) if rd_is_lined else random.uniform(.0, .2)
+    get_node("rd_overlay_mixer", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8)
 
     ##
-    get_node("rd_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = 10**random.uniform(1.0, 4.0)
+    get_node("rd_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = 2*10**random.uniform(1.0, 2.5)
     # get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, 1.0) if is_only_yellow_lined else random.uniform(.3, 2.0)
-    get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = .1*(10**random.uniform(0, 2.0))
+    get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = .1*(10**random.uniform(1, 2.0))
 
     get_node("shoulder_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = 10**random.uniform(1.0, 4.0)
     get_node("shoulder_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, 6.0)
@@ -441,16 +436,31 @@ def make_episode():
     shadow_v = 0.0 if random.random() < .6 else 1.0 # value 0 blacks out colors anyways
     get_node("shadow_v", dirt_gravel_nodes).outputs["Value"].default_value = shadow_v
 
-    NO_SHADOWS_PROB = .3 if rd_is_lined else .7
+    NO_SHADOWS_PROB = .4 #.3 if rd_is_lined else .7
     shadow_strength = 0 if random.random() < NO_SHADOWS_PROB else random.uniform(.1, .7) if shadow_v==1.0 else random.uniform(.2, 1.05)
     get_node("shadow_strength", dirt_gravel_nodes).outputs["Value"].default_value = shadow_strength
     get_node("shadow_shape_subtracter", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(-.04, .1) if shadow_v==0.0 else random.uniform(-.01, .1)
-    get_node("shadow_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95
+    # shadow_noise_scale = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95
+    shadow_noise_scale = random.uniform(.02, .85)
+    get_node("shadow_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = shadow_noise_scale
+    get_node("shadow_uv_rotate", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, 6.28)
+    get_node("shadow_uv_stretch", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, np.interp(shadow_noise_scale, [.02, .85], [15, 3]))
 
+    # Directionality, uv-stretching
+    HAS_DIRECTIONALITY_PROB = .4 if rd_is_lined else .8
+    has_directionality = random.random() < HAS_DIRECTIONALITY_PROB
+    get_node("directionality_w", dirt_gravel_nodes).outputs["Value"].default_value = lane_width_actual + inner_shoulder_width
+    get_node("d_gate_normal", dirt_gravel_nodes).mute = not has_directionality # Directly muting these, otherwise still get slowdown. Mute node is only way to avoid slowdown, setting to zero still get slowdown.
+    get_node("d_gate_albedo", dirt_gravel_nodes).mute = not has_directionality
+    get_node("directionality_override", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .5)
+    # one overrides to just use underlying, non-directioned material. .3 is pretty directioned
+    
 
-    # Directionality
-    HAS_DIRECTIONALITY_PROB = .25 if rd_is_lined else 1.0 #.1 if rd_is_lined else .6
-    directionality_mult = random.uniform(.2, .8) if random.random()<HAS_DIRECTIONALITY_PROB else 0
+    # Directionality, old version
+    HAS_DIRECTIONALITY_PROB = .4 #.3 if rd_is_lined else .6
+    has_directionality = random.random() < HAS_DIRECTIONALITY_PROB
+    directionality_mult = random.uniform(.3, .8) if has_directionality else 0
+    get_node("directionality_mixer", dirt_gravel_nodes).mute = not has_directionality
     get_node("directionality_mult", dirt_gravel_nodes).outputs["Value"].default_value = directionality_mult
     # get_node("directionality_maskout_noise_add", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
     get_node("d1_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.05, .2)
@@ -471,8 +481,8 @@ def make_episode():
 
     # vertex spacing.
     # Startup time perf very sensitive to this. Directionality lines only show up where are edges, so this strongly affects directionality appearance.
-    #TODO should depend on if rd is lined
-    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.5 if rd_is_lined else .4, .7)
+    #TODO should depend on if rd is lined. Why? Bc startup time? changed it to depend on directionlity mult
+    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.4 if directionality_mult>0 else .5, .7)
 
 
 
@@ -527,8 +537,12 @@ def make_episode():
     get_node("rotation_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
     get_node("rotation_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
     get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.3, .0)
-    get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, .5) # neg moves closer to rd
-    get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-2, .5) # neg moves it along rd closer up before stopline
+
+    stop_shift_y = random.uniform(-2, 0) # neg moves it along rd closer up before stopline
+    get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = stop_shift_y
+    get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, -stop_shift_y/2) # i like 2m out, but then more often blocked, not fair, if could make fair i'd like that
+    # neg moves closer to rd. When further up, can also be further out. 
+
     # don't shift in stopsign object itself, do so aftewards, otherwise was keeping origin of obj as center, stopsign itself was in rd
     get_node("shift_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(1.8, 3.)
 
@@ -712,13 +726,17 @@ def make_episode():
     get_node("wp_spacing", get_variables_nodes).outputs["Value"].default_value = WP_SPACING
 
     # variable len stencils to give angles to rds. .33 and .67 would give perfect grid. .1 and .15 would give heavily skewed.
+    # s1 = .33 #random.uniform(.1, .4)
+    # s2 = .67 #s1 + random.uniform(.1, .4)
+    # # NOTE hardcoding these to even bc was having to filter out lots of inits, and that's a bottleneck right now. 
+    # # Can allow back in later if eg have sidecams, or otherwise want more sharp turns
     s1 = random.uniform(.1, .4)
     s2 = s1 + random.uniform(.1, .4)
     get_node("trisplit_loc_1", get_rds_nodes).outputs["Value"].default_value = s1
     get_node("trisplit_loc_2", get_rds_nodes).outputs["Value"].default_value = s2
 
     # No NPCs when too narrow gravel rds
-    if not rd_is_lined and lane_width_actual < 3.3:
+    if not rd_is_lined and lane_width_actual < 3.0:
         bpy.data.objects["npc"].hide_render = True
         has_npcs = False
     else:
@@ -733,7 +751,7 @@ def make_episode():
     episode_info.yaw = yaw_perturbation
     episode_info.has_npcs = has_npcs
     episode_info.is_single_rd = is_single_rd
-    episode_info.lane_width = lane_width+left_shift # left shift is zero for lined, for dirtgravel this gives effective lane width. left shift is neg
+    episode_info.lane_width = lane_width_actual # left shift is zero for lined, for dirtgravel this gives effective lane width. left shift is neg
     episode_info.shadow_strength = shadow_strength
     episode_info.directionality_mult = directionality_mult
     episode_info.has_stops = has_stops

@@ -109,7 +109,7 @@ def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False,
     _route_len = 0
     counter = 0
     max_curve = np.inf
-    while _route_len < route_len or max_curve > .3: # .25 chosen manually, cuts out about 1 in ten routes, is still pretty sharp. Can maybe go up to .3
+    while _route_len < route_len or max_curve > .25: # chosen manually, cuts out about 1 in ten routes, is still pretty sharp
         route = _get_route(wp_df, start_locs_df, route_len, just_go_straight, is_ego)
         max_curve = route.route_curvature.abs().max()
         _route_len = len(route)*WP_SPACING
@@ -120,6 +120,7 @@ def get_route(wp_df, start_locs_df=None, route_len=2000, just_go_straight=False,
     return route
 
 def get_wp_df(wps_holder_object):
+
     t0 = time.time()
 
     df = pd.DataFrame()
@@ -369,15 +370,24 @@ def check_map_has_overlapping_rds(df, episode_info):
 
 
 def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=None):
+    timer = Timer("set handler total")
+    bpy.app.handlers.frame_change_post.clear() # has to be before we manually set the frame below.
+
     global ap, tm
-    bpy.app.handlers.frame_change_post.clear()
 
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
     t0 = time.time()
     dg = bpy.context.evaluated_depsgraph_get()
+    timer.log("get dg and other")
+
     wps_holder_object = bpy.data.objects["wps_holder"].evaluated_get(dg)
+
+    timer.log("get wps_holder_object")
+
     wp_df = get_wp_df(wps_holder_object)
+    timer.log("get wp df")
+
     coarse_map_df = wp_df[wp_df.wps==False]
     map_has_overlapping_rds = check_map_has_overlapping_rds(coarse_map_df, episode_info)
     if map_has_overlapping_rds:
@@ -385,7 +395,7 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
         return False
 
     wp_df = wp_df[wp_df.wps]
-    print("get wp df", time.time() - t0)
+    timer.log("check wp df")
 
     # single-rd. Maybe just straight maybe turns ok.
     JUST_GO_STRAIGHT_PROB = .2
@@ -405,19 +415,19 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
 
     if route is None: # when can't get route of sufficient len. Don't know if this safeguard is ever tripped
         return False
+    timer.log("get route")
 
-    print("get route", time.time() - t0)
     ap = Autopilot(episode_info, run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True)
 
     ap.set_route(route)
     ap.set_nav_map(coarse_map_df)
     update_ap_object(make_vehicle_nodes, ap)
+    timer.log("prep ap")
 
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info)
     tm.add_npcs(random.randint(6, MAX_N_NPCS) if episode_info.has_npcs else 0)
+    timer.log("prep tm")
 
-    print("total setup time", time.time() - t0)
-        
     wp_sphere_nodes = bpy.data.node_groups['wp_sphere_nodes'].nodes 
     get_node("pitch", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[0]
     get_node("roll", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[1]
@@ -426,10 +436,30 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[1]
     get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[2]
 
+
+    bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
+    bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
+    # Render samples slows datagen down linearly.
+    # Too low and get aliasing around edges, harsh looking. More is softer. We're keeping low samples, trying to make up for it 
+    # in data aug w blur and other distractors
+    bpy.data.scenes["Scene"].eevee.taa_render_samples = random.randint(2, 5) 
+
+    if run_root is not None: bpy.data.scenes["Scene"].render.filepath = f"{run_root}/imgs/" #f"{run_root}/imgs.avi"
+    frame_start = 1
+    bpy.data.scenes["Scene"].frame_start = frame_start
+    bpy.data.scenes["Scene"].frame_end = EPISODE_LEN
+    bpy.data.scenes["Scene"].render.fps = 20 // FRAME_CAPTURE_N
+    bpy.context.scene.frame_set(frame_start) # Does this trigger frame change handler? Yes.
+    # bpy.data.scenes["Scene"].render.resolution_x = 1440 # hardcoded in the blendfile
+    # bpy.data.scenes["Scene"].render.resolution_y = 360
+
+
     def frame_change_post(scene, dg):
         global ap, tm
-        ap.step()
-        update_ap_object(make_vehicle_nodes, ap)
+        for i in range(FRAME_CAPTURE_N):
+            print("frame_counter", ap.overall_frame_counter, "scene.frame_current", scene.frame_current)
+            ap.step()
+            update_ap_object(make_vehicle_nodes, ap)
 
         # debugging
         get_node("pitch", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[0]
@@ -439,9 +469,14 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
         get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[1]
         get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[2] + 1
 
-        tm.step()
-
-    bpy.app.handlers.frame_change_post.append(frame_change_post)
+        for i in range(FRAME_CAPTURE_N):
+            tm.step()
+        print("\n")
+    bpy.app.handlers.frame_change_post.append(frame_change_post) 
+    # seems to be called once before actual render happens? so gotta throw one out? but doesn't increment frame_current
+    
+    timer.log("set handler")
+    pretty_print(timer.finish())
 
     return True
 

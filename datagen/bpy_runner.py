@@ -43,7 +43,7 @@ def display_top(snapshot, key_type='lineno', limit=10):
     total = sum(stat.size for stat in top_stats)
     print("Total allocated size: %.1f KiB" % (total / 1024))
 
-TRACE_MALLOC = False
+TRACE_MALLOC = False # finding memleak
 if __name__ == "__main__":
     if TRACE_MALLOC:
         tracemalloc.start()
@@ -64,6 +64,7 @@ if __name__ == "__main__":
         last_run_counter = 0
 
     for i in range(last_run_counter, 10_000_000):
+        timer = Timer("gather run total")
         overall_frame_counter = 0
         run_counter = i % RUNS_TO_STORE_PER_PROCESS # Overwrite from beginning once reach membank limit
         t0 = time.time()
@@ -75,6 +76,7 @@ if __name__ == "__main__":
         os.makedirs(f"{run_root}/targets", exist_ok=True)
         os.makedirs(f"{run_root}/maps", exist_ok=True)
 
+        timer.log("prep")
         # route of insufficient len causes fail. Also now when have overlap, which is more often
         successful = False
         failed_counter = -1
@@ -88,20 +90,11 @@ if __name__ == "__main__":
                 set_should_stop(True) # if one runner dies, shutdown all runners to make it obvious. Perhaps in the future we can tolerate this, but not now
                 break
         if not successful: break
+        timer.log("prepare episode")
 
-        bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
-        bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
-        # Render samples slows datagen down linearly.
-        # Too low and get aliasing around edges, harsh looking. More is softer. We're keeping low samples, trying to make up for it 
-        # in data aug w blur and other distractors
-        bpy.data.scenes["Scene"].eevee.taa_render_samples = random.randint(2, 5) 
- 
-        bpy.data.scenes["Scene"].render.filepath = f"{run_root}/imgs/" #f"{run_root}/imgs.avi"
-        bpy.data.scenes["Scene"].frame_end = EPISODE_LEN
-        bpy.data.scenes["Scene"].render.fps = 20
-        # bpy.data.scenes["Scene"].render.resolution_x = 1440 # hardcoded in the blendfile
-        # bpy.data.scenes["Scene"].render.resolution_y = 360
-
+        init_time = time.time() - t0
+        report_runner_metric(dataloader_root, init_time, INIT_TIME_F)
+        _t0 = time.time()
         ##################
         # Render
 
@@ -116,6 +109,8 @@ if __name__ == "__main__":
         fd = os.open(logfile, os.O_WRONLY)
 
         bpy.ops.render.render(animation=True)
+        bpy.app.handlers.frame_change_post.clear()
+        timer.log("render")
 
         # disable output redirection
         os.close(fd)
@@ -123,14 +118,21 @@ if __name__ == "__main__":
         os.close(old)
 
         obs_per_sec = EPISODE_LEN/(time.time()-t0)
-        report_obs_per_sec(dataloader_root, obs_per_sec)
+        report_runner_metric(dataloader_root, obs_per_sec, OBS_PER_SEC_F)
         print(f"Dataloader performance: {obs_per_sec} obs per second")
+
+        render_time = time.time() - _t0
+        report_runner_metric(dataloader_root, render_time, RENDER_TIME_F)
 
         if TRACE_MALLOC:
             snapshot = tracemalloc.take_snapshot()
             display_top(snapshot)
+
+        pretty_print(timer.finish())
+
         print("\n\n\n\n\n\n********************************************\n\n\n\n\n\n")
 
+        
         if get_should_stop(): 
             print("Interupting datagen bc received should_stop flag")
             break

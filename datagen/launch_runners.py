@@ -3,7 +3,7 @@ sys.path.append("/home/beans/bespoke")
 from constants import *
 import subprocess
 
-clear_obs_per_sec()
+clear_all_runners_metrics()
 set_should_stop(False)
 for i in range(N_RUNNERS):
     
