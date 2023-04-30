@@ -254,6 +254,7 @@ def make_episode(timer):
 
     timer.log("setup map")
 
+
     ############################################################
     # Randomize appearance -- nothing below changes any targets
     ############################################################
@@ -285,6 +286,7 @@ def make_episode(timer):
     get_node("grass_group_size", main_map_nodes).outputs["Value"].default_value = grass_group_center_modulo * random.uniform(.1, .9)
     get_node("grass_density", main_map_nodes).outputs["Value"].default_value = random.uniform(.04, .4)
 
+    timer.log("randomize -- buildings, grass modulos")
 
     ###########################
     # Lanelines
@@ -346,6 +348,8 @@ def make_episode(timer):
     get_node("white_line_mid", dirt_gravel_nodes).outputs["Value"].default_value = mm
     get_node("white_line_outer", dirt_gravel_nodes).outputs["Value"].default_value = mm * random.uniform(.0, .8)
 
+
+    timer.log("randomize -- lanelines, backgrounds")
 
     ######################
     # Road / shoulder
@@ -428,6 +432,8 @@ def make_episode(timer):
         get_node("rd_overlay_h", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.03, .07) # hue must be constrained when value is high
         get_node("rd_overlay_v", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .5) 
 
+    timer.log("randomize -- rd, terrain")
+
     # shadows, dapples
     is_puddles = random.random() < .2
     get_node("shadow_roughness", dirt_gravel_nodes).outputs["Value"].default_value = 0 if is_puddles else random.uniform(.1, .9)
@@ -472,11 +478,14 @@ def make_episode(timer):
     get_node("directionality_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .5)
     get_node("directionality_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8)
 
+    timer.log("randomize -- shadows, directionality")
 
     # vertex spacing.
     # Startup time perf very sensitive to this. Directionality lines only show up where are edges, so this strongly affects directionality appearance.
     #TODO should depend on if rd is lined. Why? Bc startup time? changed it to depend on directionlity mult
     get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.4 if directionality_mult>0 else .5, .7)
+
+    timer.log("randomize -- vertex spacing")
 
     # # tiremarks
     # HAS_TIREMARKS_PROB = 0 if directionality_mult>0 else .1 if rd_is_lined else .4 # one or the other
@@ -520,6 +529,8 @@ def make_episode(timer):
     get_node("rd_uv_scale_directioned", dirt_gravel_nodes).outputs["Value"].default_value  = .05 * 10**random.uniform(0,1) 
     get_node("shoulder_uv_scale", dirt_gravel_nodes).outputs["Value"].default_value  = 1 / 10**random.uniform(1,3)
     get_node("terrain_uv_scale", dirt_gravel_nodes).outputs["Value"].default_value  = 1 / 10**random.uniform(2,3)
+
+    timer.log("randomize -- more terrain")
 
     ######################
     # Stopsigns
@@ -592,6 +603,7 @@ def make_episode(timer):
     text_max = np.interp(radius*x_scale, [.25, .5, 1], [.19, .37, .8])
     get_node("text_size", rdsigns_nodes).outputs["Value"].default_value = random.uniform(text_max*.7, text_max)
 
+    timer.log("randomize -- signs")
 
 
     ######################
@@ -687,6 +699,8 @@ def make_episode(timer):
 
     get_node("headlights_emission_strength", npc_material).outputs["Value"].default_value = random.uniform(2, 30) if random.random()<.15 else 0
 
+    timer.log("randomize -- buildings, npcs")
+
     ######################
     # Rdside Grass
     ######################
@@ -720,6 +734,9 @@ def make_episode(timer):
     get_node("grass_brightness", grass_material).outputs["Value"].default_value = 10**random.uniform(0, .5) - .5
 
     get_node("base_grass_size", main_map_nodes).outputs["Value"].default_value = random.uniform(1.5, 3.3)
+
+    timer.log("randomize -- grass")
+
 
     # end randomize appearance
 
@@ -756,7 +773,8 @@ def make_episode(timer):
     episode_info.shadow_strength = shadow_strength
     episode_info.directionality_mult = directionality_mult
     episode_info.has_stops = has_stops
-    timer.log("Randomize appearance")
+    
+    timer.log("randomize -- finish")
 
     return episode_info
 

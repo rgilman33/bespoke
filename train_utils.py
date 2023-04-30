@@ -7,6 +7,7 @@ import wandb
 
 
 
+
 mse_loss = torch.nn.MSELoss().cuda()
 _mse_loss_no_reduce = torch.nn.MSELoss(reduction='none').cuda()
 
@@ -253,16 +254,22 @@ class Trainer():
             #######################
             # Zero out a buffer right at end of horizon, no need to be strict about exact horizon end
             aux_np = unprep_aux(aux)
-            stop_dist = aux_np[:,:,"stop_dist"]
+            has_stop, has_lead = aux_targets[:,:,AUX_TARGET_PROPS.index("has_stop")], aux_targets[:,:,AUX_TARGET_PROPS.index("has_lead")]
+
             lead_dist = aux_np[:,:,"lead_dist"]
             lead_buffer = torch.from_numpy(((lead_dist < LEAD_DIST_MAX) | (lead_dist > (LEAD_DIST_MAX+15))).astype(int)).to(device)
-            stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
-            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")] *= lead_buffer
 
+            stop_dist = aux_np[:,:,"stop_dist"]
+            #stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
+            always_enforce = torch.from_numpy(((4<stop_dist) & (stop_dist<50)) | (stop_dist > 70)).to(device)
+            m_sees_true_stop = has_stop & (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3) # already sigmoided
+            stops_enforce = always_enforce | m_sees_true_stop
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stops_enforce
+
+
             # Only enforce stops and lead metrics when we have stops and leads
-            has_stop, has_lead = aux_targets[:,:,AUX_TARGET_PROPS.index("has_stop")], aux_targets[:,:,AUX_TARGET_PROPS.index("has_lead")]
-            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= has_stop
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= stops_enforce #has_stop
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_dist")] *= has_lead
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_speed")] *= has_lead
 
@@ -270,9 +277,9 @@ class Trainer():
 
             # when cnn only, don't enforce stops when up close, don't enforce some losses in intx
             if not self.rnn_only: 
-                stop_buffer_close = torch.from_numpy((stop_dist > 3.).astype(int)).to(device) # Can go down to 1.8 or so, but when stopsign is tall can't see it
-                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer_close
-                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= stop_buffer_close
+                # stop_buffer_close = torch.from_numpy((stop_dist > 3.).astype(int)).to(device) # Can go down to 1.8 or so, but when stopsign is tall can't see it
+                # aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer_close
+                # aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= m_sees_true_stop
 
                 aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= ~ego_in_intx
                 aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lane_width")] *= ~ego_in_intx
@@ -284,8 +291,8 @@ class Trainer():
             #############
             # Obsnet losses
             #############
-            pitch_loss = mse_loss(aux[:,:,AUX_PROPS.index('pitch')], obsnet_out[:,:,OBSNET_PROPS.index('pitch')])
-            yaw_loss = mse_loss(aux[:,:,AUX_PROPS.index('yaw')], obsnet_out[:,:,OBSNET_PROPS.index('yaw')])
+            # pitch_loss = mse_loss(aux[:,:,AUX_PROPS.index('pitch')], obsnet_out[:,:,OBSNET_PROPS.index('pitch')])
+            # yaw_loss = mse_loss(aux[:,:,AUX_PROPS.index('yaw')], obsnet_out[:,:,OBSNET_PROPS.index('yaw')])
             unc_p = obsnet_out[:,:,OBSNET_PROPS.index('unc_p')]
             unc_loss = mse_loss(torch.log(angles_loss.mean(dim=-1).detach()), unc_p)
             losses.update({
@@ -331,11 +338,13 @@ class Trainer():
                     # collapse the wp traj for any traj related losses
                     b = (img, wps, wps_p, aux, aux_targets_p, obsnet_out)
 
-                    angles_loss,_ = angles_loss.max(-1) 
-                    self.update_worst("angles", angles_loss, b) #TODO these will prob just be intx, can filter 
+                    angles_loss,_ = angles_loss.max(-1)
+                    angles_loss *= ~ego_in_intx
+                    self.update_worst("angles", angles_loss, b)
 
-                    # angles_loss_i,_ = angles_loss_i.max(-1) 
-                    # self.update_worst("angles_i", angles_loss_i, b)
+                    angles_loss_i,_ = angles_loss.max(-1)
+                    angles_loss_i *= ego_in_intx
+                    self.update_worst("angles_i", angles_loss_i, b)
 
                     # Report worsts for our aux targets
                     for p in SHOW_WORST_PROPS:
