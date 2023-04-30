@@ -223,7 +223,7 @@ def combine_img_actgrad(img, actgrad, color=(8,255,8)):
 def make_enriched_vid_trn(rollout):
     # quick hack to get it to work w sim, mostly just the fn below
     height, width, channels = IMG_HEIGHT, IMG_WIDTH, 3
-    fps = 20
+    fps = 20 // FRAME_CAPTURE_N
     filename = f"sim_{rollout.model_stem}"
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
 

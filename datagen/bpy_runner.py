@@ -5,7 +5,7 @@ import numpy as np
 sys.path.append('/home/beans/bespoke')
 sys.path.append('/home/beans/bespoke/datagen')
 from datagen.episode import make_episode
-from bpy_handler import set_frame_change_post_handler, reset_npc_objects
+from bpy_handler import *
 from constants import *
 
 argv = sys.argv
@@ -43,54 +43,74 @@ def display_top(snapshot, key_type='lineno', limit=10):
     total = sum(stat.size for stat in top_stats)
     print("Total allocated size: %.1f KiB" % (total / 1024))
 
+def indicate_failed():
+    # Deal w failed map/route
+    print("wtf couldn't get good map? Killing runner")
+    np.save(FAILED_TO_GET_MAP_F, np.array(1))
+    set_should_stop(True) # if one runner dies, shutdown all runners to make it obvious. Perhaps in the future we can tolerate this, but not now
+
 TRACE_MALLOC = False # finding memleak
 if __name__ == "__main__":
-    if TRACE_MALLOC:
-        tracemalloc.start()
+    if TRACE_MALLOC: tracemalloc.start()
 
     print(f"Launching runner {dataloader_id}")
-    # Delete existing npc copies and make new ones. To ensure up to date w any changes made in master.
-    reset_npc_objects(bpy)
-
-    # Clear failed message
-    if os.path.exists(FAILED_TO_GET_MAP_F):
-        os.remove(RUN_COUNTER_F)
+    
+    reset_npc_objects(bpy) # Delete existing npc copies and make new ones. To ensure up to date w any changes made in master.
 
     # If picking up from where we left off, start from last run not from zero
+    # incrememnted only after successful run
     if os.path.exists(RUN_COUNTER_F):
-        last_run_counter = np.load(RUN_COUNTER_F)[0]
-        print(f"Resuming from run {last_run_counter}")
+        run_counter = np.load(RUN_COUNTER_F)[0]
+        print(f"Resuming from run {run_counter}")
     else:
-        last_run_counter = 0
+        run_counter = 0
 
-    for i in range(last_run_counter, 10_000_000):
-        timer = Timer("gather run total")
-        overall_frame_counter = 0
-        run_counter = i % RUNS_TO_STORE_PER_PROCESS # Overwrite from beginning once reach membank limit
+    failed_counter = 0
+
+    need_map = True
+    start_left = True
+
+    while True:
+
+        # Initial setup
+        timer = Timer("*** gather run total ***")
         t0 = time.time()
-        np.save(RUN_COUNTER_F, np.array([run_counter]))
-
         run_root = f"{dataloader_root}/run_{run_counter}"
-        os.makedirs(run_root, exist_ok=True)
-        os.makedirs(f"{run_root}/aux", exist_ok=True)
-        os.makedirs(f"{run_root}/targets", exist_ok=True)
-        os.makedirs(f"{run_root}/maps", exist_ok=True)
+        for s in ["aux", "targets", "maps"]: os.makedirs(f"{run_root}/{s}", exist_ok=True)
 
-        timer.log("prep")
-        # route of insufficient len causes fail. Also now when have overlap, which is more often
-        successful = False
-        failed_counter = -1
-        while not successful:
-            episode_info = make_episode()
-            successful = set_frame_change_post_handler(bpy, episode_info, save_data=True, run_root=run_root)
+        print(f"Making new map: {need_map}. Starting from left: {start_left}.")
+
+        # Get map. We can do multiple routes through each map
+        if need_map:
+            # Make episode map
+            episode_info = make_episode(timer)
+
+            # Retrieve map
+            wp_df, coarse_map_df, success = get_map_data(bpy, episode_info, timer) # can fail here
+            if not success:
+                failed_counter += 1
+                if failed_counter == 20:
+                    indicate_failed()
+                    break
+                continue
+
+        # Get route
+        ego_route = get_ego_route(wp_df, episode_info, start_left) # can fail here
+        if ego_route is None:
             failed_counter += 1
-            if failed_counter==20:
-                print("wtf couldn't get good map? Killing runner")
-                np.save(FAILED_TO_GET_MAP_F, np.array(1))
-                set_should_stop(True) # if one runner dies, shutdown all runners to make it obvious. Perhaps in the future we can tolerate this, but not now
+            if failed_counter == 20:
+                indicate_failed()
                 break
-        if not successful: break
-        timer.log("prepare episode")
+            need_map = True
+            start_left = True
+            continue
+            
+        start_left = not start_left
+        need_map = not need_map
+
+        # We've successfully gotten map and route. May continue
+        failed_counter = 0
+        set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, save_data=True, run_root=run_root)
 
         init_time = time.time() - t0
         report_runner_metric(dataloader_root, init_time, INIT_TIME_F)
@@ -107,6 +127,7 @@ if __name__ == "__main__":
         sys.stdout.flush()
         os.close(sys.stdout.fileno())
         fd = os.open(logfile, os.O_WRONLY)
+        timer.log("redirect stdout")
 
         bpy.ops.render.render(animation=True)
         bpy.app.handlers.frame_change_post.clear()
@@ -128,11 +149,15 @@ if __name__ == "__main__":
             snapshot = tracemalloc.take_snapshot()
             display_top(snapshot)
 
+        # Increment run counter
+        run_counter += 1
+        run_counter = run_counter % RUNS_TO_STORE_PER_PROCESS # Overwrite from beginning once reach membank limit
+        np.save(RUN_COUNTER_F, np.array([run_counter]))
+
         pretty_print(timer.finish())
 
         print("\n\n\n\n\n\n********************************************\n\n\n\n\n\n")
 
-        
         if get_should_stop(): 
             print("Interupting datagen bc received should_stop flag")
             break

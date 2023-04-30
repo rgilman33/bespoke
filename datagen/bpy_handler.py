@@ -87,19 +87,6 @@ def _get_route(df, start_locs_df, route_len, just_go_straight, is_ego):
         route_wps["route_curvature"] = 0
     return route_wps
 
-# # from chatgpt
-# def calc_headings_curvatures(x, y):
-#     dx = np.gradient(x)
-#     dy = np.gradient(y)
-#     headings = np.arctan2(dy, dx)
-#     d_headings = np.gradient(headings)
-
-#     d_headings[d_headings>np.pi] -= 2*np.pi
-#     d_headings[d_headings<-np.pi] += 2*np.pi
-
-#     curvatures = d_headings / np.hypot(dx, dy)
-#     return headings, curvatures
-
 # repeat each item in a list n times
 def repeat_list(l, n):
     return [item for item in l for i in range(n)]
@@ -284,7 +271,7 @@ class TrafficManager():
                 npc_object.hide_render = False
                 nodes = npc_object.modifiers["GeometryNodes"].node_group.nodes
 
-                npc_ap = Autopilot(self.episode_info, ap_id=i, save_data=False, is_ego=False)
+                npc_ap = Autopilot(self.episode_info, ap_id=i, is_ego=False)
                 route = get_route(self.wp_df, start_locs_df=self.start_locs_df, route_len=200 if self.npcs_only_oncoming else 700)
                 npc_ap.set_route(route)
 
@@ -368,21 +355,12 @@ def check_map_has_overlapping_rds(df, episode_info):
     t = 3.5 if (episode_info.rd_is_lined or episode_info.has_stops) else 1.5 # only narrow gravel can be this close
     return m < t # chosen manually. Tips are 10m. This should be greater than dists btwn those pts themselves, which is currently 2m. Also using to keep intersections not too sharp.
 
+def get_map_data(bpy, episode_info, timer):
 
-def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=None):
-    timer = Timer("set handler total")
-    bpy.app.handlers.frame_change_post.clear() # has to be before we manually set the frame below.
-
-    global ap, tm
-
-    make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
-
-    t0 = time.time()
     dg = bpy.context.evaluated_depsgraph_get()
-    timer.log("get dg and other")
+    timer.log("get dg")
 
     wps_holder_object = bpy.data.objects["wps_holder"].evaluated_get(dg)
-
     timer.log("get wps_holder_object")
 
     wp_df = get_wp_df(wps_holder_object)
@@ -392,37 +370,47 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     map_has_overlapping_rds = check_map_has_overlapping_rds(coarse_map_df, episode_info)
     if map_has_overlapping_rds:
         print("Map has overlapping rds. Trying again.")
-        return False
+        return None, None, False
 
     wp_df = wp_df[wp_df.wps]
     timer.log("check wp df")
 
-    # single-rd. Maybe just straight maybe turns ok.
+    return wp_df, coarse_map_df, True
+
+def get_ego_route(wp_df, episode_info, start_left):
+
     JUST_GO_STRAIGHT_PROB = .2
     just_go_straight = random.random()<JUST_GO_STRAIGHT_PROB
     episode_info.just_go_straight = just_go_straight
-    if episode_info.is_single_rd:
-        s = wp_df[(wp_df.ix_in_curve==0)] # start wps
-        if just_go_straight:
-            s = s[(s.wp_curve_id==2)] # only straights
-            s = s[((s.intersection_id==4) & (s.section_id.isin([1]))) | ((s.intersection_id==6) & (s.section_id.isin([7])))]
-        else:
-            # s = s[((s.intersection_id==4) & (s.section_id.isin([1, 10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([7, 4, 10])))] 
-            s = s[((s.intersection_id==4) & (s.section_id.isin([10, 4]))) | ((s.intersection_id==6) & (s.section_id.isin([4, 10])))] 
-        route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=just_go_straight, is_ego=True)
-    else: # start anywhere, turning allowed
-        route = get_route(wp_df, route_len=ROUTE_LEN_M, is_ego=True)
 
-    if route is None: # when can't get route of sufficient len. Don't know if this safeguard is ever tripped
-        return False
-    timer.log("get route")
+    s = wp_df[(wp_df.ix_in_curve==0)] # start wps
 
-    ap = Autopilot(episode_info, run_root=run_root, save_data=save_data, ap_id=-1, is_ego=True)
+    if episode_info.just_go_straight:
+        s = s[(s.wp_curve_id==2)] # only straights
+        s = s[((s.intersection_id==4) & (s.section_id.isin([1]))) if start_left else ((s.intersection_id==6) & (s.section_id.isin([7])))]
+    else:
+        s = s[((s.intersection_id==4) & (s.section_id.isin([10, 4]))) if start_left else ((s.intersection_id==6) & (s.section_id.isin([4, 10])))] 
 
-    ap.set_route(route)
+    route = get_route(wp_df, start_locs_df=s, route_len=ROUTE_LEN_M, just_go_straight=episode_info.just_go_straight, is_ego=True)
+
+    return route
+
+
+def set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, save_data=False, run_root=None):
+    
+    bpy.app.handlers.frame_change_post.clear() # has to be before we manually set the frame below.
+    make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
+
+    # Create AP and TM
+    global ap, tm
+    ap = Autopilot(episode_info, run_root=run_root, ap_id=-1, is_ego=True)
+    timer.log("create ap")
+    ap.set_route(ego_route)
+    timer.log("set route")
     ap.set_nav_map(coarse_map_df)
+    timer.log("set nav map")
     update_ap_object(make_vehicle_nodes, ap)
-    timer.log("prep ap")
+    timer.log("update ap object")
 
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info)
     tm.add_npcs(random.randint(6, MAX_N_NPCS) if episode_info.has_npcs else 0)
@@ -449,15 +437,18 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
     bpy.data.scenes["Scene"].frame_start = frame_start
     bpy.data.scenes["Scene"].frame_end = EPISODE_LEN
     bpy.data.scenes["Scene"].render.fps = 20 // FRAME_CAPTURE_N
-    bpy.context.scene.frame_set(frame_start) # Does this trigger frame change handler? Yes.
+    bpy.context.scene.frame_set(frame_start) # Does this trigger frame change handler? Yes. Handler has to be cleared before this, otherwise triggers
     # bpy.data.scenes["Scene"].render.resolution_x = 1440 # hardcoded in the blendfile
     # bpy.data.scenes["Scene"].render.resolution_y = 360
 
 
     def frame_change_post(scene, dg):
+        # Update ego location and traj targets -> update TM (lead targets) -> save targets/aux/info data -> the frame is rendered
         global ap, tm
+
+        # Update ego location. All traj targets will be current now.
         for i in range(FRAME_CAPTURE_N):
-            print("frame_counter", ap.overall_frame_counter, "scene.frame_current", scene.frame_current)
+            # print("frame_counter", ap.overall_frame_counter, "scene.frame_current", scene.frame_current)
             ap.step()
             update_ap_object(make_vehicle_nodes, ap)
 
@@ -469,15 +460,23 @@ def set_frame_change_post_handler(bpy, episode_info, save_data=False, run_root=N
         get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[1]
         get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[2] + 1
 
+        # Move NPCs and update lead status
         for i in range(FRAME_CAPTURE_N):
             tm.step()
-        print("\n")
+
+        # Save data
+        if save_data: ap.save_data() # save data after tm steps to get accurate lead status
+
+        if scene.frame_current == scene.frame_end:
+            distance_travelled = ap.current_wp_ix * WP_SPACING
+            print(f"AP travelled {round(distance_travelled)} out of {round(len(ap.waypoints)*WP_SPACING)} meters in the route")
+            print(f"AP route had finished: {ap.route_is_done}")
+
+
+        # print("\n")
     bpy.app.handlers.frame_change_post.append(frame_change_post) 
     # seems to be called once before actual render happens? so gotta throw one out? but doesn't increment frame_current
     
     timer.log("set handler")
-    pretty_print(timer.finish())
-
-    return True
 
 

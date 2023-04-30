@@ -74,7 +74,7 @@ slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr", "housep
 plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
 plants_folders = [f for f in plants_folders if len([s for s in slow_grasses if s in f])==0]
 
-def make_episode():
+def make_episode(timer):
 
     episode_info = EpisodeInfo() 
 
@@ -179,38 +179,7 @@ def make_episode():
     get_node("rd_hump", z_adjustment_nodes).outputs["Value"].default_value = rd_hump
     get_node("rd_hump_rampup", z_adjustment_nodes).outputs["Value"].default_value = 16 #random.uniform(4, 10) 
 
-    # rdside hills
-    get_node("rdside_hills_falloff_add", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 2) + wide_shoulder_add*1.2
-    get_node("rdside_hills_falloff_range", main_map_nodes).outputs["Value"].default_value = random.uniform(1.5, 10)
-    get_node("rdside_hills_noise_scale", main_map_nodes).outputs["Value"].default_value = .03 * 10**random.uniform(0, 1)
-    get_node("rdside_hills_noise_mult", main_map_nodes).outputs["Value"].default_value = 3 * 10**random.uniform(0, 1)
-
-
-    # # gutter
-    # # if wide shoulder add, no gutter
-    # get_node("gutter_noise_in", main_map_nodes).outputs["Value"].default_value = 1 if rd_is_lined else 3. # needs to travel w shift to remain aligned
-    # get_node("gutter_noise_mult", main_map_nodes).outputs["Value"].default_value = 0 if wide_shoulder_add>0 else random.uniform(.4, 1.6)
-    # get_node("gutter_shift", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 1.5) if rd_is_lined else random.uniform(0, 1.5)
-    # get_node("gutter_hwidth", main_map_nodes).outputs["Value"].default_value = random.uniform(.2, 1.2)
-    # has_gutter = random.random() < .6 and not wide_shoulder_add>0 
-    # get_node("gutter_depth_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(.5, .8) if has_gutter else 0
-
-
-
-    get_node("mtns_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(20, 70)
-
-    buildings_group_center_modulo = random.uniform(50, 300)
-    get_node("buildings_group_center_modulo", main_map_nodes).outputs["Value"].default_value = buildings_group_center_modulo
-    get_node("buildings_group_size", main_map_nodes).outputs["Value"].default_value = buildings_group_center_modulo * random.uniform(.1, .9)
-    get_node("buildings_density", main_map_nodes).outputs["Value"].default_value = random.uniform(.003, .03)
-
-    grass_group_center_modulo = random.uniform(50, 300)
-    get_node("grass_group_center_modulo", main_map_nodes).outputs["Value"].default_value = grass_group_center_modulo
-    get_node("grass_group_size", main_map_nodes).outputs["Value"].default_value = grass_group_center_modulo * random.uniform(.1, .9)
-    get_node("grass_density", main_map_nodes).outputs["Value"].default_value = random.uniform(.04, .4)
-
     # Camera calib
-    
     BASE_PITCH = 89
     BASE_YAW = 180
     pitch_perturbation = random.uniform(-2, 2)
@@ -218,27 +187,14 @@ def make_episode():
     bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation)
     bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation)
 
-    ###########################
-    # Lanelines
+    # lanelines
     r = random.random()
     yellow_type = 'single' if r < .2 or not rd_is_lined else 'half_dashed' if r < .4 else 'double' # gravel setting want 0 add in the middle of rd
-
-    get_node("yellow_hwidth", meshify_lines_nodes).outputs["Value"].default_value = random.uniform(.04, .12)
-    get_node("white_hwidth", meshify_lines_nodes).outputs["Value"].default_value = random.uniform(.04, .12)
-
-    # lanelines mod 
-    get_node("y_mod_period", get_section_nodes).outputs["Value"].default_value = random.uniform(8, 24) 
-    get_node("y_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .8)
-
-    get_node("w_mod_period", get_section_nodes).outputs["Value"].default_value = random.uniform(8, 18)
-    get_node("w_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .8)
-
-    yellow_spacing_hwidth = random.uniform(.08, .2) if yellow_type=="half_dashed" else 0 if yellow_type=="single" else random.uniform(.08, .25)
     yellow_is_double = yellow_type=="half_dashed" or yellow_type=="double"
     yellow_is_dashed = yellow_type=="half_dashed" or yellow_type=="single"
+    yellow_spacing_hwidth = random.uniform(.08, .2) if yellow_type=="half_dashed" else 0 if yellow_type=="single" else random.uniform(.08, .25)
 
-    ####################################
-    # single rd
+    # Setup map
     intersection_1 = get_node("intersection_1", get_map_nodes)
     intersection_2 = get_node("intersection_2", get_map_nodes)
     intersection_3 = get_node("intersection_3", get_map_nodes)
@@ -296,6 +252,53 @@ def make_episode():
         set_intersection_property_all(rd, "h_yellow_top_is_dashed", yellow_is_dashed)
         set_intersection_property_all(rd, "left_shift", left_shift)
 
+    timer.log("setup map")
+
+    ############################################################
+    # Randomize appearance -- nothing below changes any targets
+    ############################################################
+
+    # rdside hills
+    get_node("rdside_hills_falloff_add", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 2) + wide_shoulder_add*1.2
+    get_node("rdside_hills_falloff_range", main_map_nodes).outputs["Value"].default_value = random.uniform(1.5, 10)
+    get_node("rdside_hills_noise_scale", main_map_nodes).outputs["Value"].default_value = .03 * 10**random.uniform(0, 1)
+    get_node("rdside_hills_noise_mult", main_map_nodes).outputs["Value"].default_value = 3 * 10**random.uniform(0, 1)
+
+    # # gutter
+    # # if wide shoulder add, no gutter
+    # get_node("gutter_noise_in", main_map_nodes).outputs["Value"].default_value = 1 if rd_is_lined else 3. # needs to travel w shift to remain aligned
+    # get_node("gutter_noise_mult", main_map_nodes).outputs["Value"].default_value = 0 if wide_shoulder_add>0 else random.uniform(.4, 1.6)
+    # get_node("gutter_shift", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 1.5) if rd_is_lined else random.uniform(0, 1.5)
+    # get_node("gutter_hwidth", main_map_nodes).outputs["Value"].default_value = random.uniform(.2, 1.2)
+    # has_gutter = random.random() < .6 and not wide_shoulder_add>0 
+    # get_node("gutter_depth_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(.5, .8) if has_gutter else 0
+
+    get_node("mtns_mult", main_map_nodes).outputs["Value"].default_value = random.uniform(20, 70)
+
+    buildings_group_center_modulo = random.uniform(50, 300)
+    get_node("buildings_group_center_modulo", main_map_nodes).outputs["Value"].default_value = buildings_group_center_modulo
+    get_node("buildings_group_size", main_map_nodes).outputs["Value"].default_value = buildings_group_center_modulo * random.uniform(.1, .9)
+    get_node("buildings_density", main_map_nodes).outputs["Value"].default_value = random.uniform(.003, .03)
+
+    grass_group_center_modulo = random.uniform(50, 300)
+    get_node("grass_group_center_modulo", main_map_nodes).outputs["Value"].default_value = grass_group_center_modulo
+    get_node("grass_group_size", main_map_nodes).outputs["Value"].default_value = grass_group_center_modulo * random.uniform(.1, .9)
+    get_node("grass_density", main_map_nodes).outputs["Value"].default_value = random.uniform(.04, .4)
+
+
+    ###########################
+    # Lanelines
+
+    get_node("yellow_hwidth", meshify_lines_nodes).outputs["Value"].default_value = random.uniform(.04, .12)
+    get_node("white_hwidth", meshify_lines_nodes).outputs["Value"].default_value = random.uniform(.04, .12)
+
+    # lanelines mod 
+    get_node("y_mod_period", get_section_nodes).outputs["Value"].default_value = random.uniform(8, 24) 
+    get_node("y_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .8)
+
+    get_node("w_mod_period", get_section_nodes).outputs["Value"].default_value = random.uniform(8, 18)
+    get_node("w_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .8)
+
 
     ######################
     # Background
@@ -320,7 +323,7 @@ def make_episode():
 
     if rd_is_lined: # can consider going back down to min .2, just that sometimes too hard to see when combined w noise
         white_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .25 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
-        yellow_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .25 * 10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
+        yellow_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else random.uniform(.6, 1.) if is_only_yellow_lined else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
     else:
         white_lines_opacity.outputs["Value"].default_value = 0
         yellow_lines_opacity.outputs["Value"].default_value = 0
@@ -469,6 +472,12 @@ def make_episode():
     get_node("directionality_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .5)
     get_node("directionality_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8)
 
+
+    # vertex spacing.
+    # Startup time perf very sensitive to this. Directionality lines only show up where are edges, so this strongly affects directionality appearance.
+    #TODO should depend on if rd is lined. Why? Bc startup time? changed it to depend on directionlity mult
+    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.4 if directionality_mult>0 else .5, .7)
+
     # # tiremarks
     # HAS_TIREMARKS_PROB = 0 if directionality_mult>0 else .1 if rd_is_lined else .4 # one or the other
     # get_node("tiremarks_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .6)
@@ -477,12 +486,6 @@ def make_episode():
     # get_node("wheel_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.4, .9) if rd_is_lined else random.uniform(.3, .5) # using dirtgravel as proxy for narrower, bc we want narrower tiremarks when narrow rd otherwise whole rd is worn out
     # tiremarks_mult = random.uniform(.1 if rd_is_lined else .3, .8) if random.random() < HAS_TIREMARKS_PROB else 0
     # get_node("tiremarks_mult", dirt_gravel_nodes).outputs["Value"].default_value = tiremarks_mult
-
-
-    # vertex spacing.
-    # Startup time perf very sensitive to this. Directionality lines only show up where are edges, so this strongly affects directionality appearance.
-    #TODO should depend on if rd is lined. Why? Bc startup time? changed it to depend on directionlity mult
-    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = random.uniform(.4 if directionality_mult>0 else .5, .7)
 
 
 
@@ -666,7 +669,7 @@ def make_episode():
     get_node("wheel_thickness", npc_body_nodes).outputs["Value"].default_value = random.uniform(-.3, -.1)
     get_node("hub_offset", npc_body_nodes).outputs["Value"].default_value = random.uniform(.5, 1.1)
 
-    # taillightsalso used for headlights
+    # taillights also used for headlights
     get_node("taillight_spacing", npc_body_nodes).outputs["Value"].default_value = random.uniform(.3, .9) 
     get_node("taillight_noise_w", npc_body_nodes).outputs["Value"].default_value = random.uniform(-1e6, 1e6)
     get_node("taillight_radius", npc_body_nodes).outputs["Value"].default_value = random.uniform(.1, .3)
@@ -683,8 +686,6 @@ def make_episode():
     get_node("license_plate_value", npc_material).outputs["Value"].default_value = random.uniform(.5, 1.)
 
     get_node("headlights_emission_strength", npc_material).outputs["Value"].default_value = random.uniform(2, 30) if random.random()<.15 else 0
-
-    print("Done randomizing")
 
     ######################
     # Rdside Grass
@@ -755,6 +756,7 @@ def make_episode():
     episode_info.shadow_strength = shadow_strength
     episode_info.directionality_mult = directionality_mult
     episode_info.has_stops = has_stops
+    timer.log("Randomize appearance")
 
     return episode_info
 

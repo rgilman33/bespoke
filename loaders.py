@@ -7,7 +7,7 @@ from traj_utils import *
 
 format_ix = lambda ix: ("0000"+str(ix))[-4:]
 
-def get_current_run(dataloader_root):
+def get_current_run(dataloader_root): # the run that just finished
     # Rare error here, prob writing to it at same time
     try:
         current_run = np.load(f"{dataloader_root}/run_counter.npy")[0]
@@ -35,24 +35,28 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset,
     datagen_id = ("00"+str((b+offset) % N_RUNNERS))[-2:] 
     dataloader_root = f"{BLENDER_MEMBANK_ROOT}/dataloader_{datagen_id}"
 
-    current_run = get_current_run(dataloader_root)
+    current_run = (get_current_run(dataloader_root)+1)%RUNS_TO_STORE_PER_PROCESS # fn returns run that just finished
 
     available_runs = glob.glob(f"{dataloader_root}/*/")
     available_runs = [r for r in available_runs if f"run_{current_run}" not in r]
+    available_runs = [r for r in available_runs if f"run_{current_run-1}" not in r]
+    available_runs = [r for r in available_runs if f"run_{current_run+1}" not in r]
 
     run_path = random.choice(available_runs)
 
     timer.log("get run_path")
 
-    # Targets and aux start at 0, imgs start at one. This actually lines up correctly if we match ixs. ie we throw away the first 
-    # target and aux. img1 corresponds to targets1, aux1. One is our first obs.
+    # # Targets and aux start at 0, imgs start at one. This actually lines up correctly if we match ixs. ie we throw away the first 
+    # # target and aux. img1 corresponds to targets1, aux1. One is our first obs.
+    # not true anymore. We updated ap so the frame and corresponding info is saved on the same frame. It's still true that img1 is for info1,
+    # but now there is no info0 to throw away
 
-    bptt = img_chunk.shape[1] #TODO this should't be called bptt, it's seqlen
-    ix = random.randint(bptt+FS_LOOKBACK, EPISODE_LEN-1) # ix will be the current obs, ie the latest obs
+    seqlen = img_chunk.shape[1]
+    ix = random.randint(seqlen+FS_LOOKBACK, EPISODE_LEN-1) # ix will be the current obs, ie the latest obs
     
     # Load targets, aux, maps
     maps = []
-    ixs = list(range(ix+1-bptt, ix+1)) # ends in ix
+    ixs = list(range(ix+1-seqlen, ix+1)) # ends in ix
     for i, _ix in enumerate(ixs):
         targets = np.load(f"{run_path}/targets/{_ix}.npy")
         targets_chunk[b, i, :] = targets# rare error here, why? this should always exist
@@ -62,13 +66,14 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset,
     timer.log("load targets, aux, maps")
 
     # smoothing targets along sequence dimension. Later on we smooth along the traj itself.
-    if bptt > 1: #NOTE this is a sensitive move. Pay attn to this.
+    # Only smooth when not doing skip frame capture
+    if seqlen>1 and FRAME_CAPTURE_N==1: #NOTE this is a sensitive move. Pay attn to this.
         w = 5
         targets_chunk[b, :, :] = moving_average_n(targets_chunk[b, :,:], w)
     timer.log("smooth targets")
 
     # imgs
-    img_paths = [f"{run_path}/imgs/{format_ix(i)}.jpg" for i in range(ix+1-bptt-FS_LOOKBACK, ix+1)]
+    img_paths = [f"{run_path}/imgs/{format_ix(i)}.jpg" for i in range(ix+1-seqlen-FS_LOOKBACK, ix+1)]
     imgs = np.stack([cv2.imread(img_path) for img_path in img_paths])[:, :,:,::-1] # bgr to rgb
     timer.log("load imgs")
 

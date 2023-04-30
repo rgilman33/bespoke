@@ -123,15 +123,16 @@ device = 'cuda'
 
 FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
-BLENDER_MEMBANK_ROOT = "/home/beans/blender_membank"
-#BLENDER_MEMBANK_ROOT = "/dev/shm/blender_membank"
+#BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank"
+BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank_frameskip"
 
 BPTT = 1 #4 #8 #9
-EPISODE_LEN = 1280
-RUNS_TO_STORE_PER_PROCESS = 128 #30
+FRAME_CAPTURE_N = 10 
+EPISODE_LEN = 1800 // FRAME_CAPTURE_N # measured in frames
+RUNS_TO_STORE_PER_PROCESS = 96 * FRAME_CAPTURE_N # to keep constant the number of obs stored
 N_RUNNERS = 8 #12
 
-DATA_CONSUMPTION_RATIO_LIMIT = 3 #1.
+DATA_CONSUMPTION_RATIO_LIMIT = 1.
 
 # trn loader
 def get_loader_should_stop():
@@ -155,27 +156,37 @@ def get_should_stop():
 def set_should_stop(should_stop):
     np.save(f"{BLENDER_MEMBANK_ROOT}/should_stop.npy", np.array([1 if should_stop else 0], dtype='uint8'))
 
-def report_obs_per_sec(dataloader_root, obs_per_sec):
-    np.save(f"{dataloader_root}/{OBS_PER_SEC_F}", np.array([obs_per_sec], dtype=np.float32))
+def report_runner_metric(dataloader_root, metric, filepath):
+    np.save(f"{dataloader_root}/{filepath}", np.array([metric], dtype=np.float32))
 
-def get_obs_per_sec():
-    runners_roots = glob.glob(f"{BLENDER_MEMBANK_ROOT}/*/{OBS_PER_SEC_F}")
-    obs_per_sec_arr = np.empty(len(runners_roots))
+def get_runners_metric(filepath, method=lambda x: x.sum()):
+    runners_roots = glob.glob(f"{BLENDER_MEMBANK_ROOT}/*/{filepath}")
+    metrics = np.empty(len(runners_roots))
     for i,f in enumerate(runners_roots):
         try: # every blue moon getting error on this, maybe bc it's currently being written to
-            runner_obs_per_sec = np.load(f) if os.path.exists(f) else 0
+            metric = np.load(f) if os.path.exists(f) else 0
         except:
-            runner_obs_per_sec = 0
+            metric = 0
             print("couldn't get obs per sec")
-        obs_per_sec_arr[i] = runner_obs_per_sec
-    s = round(obs_per_sec_arr.sum(),2)
-    return (0,0) if s==0 else (s, round(obs_per_sec_arr.min(),2))
+        metrics[i] = metric
+    s = round(method(metrics),2)
+    return (0,0) if s==0 else (s, round(metrics.min(),2))
 
-        
-def clear_obs_per_sec():
-    paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/**/{OBS_PER_SEC_F}", recursive=True)
+
+def get_obs_per_sec(): return get_runners_metric(OBS_PER_SEC_F)
+def get_init_time(): return get_runners_metric(INIT_TIME_F, method=lambda x: x.mean())
+def get_render_time(): return get_runners_metric(RENDER_TIME_F, method=lambda x: x.mean())
+
+
+def clear_runners_metric(filepath):
+    paths = glob.glob(f"{BLENDER_MEMBANK_ROOT}/**/{filepath}", recursive=True)
     for p in paths:
         os.remove(p)
+
+def clear_all_runners_metrics():
+    clear_runners_metric(OBS_PER_SEC_F)
+    clear_runners_metric(INIT_TIME_F)
+    clear_runners_metric(RENDER_TIME_F)
 
 def set_lr(lr):
     np.save(f"{BLENDER_MEMBANK_ROOT}/lr.npy", np.array([lr], dtype='float'))
@@ -229,8 +240,14 @@ class Timer():
         self.results[f"timing/{self.timer_name}"] = time.time() - self.init_time
         return self.results
 
+def pretty_print(d):
+    for k,v in d.items():
+        print(f"{k.split('/')[-1]}: {round(v, 3)}")
+
 
 OBS_PER_SEC_F = "obs_per_sec.npy"
+RENDER_TIME_F = "render_time.npy"
+INIT_TIME_F = "init_time.npy"
 
 def get_mins_since_slowest_runner_reported():
     # each runner updates its obs_per_sec file when it completes a run. We're checking the timestamps of those files directly.
@@ -254,8 +271,9 @@ MAX_N_NPCS = 12
 
 DIST_NA_PLACEHOLDER = 150
 
-LEAD_OUTER_DIST, LEAD_INNER_DIST = 100, 80
-STOP_OUTER_DIST, STOP_INNER_DIST = 80, 60
+# used for targets
+LEAD_DIST_MAX = 80
+STOP_DIST_MAX = 60
 
 class EpisodeInfo():
     def __init__(self):
@@ -331,7 +349,7 @@ def dist(a, b):
 
 def get_random_roll_noise(window_size=20, num_passes=2): #TODO rename this, it's a general fn
     # returns smoothed noise btwn -1 and 1
-    roll_noise = np.random.random(EPISODE_LEN*FPS) - .5
+    roll_noise = np.random.random(EPISODE_LEN*FRAME_CAPTURE_N*FPS) - .5
     for i in range(num_passes):
         roll_noise = moving_average(roll_noise, 20)
     roll_noise = roll_noise / abs(roll_noise).max()

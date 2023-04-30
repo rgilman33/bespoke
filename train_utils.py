@@ -34,25 +34,25 @@ class LossManager():
             "lead_speed":.02, 
             "lane_width":.02,
             "dagger_shift":.05,
-            "rd_is_lined":.02,
-            "left_turn":.01,
-            "right_turn":.01,
+            "rd_is_lined":.2,
+            "left_turn":.05,
+            "right_turn":.05,
             "td":.03,
             "pitch":.1,
             "yaw":.1,
             "unc":.1,
             "te":.05,
         }
-        wps_losses = {   
+        self.loss_weights.update({   
                     "wp_angles": 1,
                     "wp_curvatures":.2,
                     "wp_headings":.02,
                     "wp_rolls":.2,
                     "wp_zs":.02,
-                    }
-        for k,v in wps_losses.items():
-            self.loss_weights[k] = v
-            self.loss_weights[f"{k}_i"] = v * .5 #.1 # manual downweighting. Remember this is the proportion w respect to normal control loss, not the weight itself
+                    })
+        # for k,v in wps_losses.items():
+        #     self.loss_weights[k] = v
+        #     self.loss_weights[f"{k}_i"] = v * .5 #.1 # manual downweighting. Remember this is the proportion w respect to normal control loss, not the weight itself
 
         self.loss_emas = {k:10. for k in self.loss_weights.keys()} # init to be large so baseline loss will dominate
         self.loss_emas[self.baseline_loss_name] = 1. # init to be small to dominate first updates until ema stabilizes
@@ -63,7 +63,8 @@ class LossManager():
     def _step_loss(self, loss_name, loss):
         if not np.isfinite(loss.item()):
             print(f"loss is not finite ({loss}) for {loss_name}. Skipping")
-            return torch.HalfTensor([0]).to(device)
+            # return torch.HalfTensor([0]).to(device)
+            return torch.FloatTensor([0]).to(device)
 
         # update avg
         if self.update_emas:
@@ -74,9 +75,10 @@ class LossManager():
         return weighted_loss
 
     def step(self, losses_dict, logger=None):
-        total_loss = torch.HalfTensor([0]).to(device)
+        # total_loss = torch.HalfTensor([0]).to(device)
+        total_loss = torch.FloatTensor([0]).to(device)
         for loss_name, loss_value in losses_dict.items():
-            # if self.counter%100==0: print(loss_name, loss_value)
+            # if self.counter%200==0: print(loss_name, loss_value.item(), loss_value.dtype)
             weighted_loss = self._step_loss(loss_name, loss_value)
             total_loss += weighted_loss
             if logger: logger.log({loss_name:loss_value.item()/(LOSS_SCALER if "wp_" in loss_name else 1)})
@@ -114,7 +116,7 @@ class Trainer():
                 opt=None, 
                 backwards=True, 
                 log_wandb=True,
-                log_cadence=128, updates_per_epoch=2560, total_epochs=300,
+                log_cadence=256, updates_per_epoch=2560, total_epochs=300,
                 wandb=None,
                 rw_evaluator=None,
                 rnn_only=False,
@@ -142,13 +144,13 @@ class Trainer():
             if self.should_stop: 
                 print("ending training early")
                 break
-            if self.rw_evaluator is not None and (self.current_epoch+1) % 2 == 0: # every 1.5 hours currently
-                self.model.model_stem = f"{self.model_stem}_e{self.current_epoch}"
-                self.rw_evaluator.evaluate()
+            # if self.rw_evaluator is not None and (self.current_epoch+1) % 2 == 0: # every 1.5 hours currently TODO UNDO let back in
+            #     self.model.model_stem = f"{self.model_stem}_e{self.current_epoch}"
+            #     self.rw_evaluator.evaluate()
             self.current_epoch += 1
         
     def reset_worsts(self):
-        self.worsts = {p:[-np.inf, None] for p in ['angles', 'angles_i']+SHOW_WORST_PROPS}
+        self.worsts = {p:[-np.inf, None] for p in ['angles']+SHOW_WORST_PROPS}
 
     def update_worst(self, loss_name, loss_values_no_reduce, batch):
         worst_loss, batch_worst_ix, seq_worst_ix = get_worst(loss_values_no_reduce)
@@ -174,22 +176,19 @@ class Trainer():
             if not batch: break
             timer.log("get batch from dataloader")
 
-            if self.rnn_only: #TODO clean this up a bit once we decide don't want the ZLoader anymore, of if we do.
+            if self.rnn_only:
                 zs, img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
-                #img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
                 if is_first_in_seq: model.reset_hidden(dataloader.bs)
-                with torch.cuda.amp.autocast(): model_out = model.rnn_head(zs)
-                #with torch.cuda.amp.autocast(): model_out = model.forward_rnn(img, aux)
+                # with torch.cuda.amp.autocast(): model_out = model.rnn_head(zs)
+                zs = zs.float(); aux=aux.float(); wps=wps.float(); to_pred_mask=to_pred_mask.float() # full precision
+                #assert not f(zs), f"zs has nonfinite: {zs}"
+                if f(zs):
+                    print("zs has nonfinite") # this happens sometimes, was causing m outputs to have nonfinite. 
+                    continue
+
+                model_out = model.rnn_head(zs) 
             else:
                 img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
-                # assert not f(img), f"img has nans: {img}"
-                # # batch_item_img_means = img.reshape(dataloader.bs, -1).mean(-1)
-                # # if update_counter % 100 == 0:
-                # #     print("batch_item_img_means", batch_item_img_means)
-                # assert not f(aux).sum(), f"aux has nans: {aux}"
-                # assert not f(wps).sum(), f"wps has nans: {wps}"
-                # assert not f(to_pred_mask), f"to_pred_mask has nans: {to_pred_mask}"
-
                 with torch.cuda.amp.autocast(): model_out= model.forward_cnn(img, aux)
 
             self.img_for_viewing = img # for inspection
@@ -202,11 +201,12 @@ class Trainer():
             #############
             # wp losses
             #############
-            weights = (to_pred_mask*self.LOSS_WEIGHTS).repeat((1,1,5))
+            loss_weights = self.LOSS_WEIGHTS.float() if self.rnn_only else self.LOSS_WEIGHTS
+            weights = (to_pred_mask*loss_weights).repeat((1,1,5))
             assert torch.isnan(wps).sum() == 0, f"wps has nans: {wps}"
 
             if f(wps_p):
-                print("wps_p has nans", wps_p)
+                print("wps_p has nonfinite", wps_p)
                 # self.should_stop = True
                 # break
                 continue
@@ -225,35 +225,17 @@ class Trainer():
             #     self.should_stop = True
             #     break
 
-            _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights)
-            _wps_loss *= LOSS_SCALER
-
-            is_intersection_turn = aux[:,:,AUX_PROPS.index("left_turn")] + aux[:,:,AUX_PROPS.index("right_turn")]
-
-            _wps_loss_intersection = _wps_loss * is_intersection_turn[:,:,None]
-            _wps_loss = _wps_loss * (is_intersection_turn*-1+1)[:,:,None]
-
-            angles_loss_i, headings_loss_i, curvatures_loss_i, rolls_loss_i, zs_loss_i = torch.chunk(_wps_loss_intersection, 5, -1)
+            _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
-
-            # if update_counter % 20 == 0:
-            #     print(curvatures_loss.max().item(), curvatures_loss_i.max().item(), headings_loss_i.max().item(), headings_loss.max().item(), angles_loss_i.max().item(), angles_loss.max().item(), zs_loss_i.max().item(), zs_loss.max().item(), rolls_loss_i.max().item(), rolls_loss.max().item())
             _mm = 400
             cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
             losses = {
-                "wp_angles_i": cm(angles_loss_i),
-                "wp_headings_i": cm(headings_loss_i),
-                "wp_curvatures_i": cm(curvatures_loss_i),
-                "wp_rolls_i":cm(rolls_loss_i),
-                "wp_zs_i":cm(zs_loss_i),
-            }
-            losses.update({
                 "wp_angles": cm(angles_loss),
                 "wp_headings": cm(headings_loss),
                 "wp_curvatures": cm(curvatures_loss),
                 "wp_rolls":cm(rolls_loss),
                 "wp_zs":cm(zs_loss), 
-            })
+            }
 
             # te. When in doubt, stay close to prev preds
             _, bptt, _ = wps_p.shape
@@ -264,7 +246,7 @@ class Trainer():
             #############
             # aux losses
             #############
-
+                        
             aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
             aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
 
@@ -273,23 +255,31 @@ class Trainer():
             aux_np = unprep_aux(aux)
             stop_dist = aux_np[:,:,"stop_dist"]
             lead_dist = aux_np[:,:,"lead_dist"]
-            lead_buffer = torch.from_numpy(((lead_dist < 80) | (lead_dist > 90)).astype(int)).to(device) #TODO these shouldn't be hardcoded if we keep this approach
-            stop_buffer = torch.from_numpy(((stop_dist < 60) | (stop_dist > 70)).astype(int)).to(device)
-            stop_buffer_close = torch.from_numpy((stop_dist > 4).astype(int)).to(device)
-
+            lead_buffer = torch.from_numpy(((lead_dist < LEAD_DIST_MAX) | (lead_dist > (LEAD_DIST_MAX+15))).astype(int)).to(device)
+            stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")] *= lead_buffer
-
-            # when cnn only, don't enforce stops when up close
-            if not self.rnn_only: aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer_close
-            #######################
 
             # Only enforce stops and lead metrics when we have stops and leads
             has_stop, has_lead = aux_targets[:,:,AUX_TARGET_PROPS.index("has_stop")], aux_targets[:,:,AUX_TARGET_PROPS.index("has_lead")]
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= has_stop
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_dist")] *= has_lead
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_speed")] *= has_lead
-            losses.update({p:aux_targets_losses[:,:,AUX_TARGET_PROPS.index(p)].mean() for p in AUX_TARGET_PROPS})
+
+            ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
+
+            # when cnn only, don't enforce stops when up close, don't enforce some losses in intx
+            if not self.rnn_only: 
+                stop_buffer_close = torch.from_numpy((stop_dist > 3.).astype(int)).to(device) # Can go down to 1.8 or so, but when stopsign is tall can't see it
+                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stop_buffer_close
+                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= stop_buffer_close
+
+                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= ~ego_in_intx
+                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lane_width")] *= ~ego_in_intx
+            #######################
+
+            losses_to_include = AUX_TARGET_PROPS if self.rnn_only else [p for p in AUX_TARGET_PROPS if p not in ["lead_speed"]]
+            losses.update({p:aux_targets_losses[:,:,AUX_TARGET_PROPS.index(p)].mean() for p in losses_to_include})
 
             #############
             # Obsnet losses
@@ -297,7 +287,7 @@ class Trainer():
             pitch_loss = mse_loss(aux[:,:,AUX_PROPS.index('pitch')], obsnet_out[:,:,OBSNET_PROPS.index('pitch')])
             yaw_loss = mse_loss(aux[:,:,AUX_PROPS.index('yaw')], obsnet_out[:,:,OBSNET_PROPS.index('yaw')])
             unc_p = obsnet_out[:,:,OBSNET_PROPS.index('unc_p')]
-            unc_loss = mse_loss(torch.log(angles_loss.mean(dim=-1).detach()+angles_loss_i.mean(dim=-1).detach()), unc_p)
+            unc_loss = mse_loss(torch.log(angles_loss.mean(dim=-1).detach()), unc_p)
             losses.update({
                 #"pitch":pitch_loss,
                 #"yaw":yaw_loss,
@@ -308,27 +298,29 @@ class Trainer():
             loss = self.loss_manager.step(losses, logger=logger)
             timer.log("calc losses")
 
+            # if is_first_in_seq:
+            #     print("\n\n is first in seq")
+            # print("Total loss:", loss.item(), loss.dtype)
+
             opt = self.opt
             if self.backwards:
-                scaler = self.scaler
-                scaler.scale(loss).backward() 
-                scaler.unscale_(opt)
+                if self.rnn_only: # rnn, full precision no amp or scaler
+                    loss.backward() 
+                    torch.nn.utils.clip_grad_value_(model.parameters(), 2.0) 
+                    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 60.0) 
+                    opt.step()
+                    opt.zero_grad()
+                else: # cnn
+                    scaler = self.scaler
+                    scaler.scale(loss).backward() 
+                    scaler.unscale_(opt)
+                    torch.nn.utils.clip_grad_value_(model.parameters(), 10.0) 
+                    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 60.0)
+                    scaler.step(opt)
+                    scaler.update() 
+                    opt.zero_grad()
 
-                mins, maxs, means = [], [], []
-                for n, param in model.named_parameters():
-                    if param.grad is not None:
-                        #if update_counter%20==0: print("grads", param.grad.shape, param.grad.dtype)
-                        mins.append(torch.min(param.grad))
-                        maxs.append(torch.max(param.grad))
-                        means.append(torch.mean(param.grad))
-                grad_min = min(mins); grad_max = max(maxs)
-                logger.log({"grad_max": max(grad_max.item(), abs(grad_min.item()))})
-                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 2.0)
                 logger.log({"grad_norm": total_norm.item()})
-
-                scaler.step(opt)
-                scaler.update() 
-                opt.zero_grad()
                 time.sleep(train_pause)
             timer.log("backwards")
         
@@ -340,10 +332,10 @@ class Trainer():
                     b = (img, wps, wps_p, aux, aux_targets_p, obsnet_out)
 
                     angles_loss,_ = angles_loss.max(-1) 
-                    self.update_worst("angles", angles_loss, b)
+                    self.update_worst("angles", angles_loss, b) #TODO these will prob just be intx, can filter 
 
-                    angles_loss_i,_ = angles_loss_i.max(-1) 
-                    self.update_worst("angles_i", angles_loss_i, b)
+                    # angles_loss_i,_ = angles_loss_i.max(-1) 
+                    # self.update_worst("angles_i", angles_loss_i, b)
 
                     # Report worsts for our aux targets
                     for p in SHOW_WORST_PROPS:
@@ -498,6 +490,9 @@ COMPRESSION_QUALITY_MIN = 30 # 15
 
 random_color = lambda : (random.randint(0,255), random.randint(0,255), random.randint(0,255))
 def get_transform(seqlen):
+    # spatter is strongest when cutout is at or below mean. Best is within .1 of mean.
+    spatter_mean = random.uniform(.1, .4)
+    spatter_cutout = spatter_mean + random.uniform(.06, .12)
     transforms = [
         A.AdvancedBlur(p=.4, blur_limit=(3, 3), sigmaX_limit=(0.1, 1.55), sigmaY_limit=(0.1, 1.51), rotate_limit=(-81, 81), beta_limit=(0.5, 8.0), noise_limit=(0.01, 22.05)),
         A.RandomContrast(limit=(-.4, .4), p=.4),
@@ -508,7 +503,7 @@ def get_transform(seqlen):
         ]),
         A.OneOf([ # distractors
             A.CoarseDropout(p=.05, max_holes=40, max_height=60, max_width=60, min_holes=10, min_height=5, min_width=5, fill_value=random_color(), mask_fill_value=None),
-            A.Spatter(p=.1, mean=(0.63, 0.67), std=(0.25, 0.35), gauss_sigma=(1.8, 2.0), intensity=(-.4, 0.4), cutout_threshold=(0.65, 0.72), mode=['rain', 'mud']),
+            A.Spatter(p=.1, mean=spatter_mean, std=(0.25, 0.35), gauss_sigma=(.8, 1.6), intensity=(-.3, 0.3), cutout_threshold=spatter_cutout, mode=['rain', 'mud']),
             A.PixelDropout(p=.1, dropout_prob=random.uniform(.01, .05), per_channel=random.choice([0,1]), drop_value=random_color(), mask_drop_value=None),
         ]),
         A.OneOf([ # compression artefacting
@@ -517,11 +512,11 @@ def get_transform(seqlen):
             A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=.4)
         ]),
         A.OneOf([ # brightness
-            A.RandomGamma(gamma_limit=(50,130), p=.4), # higher is darker
-            A.RandomBrightness(p=.5, limit=(-0.25, 0.25)),
+            A.RandomGamma(gamma_limit=(50,150), p=.4), # higher is darker
+            A.RandomBrightness(p=.5, limit=(-0.2, 0.2)),
         ]),
         A.OneOf([  # other 
-            # A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)),
+            A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)),
             A.CLAHE(p=.1, clip_limit=(1, 4), tile_grid_size=(8, 8)),
             A.Emboss(p=.1, alpha=(0.2, 0.5), strength=(0.2, 0.7)),
         ])
@@ -541,7 +536,7 @@ def aug_imgs(img, constant_seq_aug):
     else:
         # different aug for each img in seq
         for s in range(seqlen):
-            AUG_PROB = .8 # to speed up a bit.
+            AUG_PROB = 1.0 #.8 # to speed up a bit.
             if random.random() < AUG_PROB:
                 img[s] = transform(image=img[s])['image']
 

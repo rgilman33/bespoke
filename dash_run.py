@@ -15,10 +15,10 @@ import numpy as np
 from PIL import Image
 from dash_utils import *
 
-run_ids = ["run_608", "run_609"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
+run_ids = ["run_621", "run_622"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
 run_id = run_ids[0]
-model_stem = "4.5_e68"
-model_stem_b = "3.20_e158" #"2.10_e4"
+model_stem = "4.17_e27"
+model_stem_b = "4.13_e33" #"4.5_e68"
 
 MIN_PT = 0
 L = 4000
@@ -78,9 +78,9 @@ def update_timeline_fig_layout(fig, title='', xaxis_visible=False, height=120):
         hovertemplate=None,
     )
 
-fig, fig_unc, fig_lane_width, stop, stop_dist, lead, speed, dagger_shift = None, None, None, None, None, None, None, None
+fig, fig_unc, fig_lane_width, stop, stop_dist, lead, speed, dagger_shift, rd_is_lined = None, None, None, None, None, None, None, None, None
 def refresh_charts():
-    global fig, fig_unc, fig_lane_width, stop, stop_dist, lead, speed, dagger_shift
+    global fig, fig_unc, fig_lane_width, stop, stop_dist, lead, speed, dagger_shift, rd_is_lined
 
     # Tire angle
     tire_angle_data = [get_scatter('tire_angle', rollout.aux[MIN_PT:MAX_PT, "tire_angle"]*-1, 'blue')]
@@ -103,12 +103,12 @@ def refresh_charts():
     unc_data = [get_scatter('uncertainty p2', c(rollout_b.additional_results[MIN_PT:MAX_PT, "te"]), 'brown')] if model_stem_b is not None else []
     unc_data += [get_scatter('uncertainty p', c(rollout.additional_results[MIN_PT:MAX_PT, "te"]), 'red')]
     fig_unc = go.Figure(data=unc_data)
-    update_timeline_fig_layout(fig_unc, "te", height=80)
+    update_timeline_fig_layout(fig_unc, "te", height=50)
 
     # Stop
-    C = 5
-    _has_stop = np.clip(rollout.aux_targets_p[MIN_PT:MAX_PT, "has_stop"], -C, C)
-    stop_data = [get_scatter('has stop p2', np.clip(rollout_b.aux_targets_p[MIN_PT:MAX_PT, "has_stop"], -C, C), 'brown')] if model_stem_b is not None else []
+    c = lambda x : np.clip(x, -5, 5)
+    _has_stop = c(rollout.aux_targets_p[MIN_PT:MAX_PT, "has_stop"])
+    stop_data = [get_scatter('has stop p2', c(rollout_b.aux_targets_p[MIN_PT:MAX_PT, "has_stop"]), 'brown')] if model_stem_b is not None else []
     stop_data += [get_scatter('has stop p', _has_stop, 'red')]
     stop = go.Figure(data=stop_data)
     update_timeline_fig_layout(stop, "Stop", height=50)
@@ -122,8 +122,8 @@ def refresh_charts():
     update_timeline_fig_layout(stop_dist, "Stop dist", height=50)
 
     # Lead
-    lead_data = [get_scatter('has lead p2', np.clip(rollout_b.aux_targets_p[MIN_PT:MAX_PT, "has_lead"], -C, C), 'brown')] if model_stem_b is not None else []
-    lead_data += [get_scatter('has lead p', np.clip(rollout.aux_targets_p[MIN_PT:MAX_PT, "has_lead"], -C, C), 'red')]
+    lead_data = [get_scatter('has lead p2', c(rollout_b.aux_targets_p[MIN_PT:MAX_PT, "has_lead"]), 'brown')] if model_stem_b is not None else []
+    lead_data += [get_scatter('has lead p', c(rollout.aux_targets_p[MIN_PT:MAX_PT, "has_lead"]), 'red')]
     lead = go.Figure(data=lead_data)
     update_timeline_fig_layout(lead, "Lead", height=50)
 
@@ -133,6 +133,12 @@ def refresh_charts():
     dagger_shift = go.Figure(data=dagger_data)
     update_timeline_fig_layout(dagger_shift, "dagger", xaxis_visible=True, height=80)
     
+    # is-lined
+    rd_is_lined_data = [get_scatter('is-lined p2', c(rollout_b.aux_targets_p[MIN_PT:MAX_PT, "rd_is_lined"]), 'brown')] if model_stem_b is not None else []
+    rd_is_lined_data += [get_scatter('is-lined p', c(rollout.aux_targets_p[MIN_PT:MAX_PT, "rd_is_lined"]), 'red')]
+    rd_is_lined = go.Figure(data=rd_is_lined_data)
+    update_timeline_fig_layout(rd_is_lined, "is-lined", xaxis_visible=True, height=80)
+
     # lane width
     lane_width_data = [get_scatter('lane_width', rollout_b.aux_targets_p[MIN_PT:MAX_PT,"lane_width"], 'brown')] if model_stem_b is not None else []
     lane_width_data += [get_scatter('lane_width', rollout.aux_targets_p[MIN_PT:MAX_PT,"lane_width"], 'red')]
@@ -195,7 +201,7 @@ app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
 # blank_img[:,:,:] = 200
 # im_url = np_image_to_base64(blank_img)
 
-plots = (fig, speed, fig_unc, fig_lane_width, stop, stop_dist, lead, dagger_shift)
+plots = (fig, speed, fig_unc, stop, stop_dist, lead, dagger_shift, rd_is_lined, fig_lane_width)
 
 app.layout = html.Div(
     className="container",
@@ -351,7 +357,7 @@ def update_graph(_run_id, _actgrad_source, _actgrad_target, _start_ix):
         update_rollout()
     refresh_charts()
 
-    return fig, speed, fig_unc, fig_lane_width, stop, stop_dist, lead, dagger_shift
+    return fig, speed, fig_unc, stop, stop_dist, lead, dagger_shift, rd_is_lined, fig_lane_width
 
 
 @app.callback(
