@@ -4,7 +4,7 @@ import numpy as np
 
 sys.path.append('/home/beans/bespoke')
 sys.path.append('/home/beans/bespoke/datagen')
-from datagen.episode import make_episode
+from datagen.episode import *
 from bpy_handler import *
 from constants import *
 
@@ -83,7 +83,7 @@ if __name__ == "__main__":
         # Get map. We can do multiple routes through each map
         if need_map:
             # Make episode map
-            episode_info = make_episode(timer)
+            episode_info = make_map(timer, episode_info)
 
             # Retrieve map
             wp_df, coarse_map_df, success = get_map_data(bpy, episode_info, timer) # can fail here
@@ -105,6 +105,9 @@ if __name__ == "__main__":
             start_left = True
             continue
             
+        # Randomize appearance -- doesn't alter targets
+        randomize_appearance(timer, episode_info)
+
         start_left = not start_left
         need_map = not need_map
 

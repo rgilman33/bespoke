@@ -74,7 +74,7 @@ slow_grasses = ["houseplant_flowerless_ulrtcjsia", "plants_3d_slfpffjr", "housep
 plants_folders = glob.glob(f"{MEGASCANS_DOWNLOADED_ROOT}/3dplant/*")
 plants_folders = [f for f in plants_folders if len([s for s in slow_grasses if s in f])==0]
 
-def make_episode(timer):
+def make_map(timer):
 
     episode_info = EpisodeInfo() 
 
@@ -254,13 +254,53 @@ def make_episode(timer):
 
     timer.log("setup map")
 
+    # end randomize appearance
 
+    get_node("episode_seed", get_variables_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
+    get_node("wp_spacing", get_variables_nodes).outputs["Value"].default_value = WP_SPACING
+
+    # variable len stencils to give angles to rds. .33 and .67 would give perfect grid. .1 and .15 would give heavily skewed.
+    # s1 = .33 #random.uniform(.1, .4)
+    # s2 = .67 #s1 + random.uniform(.1, .4)
+    # # NOTE hardcoding these to even bc was having to filter out lots of inits, and that's a bottleneck right now. 
+    # # Can allow back in later if eg have sidecams, or otherwise want more sharp turns
+    s1 = random.uniform(.1, .4)
+    s2 = s1 + random.uniform(.1, .4)
+    get_node("trisplit_loc_1", get_rds_nodes).outputs["Value"].default_value = s1
+    get_node("trisplit_loc_2", get_rds_nodes).outputs["Value"].default_value = s2
+
+    # No NPCs when too narrow gravel rds
+    if not rd_is_lined and lane_width_actual < 3.0:
+        bpy.data.objects["npc"].hide_render = True
+        has_npcs = False
+    else:
+        bpy.data.objects["npc"].hide_render = False
+        has_npcs = True
+
+
+    episode_info.is_highway = is_highway
+    episode_info.rd_is_lined = rd_is_lined
+    episode_info.pitch = pitch_perturbation
+    episode_info.yaw = yaw_perturbation
+    episode_info.has_npcs = has_npcs
+    episode_info.is_single_rd = is_single_rd
+    episode_info.lane_width = lane_width_actual # left shift is zero for lined, for dirtgravel this gives effective lane width. left shift is neg
+    episode_info.has_stops = has_stops
+    episode_info.is_only_yellow_lined = is_only_yellow_lined
+    episode_info.wide_shoulder_add = wide_shoulder_add
+    episode_info.lane_width_actual = lane_width_actual
+
+    return episode_info    
+
+
+
+def randomize_appearance(timer, episode_info, run_counter):
     ############################################################
     # Randomize appearance -- nothing below changes any targets
     ############################################################
 
     # rdside hills
-    get_node("rdside_hills_falloff_add", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 2) + wide_shoulder_add*1.2
+    get_node("rdside_hills_falloff_add", main_map_nodes).outputs["Value"].default_value = random.uniform(.8, 2) + episode_info.wide_shoulder_add*1.2
     get_node("rdside_hills_falloff_range", main_map_nodes).outputs["Value"].default_value = random.uniform(1.5, 10)
     get_node("rdside_hills_noise_scale", main_map_nodes).outputs["Value"].default_value = .03 * 10**random.uniform(0, 1)
     get_node("rdside_hills_noise_mult", main_map_nodes).outputs["Value"].default_value = 3 * 10**random.uniform(0, 1)
@@ -323,9 +363,9 @@ def make_episode(timer):
     white_lines_opacity = get_node("white_line_opacity", dirt_gravel_nodes)
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes)
 
-    if rd_is_lined: # can consider going back down to min .2, just that sometimes too hard to see when combined w noise
+    if episode_info.rd_is_lined: # can consider going back down to min .2, just that sometimes too hard to see when combined w noise
         white_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .25 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
-        yellow_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else random.uniform(.6, 1.) if is_only_yellow_lined else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
+        yellow_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else random.uniform(.6, 1.) if episode_info.is_only_yellow_lined else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
     else:
         white_lines_opacity.outputs["Value"].default_value = 0
         yellow_lines_opacity.outputs["Value"].default_value = 0
@@ -334,7 +374,7 @@ def make_episode(timer):
     get_node("yellow_line_sat", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.9, 2)
     get_node("yellow_line_brightness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.5, 3.0)
     
-    yellow_line_noise_mult_large_max = 4 if is_only_yellow_lined else 20
+    yellow_line_noise_mult_large_max = 4 if episode_info.is_only_yellow_lined else 20
     get_node("yellow_line_noise_mult_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 40)
     get_node("yellow_line_noise_mult_large", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .2 else random.uniform(1, yellow_line_noise_mult_large_max)
     #TODO why don't have same mult setup for white lines?
@@ -369,14 +409,14 @@ def make_episode(timer):
     ############### # all is relative to edge of rd, ie outer white line
     # inner_shoulder is the same surface as rd
 
-    inner_shoulder_width = .25 if is_only_yellow_lined else .8 if not rd_is_lined else (wide_shoulder_add*.5 + random.uniform(.2, 1.5))
+    inner_shoulder_width = .25 if episode_info.is_only_yellow_lined else .8 if not episode_info.rd_is_lined else (episode_info.wide_shoulder_add*.5 + random.uniform(.2, 1.5))
 
     # outer shoulder is different surface from rd
     outer_shoulder_width = random.uniform(0.01, .3)
 
     # constant inner-shoulder width when only-yellow or dirtgravel, and narrower edge fade (.3 -> 1.5) rather than (.3, 3.0)
     rd_start_fade = inner_shoulder_width 
-    rd_fade_width = .3*(10**random.uniform(0, .7)) if (is_only_yellow_lined or not rd_is_lined) else .3*(10**random.uniform(0, 1.))
+    rd_fade_width = .3*(10**random.uniform(0, .7)) if (episode_info.is_only_yellow_lined or not episode_info.rd_is_lined) else .3*(10**random.uniform(0, 1.))
     outer_shoulder_start_fade = rd_start_fade + outer_shoulder_width # inner + outer shoulder widths
     outer_shoulder_fade_width = random.uniform(0.1, 1.)
 
@@ -456,9 +496,9 @@ def make_episode(timer):
     get_node("shadow_uv_stretch", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, np.interp(shadow_noise_scale, [.02, .85], [15, 3]))
 
     # Directionality, uv-stretching
-    HAS_DIRECTIONALITY_PROB = .4 if rd_is_lined else .8
+    HAS_DIRECTIONALITY_PROB = .4 if episode_info.rd_is_lined else .8
     has_directionality = random.random() < HAS_DIRECTIONALITY_PROB
-    get_node("directionality_w", dirt_gravel_nodes).outputs["Value"].default_value = lane_width_actual + inner_shoulder_width
+    get_node("directionality_w", dirt_gravel_nodes).outputs["Value"].default_value = episode_info.lane_width_actual + inner_shoulder_width
     get_node("d_gate_normal", dirt_gravel_nodes).mute = not has_directionality # Directly muting these, otherwise still get slowdown. Mute node is only way to avoid slowdown, setting to zero still get slowdown.
     get_node("d_gate_albedo", dirt_gravel_nodes).mute = not has_directionality
     get_node("directionality_override", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .5)
@@ -717,7 +757,7 @@ def make_episode(timer):
     # Rdside Grass
     ######################
 
-    if random.random() < .2: # This takes by far the longest, only doing occasionally
+    if run_counter%5==0: # This takes by far the longest, only doing occasionally
         for o in bpy.data.objects:
             if "grass_mesh" in o.name or "LOD" in o.name: # the latter is bc sometimes they weren't being deleted, unsure why. Should just need the first one.
                 bpy.data.objects.remove(o, do_unlink=True)
@@ -755,45 +795,6 @@ def make_episode(timer):
     timer.log("randomize -- grass") 
 
 
-    # end randomize appearance
-
-    get_node("episode_seed", get_variables_nodes).outputs["Value"].default_value = random.randint(-1e6, 1e6)
-    get_node("wp_spacing", get_variables_nodes).outputs["Value"].default_value = WP_SPACING
-
-    # variable len stencils to give angles to rds. .33 and .67 would give perfect grid. .1 and .15 would give heavily skewed.
-    # s1 = .33 #random.uniform(.1, .4)
-    # s2 = .67 #s1 + random.uniform(.1, .4)
-    # # NOTE hardcoding these to even bc was having to filter out lots of inits, and that's a bottleneck right now. 
-    # # Can allow back in later if eg have sidecams, or otherwise want more sharp turns
-    s1 = random.uniform(.1, .4)
-    s2 = s1 + random.uniform(.1, .4)
-    get_node("trisplit_loc_1", get_rds_nodes).outputs["Value"].default_value = s1
-    get_node("trisplit_loc_2", get_rds_nodes).outputs["Value"].default_value = s2
-
-    # No NPCs when too narrow gravel rds
-    if not rd_is_lined and lane_width_actual < 3.0:
-        bpy.data.objects["npc"].hide_render = True
-        has_npcs = False
-    else:
-        bpy.data.objects["npc"].hide_render = False
-        has_npcs = True
-
-    #NOTE we'll have to update many of these once eg lane-width, lined-state is variable within an episode. We'll have to put them on the wps.
-    #NOTE can scatter throughout fn, where they're actually defined
-    episode_info.is_highway = is_highway
-    episode_info.rd_is_lined = rd_is_lined
-    episode_info.pitch = pitch_perturbation
-    episode_info.yaw = yaw_perturbation
-    episode_info.has_npcs = has_npcs
-    episode_info.is_single_rd = is_single_rd
-    episode_info.lane_width = lane_width_actual # left shift is zero for lined, for dirtgravel this gives effective lane width. left shift is neg
-    episode_info.shadow_strength = shadow_strength
-    episode_info.directionality_mult = directionality_mult
-    episode_info.has_stops = has_stops
-    
-    timer.log("randomize -- finish")
-
-    return episode_info
 
 
 def set_intersection_property_all(intersections, property_name, value):
