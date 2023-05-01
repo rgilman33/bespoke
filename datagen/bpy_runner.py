@@ -14,7 +14,7 @@ dataloader_id = argv[0]
 dataloader_root = f"{BLENDER_MEMBANK_ROOT}/dataloader_{dataloader_id}"
 
 FAILED_TO_GET_MAP_F = f"{dataloader_root}/failed_to_get_map.npy"
-RUN_COUNTER_F = f"{dataloader_root}/run_counter.npy"
+RUN_COUNTER_F = f"{dataloader_root}/run_counter.npy" # TODO bring this out into constant
 
 import tracemalloc
 

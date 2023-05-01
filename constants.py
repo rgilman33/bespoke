@@ -129,8 +129,8 @@ BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank_frameskip"
 BPTT = 1 #4 #8 #9
 FRAME_CAPTURE_N = 10 
 EPISODE_LEN = 1800 // FRAME_CAPTURE_N # measured in frames
-RUNS_TO_STORE_PER_PROCESS = 96 * FRAME_CAPTURE_N # to keep constant the number of obs stored
-N_RUNNERS = 8 #12
+RUNS_TO_STORE_PER_PROCESS = 64 if FRAME_CAPTURE_N==1 else 320 #64 * FRAME_CAPTURE_N # to keep constant the number of obs stored
+N_RUNNERS = 12
 
 DATA_CONSUMPTION_RATIO_LIMIT = 1.
 
@@ -272,8 +272,8 @@ MAX_N_NPCS = 12
 DIST_NA_PLACEHOLDER = 150
 
 # used for targets
-LEAD_DIST_MAX = 80
-STOP_DIST_MAX = 60
+LEAD_DIST_MIN, LEAD_DIST_MAX = 50, 100
+STOP_DIST_MIN, STOP_DIST_MAX = 40, 80
 
 class EpisodeInfo():
     def __init__(self):

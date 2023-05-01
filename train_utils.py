@@ -151,7 +151,7 @@ class Trainer():
             self.current_epoch += 1
         
     def reset_worsts(self):
-        self.worsts = {p:[-np.inf, None] for p in ['angles']+SHOW_WORST_PROPS}
+        self.worsts = {p:[-np.inf, None] for p in ['angles', "angles_i"]+SHOW_WORST_PROPS}
 
     def update_worst(self, loss_name, loss_values_no_reduce, batch):
         worst_loss, batch_worst_ix, seq_worst_ix = get_worst(loss_values_no_reduce)
@@ -256,22 +256,29 @@ class Trainer():
             aux_np = unprep_aux(aux)
             has_stop, has_lead = aux_targets[:,:,AUX_TARGET_PROPS.index("has_stop")], aux_targets[:,:,AUX_TARGET_PROPS.index("has_lead")]
 
+            # Leads
             lead_dist = aux_np[:,:,"lead_dist"]
-            lead_buffer = torch.from_numpy(((lead_dist < LEAD_DIST_MAX) | (lead_dist > (LEAD_DIST_MAX+15))).astype(int)).to(device)
-            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")] *= lead_buffer
+            # lead_buffer = torch.from_numpy(((lead_dist < LEAD_DIST_MAX) | (lead_dist > (LEAD_DIST_MAX+15))).astype(int)).to(device)
+            leads_always_enforce = torch.from_numpy((lead_dist<LEAD_DIST_MIN) | (lead_dist>LEAD_DIST_MAX)).to(device)
+            m_sees_lead = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_lead")].detach() > .3)
+            m_sees_true_lead = has_lead.bool() & m_sees_lead # already sigmoided
+            leads_enforce = leads_always_enforce | m_sees_true_lead
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")] *= leads_enforce
 
+            # Stops
             stop_dist = aux_np[:,:,"stop_dist"]
             #stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
-            always_enforce = torch.from_numpy(((4<stop_dist) & (stop_dist<50)) | (stop_dist > 70)).to(device)
-            m_sees_true_stop = has_stop & (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3) # already sigmoided
-            stops_enforce = always_enforce | m_sees_true_stop
+            stops_always_enforce = torch.from_numpy(((6<stop_dist) & (stop_dist<STOP_DIST_MIN)) | (stop_dist>STOP_DIST_MAX)).to(device)
+            m_sees_stop = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3)
+            m_sees_true_stop = has_stop.bool() & m_sees_stop # already sigmoided
+            stops_enforce = stops_always_enforce | m_sees_true_stop
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stops_enforce
 
 
             # Only enforce stops and lead metrics when we have stops and leads
-            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= stops_enforce #has_stop
-            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_dist")] *= has_lead
-            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_speed")] *= has_lead
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= m_sees_true_stop #has_stop
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_dist")] *= m_sees_true_lead
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_speed")] *= m_sees_true_lead
 
             ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
 
@@ -339,12 +346,11 @@ class Trainer():
                     b = (img, wps, wps_p, aux, aux_targets_p, obsnet_out)
 
                     angles_loss,_ = angles_loss.max(-1)
-                    angles_loss *= ~ego_in_intx
-                    self.update_worst("angles", angles_loss, b)
+                    angles_loss_no_intx = angles_loss * ~ego_in_intx
+                    self.update_worst("angles", angles_loss_no_intx, b)
 
-                    angles_loss_i,_ = angles_loss.max(-1)
-                    angles_loss_i *= ego_in_intx
-                    self.update_worst("angles_i", angles_loss_i, b)
+                    angles_loss_intx = angles_loss * ego_in_intx
+                    self.update_worst("angles_i", angles_loss_intx, b)
 
                     # Report worsts for our aux targets
                     for p in SHOW_WORST_PROPS:

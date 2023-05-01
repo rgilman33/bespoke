@@ -313,7 +313,7 @@ def make_episode(timer):
 
     get_node("hdri_hue", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.45, .55)
     get_node("hdri_sat", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.5, 1.5)
-    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.3, 3.5)
+    get_node("hdri_brightness", background_hdri_nodes).outputs["Value"].default_value = random.uniform(.5, 1.5) #random.uniform(.3, 3.5)
 
     ######################
     # Lanelines, material
@@ -502,6 +502,16 @@ def make_episode(timer):
     # Terrain
     ######################
 
+    # meta_img = None
+    # dataloader_root = f"{BLENDER_MEMBANK_ROOT}/dataloader_0{random.randint(0,8)}" # random dataloader
+    # current_run_f = f"{dataloader_root}/run_counter.npy"
+    # if os.path.exists(current_run_f):
+    #     run_counter = np.load(current_run_f)[0]
+    #     meta_img_paths = glob.glob(f"{dataloader_root}/run_{run_counter}/imgs/*")
+    #     if len(meta_img_paths)>0:
+    #         meta_img = random.choice(meta_img_paths)
+    # print("meta_img path", meta_img)
+
     terrain_albedo = rd_img_albedo if random.random() < .6 else random.choice(all_albedos)
     get_node("terrain_img_albedo", dirt_gravel_nodes).image.filepath = random.choice(open_imgs) if random.random() < .5 else terrain_albedo
     get_node("terrain_img_normal", dirt_gravel_nodes).image.filepath = terrain_albedo.replace("Albedo", "Normal")
@@ -550,7 +560,8 @@ def make_episode(timer):
     get_node("stopsign_y_scale", stopsign_nodes).outputs["Value"].default_value = random.uniform(.8, 1.2)
     get_node("rotation_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
     get_node("rotation_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
-    get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.3, .0)
+    get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.9, .2)
+    get_node("rotation_ccw", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.2, .2)
 
     stop_shift_y = random.uniform(-2, 0) # neg moves it along rd closer up before stopline
     get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = stop_shift_y
@@ -625,6 +636,7 @@ def make_episode(timer):
 
 
     # roadside things
+
     get_node("rst_img_albedo", rdside_thing_material).image.filepath = random.choice(open_imgs)
     get_node("rst_size", main_map_nodes).outputs["Value"].default_value = random.uniform(3., 12.)
     rst_group_center_modulo = random.uniform(50, 300)
@@ -704,30 +716,35 @@ def make_episode(timer):
     ######################
     # Rdside Grass
     ######################
-    for o in bpy.data.objects:
-        if "grass_mesh" in o.name or "LOD" in o.name: # the latter is bc sometimes they weren't being deleted, unsure why. Should just need the first one.
-            bpy.data.objects.remove(o, do_unlink=True)
 
-    grass_root = random.choice(plants_folders)
-    grass_opacity_img = glob.glob(f"{grass_root}/Textures/Atlas/*_2K_Opacity.jpg")[0]
+    if random.random() < .2: # This takes by far the longest, only doing occasionally
+        for o in bpy.data.objects:
+            if "grass_mesh" in o.name or "LOD" in o.name: # the latter is bc sometimes they weren't being deleted, unsure why. Should just need the first one.
+                bpy.data.objects.remove(o, do_unlink=True)
 
-    mesh_files = glob.glob(f"{grass_root}/**/*.fbx")
-    mesh_files = [f for f in mesh_files if "LOD0" not in f]
-    mesh_files = [f for f in mesh_files if "LOD1" not in f] #TODO use only higher lods. We really don't want all these
-    mesh_files_lower_poly = [f for f in mesh_files if "LOD2" not in f]
-    mesh_files = mesh_files_lower_poly if len(mesh_files_lower_poly) > 0 else mesh_files
-    if len(mesh_files)<1: print("No meshes of high enough LOD", grass_root)
-    
-    grass_mesh_path = random.choice(mesh_files)
-    print("Using grass mesh ", grass_mesh_path)
-    bpy.ops.import_scene.fbx(filepath=grass_mesh_path)
-    bpy.context.selected_objects[0].name = "grass_mesh"
-    bpy.context.selected_objects[0].hide_render = True
+        grass_root = random.choice(plants_folders)
+        grass_opacity_img = glob.glob(f"{grass_root}/Textures/Atlas/*_2K_Opacity.jpg")[0]
 
-    get_node("grass_mesh", main_map_nodes).inputs[0].default_value = bpy.data.objects["grass_mesh"]
+        mesh_files = glob.glob(f"{grass_root}/**/*.fbx")
+        mesh_files = [f for f in mesh_files if "LOD0" not in f]
+        mesh_files = [f for f in mesh_files if "LOD1" not in f] #TODO use only higher lods. We really don't want all these
+        mesh_files_lower_poly = [f for f in mesh_files if "LOD2" not in f]
+        mesh_files = mesh_files_lower_poly if len(mesh_files_lower_poly) > 0 else mesh_files
+        if len(mesh_files)<1: print("No meshes of high enough LOD", grass_root)
+        
+        grass_mesh_path = random.choice(mesh_files)
+        print("Using grass mesh ", grass_mesh_path)
+        timer.log("randomize -- choose grass mesh") 
 
-    bpy.data.images["GrassOpacity"].filepath = grass_opacity_img
-    bpy.data.images["GrassAlbedo"].filepath = grass_opacity_img.replace("Opacity", "Albedo") if random.random() < .3 else random.choice(all_albedos)
+        bpy.ops.import_scene.fbx(filepath=grass_mesh_path)
+        bpy.context.selected_objects[0].name = "grass_mesh"
+        bpy.context.selected_objects[0].hide_render = True
+
+        get_node("grass_mesh", main_map_nodes).inputs[0].default_value = bpy.data.objects["grass_mesh"]
+
+        bpy.data.images["GrassOpacity"].filepath = grass_opacity_img
+        bpy.data.images["GrassAlbedo"].filepath = grass_opacity_img.replace("Opacity", "Albedo") if random.random() < .3 else random.choice(all_albedos)
+        timer.log("randomize -- apply grass") 
 
     get_node("grass_hue", grass_material).outputs["Value"].default_value = random.uniform(.4, .6)
     get_node("grass_sat", grass_material).outputs["Value"].default_value = random.uniform(.5, 1.5)
@@ -735,7 +752,7 @@ def make_episode(timer):
 
     get_node("base_grass_size", main_map_nodes).outputs["Value"].default_value = random.uniform(1.5, 3.3)
 
-    timer.log("randomize -- grass")
+    timer.log("randomize -- grass") 
 
 
     # end randomize appearance
