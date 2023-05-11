@@ -93,9 +93,12 @@ def make_map(timer):
     if rd_is_lined:
         lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.8, 3.9)
     else: # dirt gravel
-        if random.random()<.8:
+        if random.random()<.85:
             lane_width = 4.
-            left_shift = -random.uniform(.4, lane_width/2)
+            if random.random() < .05: # manually forcing a bit more wide dirtgravel, as it's especially challenging
+                left_shift = -.4
+            else:
+                left_shift = -random.uniform(.4, lane_width/2)
         else: # narrow dirt gravel
             lane_width = 2.2 #random.uniform(2.4, 4)
             left_shift = -lane_width/2
@@ -288,7 +291,6 @@ def make_map(timer):
     episode_info.has_stops = has_stops
     episode_info.is_only_yellow_lined = is_only_yellow_lined
     episode_info.wide_shoulder_add = wide_shoulder_add
-    episode_info.lane_width_actual = lane_width_actual
 
     return episode_info    
 
@@ -364,11 +366,15 @@ def randomize_appearance(timer, episode_info, run_counter):
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes)
 
     if episode_info.rd_is_lined: # can consider going back down to min .2, just that sometimes too hard to see when combined w noise
-        white_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else .25 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
-        yellow_lines_opacity.outputs["Value"].default_value = 1 if random.random() < .2 else random.uniform(.6, 1.) if episode_info.is_only_yellow_lined else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
+        white_lines_opacity.outputs["Value"].default_value = .25 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
+        yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.5, 1.) if episode_info.is_only_yellow_lined else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
+        # get_node("white_line_gate", dirt_gravel_nodes).mute = False
+        # get_node("yellow_line_gate", dirt_gravel_nodes).mute = False
     else:
         white_lines_opacity.outputs["Value"].default_value = 0
         yellow_lines_opacity.outputs["Value"].default_value = 0
+        # get_node("white_line_gate", dirt_gravel_nodes).mute = True # NOTE i'd like to do this for speed, but don't know the effects. Can test later
+        # get_node("yellow_line_gate", dirt_gravel_nodes).mute = True 
 
     get_node("yellow_line_hue", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.45, .60)
     get_node("yellow_line_sat", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.9, 2)
@@ -485,20 +491,30 @@ def randomize_appearance(timer, episode_info, run_counter):
     shadow_v = 0.0 if random.random() < .6 else 1.0 # value 0 blacks out colors anyways
     get_node("shadow_v", dirt_gravel_nodes).outputs["Value"].default_value = shadow_v
 
-    NO_SHADOWS_PROB = .4 #.3 if rd_is_lined else .7
-    shadow_strength = 0 if random.random() < NO_SHADOWS_PROB else random.uniform(.1, .7) if shadow_v==1.0 else random.uniform(.2, 1.05)
-    get_node("shadow_strength", dirt_gravel_nodes).outputs["Value"].default_value = shadow_strength
-    get_node("shadow_shape_subtracter", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(-.04, .1) if shadow_v==0.0 else random.uniform(-.01, .1)
-    # shadow_noise_scale = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95
-    shadow_noise_scale = random.uniform(.02, .85)
-    get_node("shadow_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = shadow_noise_scale
-    get_node("shadow_uv_rotate", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, 6.28)
-    get_node("shadow_uv_stretch", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, np.interp(shadow_noise_scale, [.02, .85], [15, 3]))
+    NO_SHADOWS_PROB = .6 #.3 if rd_is_lined else .7
+    has_shadows = random.random()<NO_SHADOWS_PROB
+    if has_shadows:
+        #get_node("shadows_gate", dirt_gravel_nodes).mute = False #NOTE for perf. Can test effects later
+
+        shadow_strength = random.uniform(.1, .7) if shadow_v==1.0 else random.uniform(.2, 1.05)
+        get_node("shadow_strength", dirt_gravel_nodes).outputs["Value"].default_value = shadow_strength
+        get_node("shadow_shape_subtracter", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(-.04, .1) if shadow_v==0.0 else random.uniform(-.01, .1)
+        # shadow_noise_scale = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95
+        shadow_noise_scale = random.uniform(.02, .85)
+        get_node("shadow_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = shadow_noise_scale
+        get_node("shadow_uv_rotate", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, 6.28)
+        get_node("shadow_uv_stretch", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, np.interp(shadow_noise_scale, [.02, .85], [15, 3]))
+
+        get_node("shadow_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = .01 * 10**random.uniform(0,1)
+    else:
+        # get_node("shadows_gate", dirt_gravel_nodes).mute = True
+        get_node("shadow_strength", dirt_gravel_nodes).outputs["Value"].default_value = 0
+        
 
     # Directionality, uv-stretching
     HAS_DIRECTIONALITY_PROB = .4 if episode_info.rd_is_lined else .8
     has_directionality = random.random() < HAS_DIRECTIONALITY_PROB
-    get_node("directionality_w", dirt_gravel_nodes).outputs["Value"].default_value = episode_info.lane_width_actual + inner_shoulder_width
+    get_node("directionality_w", dirt_gravel_nodes).outputs["Value"].default_value = episode_info.lane_width + inner_shoulder_width
     get_node("d_gate_normal", dirt_gravel_nodes).mute = not has_directionality # Directly muting these, otherwise still get slowdown. Mute node is only way to avoid slowdown, setting to zero still get slowdown.
     get_node("d_gate_albedo", dirt_gravel_nodes).mute = not has_directionality
     get_node("directionality_override", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .5)

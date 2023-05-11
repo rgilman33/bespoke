@@ -38,15 +38,19 @@ class Autopilot():
             self.roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
             episode_info.roll_noise_mult = roll_noise_mult
 
-            r = random.random()
-            gps_state = "BAD" if (r < .05 and self.episode_info.just_go_straight) else "MED" if r <.1 else "NORMAL"
-
-            # noise for the map, position
-            maps_noise_mult = 60 if gps_state=="BAD" else 30 if gps_state=="MED" else random.uniform(.001, 10) # meters NOTE this is for each of x and y, so actual will be higher
-            min_num_passes_exp = np.interp(maps_noise_mult, [0, 10, 60], [1, 2, 3])
-            num_passes = int(3 * 10**random.uniform(min_num_passes_exp, 3)) # more passes makes for longer periodocity
-            self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult # actually a bit time-consuming at higher num_passes
-            self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+            # noise for the map, position 
+            BAD_GPS_PROB = .1
+            if random.random()<BAD_GPS_PROB:
+                maps_noise_mult = 60 # NOTE for each x and y, so actual will be higher
+                min_num_passes_exp = np.interp(maps_noise_mult, [0, 10, 60], [1, 2, 3])
+                num_passes = int(3 * 10**random.uniform(min_num_passes_exp, 3)) # more passes makes for longer periodocity
+                self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult # actually a bit time-consuming at higher num_passes
+                self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+            else:
+                self.maps_noise_x = np.zeros_like(self.roll_noise)
+                self.maps_noise_y = np.zeros_like(self.roll_noise)
+                maps_noise_mult = 0
+            
             episode_info.maps_noise_mult = maps_noise_mult
             
             # #

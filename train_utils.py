@@ -42,7 +42,7 @@ class LossManager():
             "pitch":.1,
             "yaw":.1,
             "unc":.1,
-            "te":.05,
+            "te":.07,
         }
         self.loss_weights.update({   
                     "wp_angles": 1,
@@ -268,12 +268,18 @@ class Trainer():
             # Stops
             stop_dist = aux_np[:,:,"stop_dist"]
             #stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
-            stops_always_enforce = torch.from_numpy(((6<stop_dist) & (stop_dist<STOP_DIST_MIN)) | (stop_dist>STOP_DIST_MAX)).to(device)
+            stops_min_buffer = -100 if self.rnn_only else 8
+            stops_always_enforce = torch.from_numpy(((stops_min_buffer<stop_dist) & (stop_dist<STOP_DIST_MIN)) | (stop_dist>STOP_DIST_MAX)).to(device)
             m_sees_stop = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3)
             m_sees_true_stop = has_stop.bool() & m_sees_stop # already sigmoided
             stops_enforce = stops_always_enforce | m_sees_true_stop
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stops_enforce
 
+            # Rd is lined NOTE can't do this when just starting trn
+            m_sees_rd_is_lined = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("rd_is_lined")].detach() > .3)
+            rd_is_lined = aux_targets[:,:,AUX_TARGET_PROPS.index("rd_is_lined")]
+            rd_is_lined_enforce = (rd_is_lined.bool() & m_sees_rd_is_lined) | ~rd_is_lined.bool()
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= rd_is_lined_enforce
 
             # Only enforce stops and lead metrics when we have stops and leads
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= m_sees_true_stop #has_stop
@@ -551,7 +557,7 @@ def aug_imgs(img, constant_seq_aug):
     else:
         # different aug for each img in seq
         for s in range(seqlen):
-            AUG_PROB = 1.0 #.8 # to speed up a bit.
+            AUG_PROB = .8 # to speed up a bit.
             if random.random() < AUG_PROB:
                 img[s] = transform(image=img[s])['image']
 

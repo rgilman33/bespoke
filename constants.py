@@ -123,13 +123,13 @@ device = 'cuda'
 
 FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
-#BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank"
-BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank_frameskip"
+BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank"
+#BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank_frameskip"
 
 BPTT = 1 #4 #8 #9
-FRAME_CAPTURE_N = 10 
-EPISODE_LEN = 1800 // FRAME_CAPTURE_N # measured in frames
-RUNS_TO_STORE_PER_PROCESS = 64 if FRAME_CAPTURE_N==1 else 320 #64 * FRAME_CAPTURE_N # to keep constant the number of obs stored
+FRAME_CAPTURE_N = 1 #10 
+EPISODE_LEN = 1700 // FRAME_CAPTURE_N # measured in frames
+RUNS_TO_STORE_PER_PROCESS = 64 if FRAME_CAPTURE_N==1 else 400 #64 * FRAME_CAPTURE_N # to keep constant the number of obs stored
 N_RUNNERS = 12
 
 DATA_CONSUMPTION_RATIO_LIMIT = 1.
@@ -348,10 +348,10 @@ def dist(a, b):
 
 
 def get_random_roll_noise(window_size=20, num_passes=2): #TODO rename this, it's a general fn
+    roll_noise = np.random.random(EPISODE_LEN*FRAME_CAPTURE_N*FPS) - .5    
     # returns smoothed noise btwn -1 and 1
-    roll_noise = np.random.random(EPISODE_LEN*FRAME_CAPTURE_N*FPS) - .5
     for i in range(num_passes):
-        roll_noise = moving_average(roll_noise, 20)
+        roll_noise = np.convolve(roll_noise, np.ones(window_size), "same")/window_size
     roll_noise = roll_noise / abs(roll_noise).max()
     return roll_noise
 

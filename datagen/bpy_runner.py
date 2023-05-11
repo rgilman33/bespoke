@@ -83,7 +83,7 @@ if __name__ == "__main__":
         # Get map. We can do multiple routes through each map
         if need_map:
             # Make episode map
-            episode_info = make_map(timer, episode_info)
+            episode_info = make_map(timer)
 
             # Retrieve map
             wp_df, coarse_map_df, success = get_map_data(bpy, episode_info, timer) # can fail here
@@ -93,8 +93,11 @@ if __name__ == "__main__":
                     indicate_failed()
                     break
                 continue
+            
+            # Randomize appearance -- doesn't alter targets
+            randomize_appearance(timer, episode_info, run_counter)
 
-        # Get route
+        # Get route. CUrrently two routes for each map (one in each direction)
         ego_route = get_ego_route(wp_df, episode_info, start_left) # can fail here
         if ego_route is None:
             failed_counter += 1
@@ -105,8 +108,6 @@ if __name__ == "__main__":
             start_left = True
             continue
             
-        # Randomize appearance -- doesn't alter targets
-        randomize_appearance(timer, episode_info)
 
         start_left = not start_left
         need_map = not need_map

@@ -26,10 +26,13 @@ timer = constants.Timer("nothing")
 bpy_handler.reset_npc_objects(bpy)
 
 # Make episode map
-episode_info = episode.make_episode(timer)
+episode_info = episode.make_map(timer)
 
 # Retrieve map
 wp_df, coarse_map_df, success = bpy_handler.get_map_data(bpy, episode_info, timer) # can fail here
+
+run_counter = 0
+episode.randomize_appearance(timer, episode_info, run_counter)
 
 # Get route
 start_left = random.random()<.5
