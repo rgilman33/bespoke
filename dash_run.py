@@ -15,10 +15,10 @@ import numpy as np
 from PIL import Image
 from dash_utils import *
 
-run_ids = ["run_621", "run_622"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
+run_ids = ["run_626"] #["run_621", "run_622"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
 run_id = run_ids[0]
-model_stem = "4.17_e27"
-model_stem_b = "4.13_e33" #"4.5_e68"
+model_stem = "4.28_e118"
+model_stem_b = None #"4.17_e27" #"4.13_e33" #"4.5_e68"
 
 MIN_PT = 0
 L = 4000
