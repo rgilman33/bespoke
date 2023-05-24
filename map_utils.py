@@ -242,9 +242,9 @@ def get_big_map():
     bbox_angle = np.degrees(far_radius / EARTH_RADIUS)
     bbox_str = f'{str(lat - bbox_angle)},{str(lon - bbox_angle)},{str(lat + bbox_angle)},{str(lon + bbox_angle)}'"""
 
-    #bbox_str = silverton_area_bbox_str
+    bbox_str = silverton_area_bbox_str
     # bbox_str = boulder_mtns_bbox_str
-    bbox_str = boulder_bbox_str
+    # bbox_str = boulder_bbox_str # this is the one we use at shady hollow
     q = """
         way(""" + bbox_str + """)
           [highway]
