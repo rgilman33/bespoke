@@ -69,36 +69,25 @@ mph_to_mps = lambda x : x*.44704
 ###########################
 # rw
 ###########################
-
-# 3.22, updating to bring in closer, using the new apparatus that allows to interp closer than our closest wp
-# min_dist_lookup = [
-#     (4.5, 2.7), # 10 mph
-#     (6.5, 3.3), # 14.5 mph
-#     (8.33, 4.5), #18 mph (speed mps, wp dist m)
-#     (11.11, 6.), # 24 mph
-#     (13.89, 8), # 30 mph
-#     (16.2, 10.), # 36 mph
-#     (19.44, 13), # 43 mph
-#     (22.5, 16), # 50 mph
-# ]
-
+ # may 30 2023
 # min_dist_lookup = [ 
 #     (6.5, 4.), # 14.5 mph
-#     (8.33, 4.9), #18 mph (speed mps, wp dist m)
-#     (11.11, 6.4), # 24 mph
-#     (13.89, 8), # 30 mph
-#     (16.2, 9.5), # 36 mph
-#     (19.44, 12), # 43 mph
-#     (22.5, 14.6), # 50 mph
+#     (8.33, 5.0), #18 mph (speed mps, wp dist m)
+#     (11.11, 6.7), # 24 mph
+#     (13.89, 8.5), # 30 mph
+#     (16.2, 10.1), # 36 mph
+#     (19.44, 12.6), # 43 mph
+#     (22.5, 15.), # 50 mph
 # ]
+
 min_dist_lookup = [ 
-    (6.5, 4.), # 14.5 mph
-    (8.33, 5.0), #18 mph (speed mps, wp dist m)
-    (11.11, 6.7), # 24 mph
-    (13.89, 8.5), # 30 mph
-    (16.2, 10.1), # 36 mph
-    (19.44, 12.6), # 43 mph
-    (22.5, 15.), # 50 mph
+    (6.5, 5.), # 14.5 mph
+    (8.33, 6.0), #18 mph (speed mps, wp dist m)
+    (11.11, 7.8), # 24 mph
+    (13.89, 9.9), # 30 mph
+    (16.2, 11.9), # 36 mph
+    (19.44, 15), # 43 mph
+    (22.5, 18.), # 50 mph
 ]
 min_dist_bps = [x[0] for x in min_dist_lookup]
 min_dist_vals = [x[1] for x in min_dist_lookup]
