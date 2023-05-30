@@ -117,7 +117,7 @@ class Trainer():
                 opt=None, 
                 backwards=True, 
                 log_wandb=True,
-                log_cadence=256, updates_per_epoch=2560, total_epochs=300,
+                log_cadence=512, updates_per_epoch=5120, total_epochs=3000,
                 wandb=None,
                 rw_evaluator=None,
                 rnn_only=False,
@@ -241,7 +241,8 @@ class Trainer():
             # te. When in doubt, stay close to prev preds
             _, bptt, _ = wps_p.shape
             if bptt > 1:
-                te_loss = mse_loss_no_reduce(wps_p[:, :-1, :].detach(), wps_p[:, 1:, :], weights=weights[:, 1:, :])
+                te_loss = mse_loss_no_reduce(wps_p[:, :-1, :].detach(), wps_p[:, 1:, :], weights=weights[:, 1:, :]) #TODO this should also be scaled larger
+                te_loss *= 100
                 losses.update({"te": te_loss.mean()})
 
             #############
@@ -250,6 +251,7 @@ class Trainer():
                         
             aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
             aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
+            aux_targets_losses *= 100
 
             #######################
             # Zero out a buffer right at end of horizon, no need to be strict about exact horizon end
@@ -264,7 +266,7 @@ class Trainer():
             m_sees_true_lead = has_lead.bool() & m_sees_lead # already sigmoided
             leads_enforce = leads_always_enforce | m_sees_true_lead
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")] *= leads_enforce
-
+            
             # Stops
             stop_dist = aux_np[:,:,"stop_dist"]
             #stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
@@ -523,7 +525,8 @@ def get_transform(seqlen):
             A.ISONoise(intensity=(.2, .5), p=.4),
         ]),
         A.OneOf([ # distractors
-            A.CoarseDropout(p=.05, max_holes=40, max_height=60, max_width=60, min_holes=10, min_height=5, min_width=5, fill_value=random_color(), mask_fill_value=None),
+            A.CoarseDropout(p=.1, max_holes=40, max_height=120, max_width=120, min_holes=10, min_height=10, min_width=10, fill_value=random_color(), mask_fill_value=None),
+            # A.CoarseDropout(p=.05, max_holes=40, max_height=60, max_width=60, min_holes=10, min_height=5, min_width=5, fill_value=random_color(), mask_fill_value=None),
             A.Spatter(p=.1, mean=spatter_mean, std=(0.25, 0.35), gauss_sigma=(.8, 1.6), intensity=(-.3, 0.3), cutout_threshold=spatter_cutout, mode=['rain', 'mud']),
             A.PixelDropout(p=.1, dropout_prob=random.uniform(.01, .05), per_channel=random.choice([0,1]), drop_value=random_color(), mask_drop_value=None),
         ]),
@@ -557,7 +560,7 @@ def aug_imgs(img, constant_seq_aug):
     else:
         # different aug for each img in seq
         for s in range(seqlen):
-            AUG_PROB = .8 # to speed up a bit.
+            AUG_PROB = .95 #1.0 # to speed up a bit.
             if random.random() < AUG_PROB:
                 img[s] = transform(image=img[s])['image']
 

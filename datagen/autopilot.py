@@ -14,7 +14,7 @@ class Autopilot():
         self.overall_frame_counter = 0 # bc incrementing before save. 1 here corresponds to frame 1, the first frame
 
         self.DRIVE_STYLE_CHANGE_IX = random.randint(300, 600)
-        self.DAGGER_FREQ = random.randint(400, 600) # NOTE min can't exceed dagger duration
+        self.DAGGER_FREQ = random.randint(500, 800) # NOTE min can't exceed dagger duration
         self.dagger_freq_offset = random.randint(0, 10_000)
 
         # doing these here so they don't change mid stopsign
@@ -33,7 +33,7 @@ class Autopilot():
             # Noise for the map
             num_passes = int(3 * 10**random.uniform(1, 2)) # more passes makes for longer periodocity. can go even lower here, eg to mimic bumpy gravel rd
             ROLL_MAX_DEG = 1.2
-            do_roll = random.random() < .2
+            do_roll = random.random() < .4
             roll_noise_mult = random.uniform(.001, np.radians(ROLL_MAX_DEG)) if do_roll else 0
             self.roll_noise = get_random_roll_noise(num_passes=num_passes) * roll_noise_mult
             episode_info.roll_noise_mult = roll_noise_mult
@@ -68,7 +68,7 @@ class Autopilot():
 
         self.is_rando_yielding = False
         self.rando_yield_counter = 0
-        self.RANDO_YIELD_FREQ = random.randint(600, 800) if not (episode_info.is_highway or random.random()<.4) else 10_000
+        self.RANDO_YIELD_FREQ = random.randint(600, 800) if not (episode_info.is_highway or random.random()<.4) else 100_000
         self.RANDO_YIELD_DURATION = random.randint(30, 120)
         self.rando_yield_offset = random.randint(0, 10_000)
 
@@ -165,7 +165,7 @@ class Autopilot():
         self.map_ys, self.map_xs, self.way_ids = add_noise_rds_to_map(self.map_ys, self.map_xs, self.way_ids, n_noise_rds=n_noise_rds)
 
         self.refresh_nav_map_freq = random.choice([3,4,5]) # alternatively, can use vehicle speed and heading to interpolate ala kalman TODO
-        self.small_map = None # doesn't update every frame
+        self.small_map = self.EMPTY_MAP # doesn't update every frame
 
         route_df = coarse_map_df[coarse_map_df.way_id.isin(self._route_way_ids)]
         # route_df['way_id'] = pd.Categorical(route_df['way_id'], categories=self._route_way_ids, ordered=True)
@@ -413,6 +413,16 @@ class Autopilot():
         self.negotiation_traj[:,:] = self.waypoints[negotiation_wps_ixs, :]
         self.m_per_wp = m_per_wp
 
+        # Navmap
+        # gps doesn't refresh as fast as do frames. 
+        if self.is_ego and self.overall_frame_counter%self.refresh_nav_map_freq==0:
+
+            self.current_x = self.current_pos[0] + self.maps_noise_x[self.overall_frame_counter]
+            self.current_y = self.current_pos[1] + self.maps_noise_y[self.overall_frame_counter] 
+            self.heading_for_map = self.heading_tracker.step(x=self.current_x, 
+                                                    y=self.current_y, 
+                                                    current_speed_mps=self.current_speed_mps) #+ self.maps_noise_heading[self.overall_frame_counter]                 
+
 
         self.overall_frame_counter += 1
 
@@ -421,6 +431,7 @@ class Autopilot():
     #if self.save_data and self.overall_frame_counter%FRAME_CAPTURE_N==0:
     def save_data(self):
         # print("Saving data", self.overall_frame_counter)
+        
         # rd maneuvers
         RD_MANEUVER_LOOKAHEAD = 60 # meters
         left_turn = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
@@ -428,45 +439,32 @@ class Autopilot():
 
         ego_in_intx = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(8/WP_SPACING)]) or \
                         any(self.is_right_turn[self.current_wp_ix:self.current_wp_ix+int(8/WP_SPACING)])
-        
+            
+        # Maps
         HAS_MAP_PROB = .5 if self.episode_info.just_go_straight else 1
         HAS_ROUTE_PROB = .5 if self.episode_info.just_go_straight else 1
         if self.overall_frame_counter < 10: HAS_MAP_PROB, HAS_ROUTE_PROB = 0, 0 # First few obs, no maps bc heading tracker janky and rds cutoff
-        # Navmap
-        # gps doesn't refresh as fast as do frames. 
-        if self.overall_frame_counter%self.refresh_nav_map_freq==0:
-            self.has_route = random.random() < HAS_ROUTE_PROB # keeping inside here to keep always synced w aux, bc gps hertz slower
-            self.has_map = random.random() < HAS_MAP_PROB
-            current_x = self.current_pos[0] + self.maps_noise_x[self.overall_frame_counter]
-            current_y = self.current_pos[1] + self.maps_noise_y[self.overall_frame_counter] 
-            close_buffer = CLOSE_RADIUS
-            heading_for_map = self.heading_tracker.step(x=current_x, 
-                                                    y=current_y, 
-                                                    current_speed_mps=self.current_speed_mps) #+ self.maps_noise_heading[self.overall_frame_counter]                 
-
-            self.small_map = get_map(self.map_xs, 
-                                    self.map_ys, 
-                                    self.way_ids, 
-                                    self.route_xs,
-                                    self.route_ys,
-                                    self.route_way_ids,
-                                    current_x, 
-                                    current_y,
-                                    heading_for_map,
-                                    close_buffer,
-                                    draw_route=self.has_route) if self.has_map else self.EMPTY_MAP
         
-        if self.small_map is None:  # will be None for first few frames, until refreshed for first time
-            self.small_map = self.EMPTY_MAP
-            self.has_map = False
-            self.has_route = False
-            
-        # Maps
+        self.has_map = random.random() < HAS_MAP_PROB
+        self.has_route = self.has_map and random.random()<HAS_ROUTE_PROB # keeping inside here to keep always synced w aux, bc gps hertz slower
+    
+        self.small_map = get_map(self.map_xs, 
+                                self.map_ys, 
+                                self.way_ids, 
+                                self.route_xs,
+                                self.route_ys,
+                                self.route_way_ids,
+                                self.current_x, 
+                                self.current_y,
+                                self.heading_for_map,
+                                CLOSE_RADIUS,
+                                draw_route=self.has_route) if self.has_map else self.EMPTY_MAP
+
         # will get repeated ~4 times in a row bc gps less hz
         c = 0
         self.maps_container[c,:,:,:] = self.small_map 
         self.aux[c, "has_map"] = int(self.has_map)
-        self.aux[c, "has_route"] = int(self.has_route and self.has_map)
+        self.aux[c, "has_route"] = int(self.has_route)
         self.aux[c, "heading"] = self.heading_tracker.heading
         # self.aux[c, "pos_x"] = self.current_pos[0] # Doesn't have noise, but should. Refine this if important. Shouldn't update every step.
         # self.aux[c, "pos_y"] = self.current_pos[1]
@@ -491,9 +489,9 @@ class Autopilot():
         self.aux[c, "speed"] = self.current_speed_mps
         self.aux[c, "tire_angle"] = angle_to_wp_d #self.current_tire_angle
         self.aux[c, "tire_angle_ap"] = self.current_tire_angle # actual tire angle used for ap steering
-        self.aux[c, "has_stop"] = self.stop_dist < STOP_DIST_MAX and (abs(stop_angle) < .65) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
+        self.aux[c, "has_stop"] = self.stop_dist < STOP_DIST_MAX and (abs(stop_angle) < .6) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
         self.aux[c, "stop_dist"] = self.stop_dist
-        self.aux[c, "has_lead"] = (self.lead_dist < LEAD_DIST_MAX) and (abs(lead_angle) < .65) # .65 is directly out of frame #smooth_dist_clf(self.lead_dist, 80, 100)
+        self.aux[c, "has_lead"] = (self.lead_dist < LEAD_DIST_MAX) and (abs(lead_angle) < .6) # .6 is directly out of frame #smooth_dist_clf(self.lead_dist, 80, 100)
         self.aux[c, "lead_dist"] = self.lead_dist
         self.aux[c, "lead_speed"] = self.lead_relative_speed
         self.aux[c, "should_yield"] = self.should_yield
@@ -534,9 +532,9 @@ class Autopilot():
     def reset_drive_style(self):
         rr = random.random() 
         if self.episode_info.is_highway:
-            self.speed_limit = random.uniform(16, 19) if rr<.1 else random.uniform(19, 25) if rr < .7 else random.uniform(25, 27)
+            self.speed_limit = random.uniform(16, 19) if rr<.1 else random.uniform(19, 27) if rr < .7 else random.uniform(27, 30)
         else:
-            self.speed_limit = random.uniform(8, 12) if rr < .1 else random.uniform(12, 18) if rr < .2 else random.uniform(18, 26) # mps
+            self.speed_limit = random.uniform(8, 12) if rr < .1 else random.uniform(12, 18) if rr < .2 else random.uniform(18, 28) # mps
 
         if not self.is_ego:
             self.speed_limit *= .8 # hack to make npcs go a bit slower than ego, to get more time w npcs as lead car

@@ -42,8 +42,8 @@ class Rollout():
                 _img, _aux, _wps, (to_pred_mask, is_first_in_seq) = batch
                 if is_first_in_seq: m.reset_hidden(run.bs)
 
-                # if c%7==0: m.reset_hidden(run.bs) # w bptt 32 this is about every 10s #TODO UNDO
-                # c+=1
+                if c%7==0: m.reset_hidden(run.bs) # w bptt 32 this is about every 10s #TODO UNDO
+                c+=1
 
                 if self.trt: 
                     _wps_p, _aux_targets_p, _obsnet_out = m(_img.float(), _aux.float())

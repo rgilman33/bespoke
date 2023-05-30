@@ -81,7 +81,7 @@ def make_map(timer):
     is_single_rd = True #random.random() < 1 
     get_node("is_single_rd", get_variables_nodes).outputs["Value"].default_value = 1 if is_single_rd else 0
 
-    HAS_LANELINES_PROB = .7 # .8
+    HAS_LANELINES_PROB = .8 #.7 # .8
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
     is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, no bumps, more often banked, no smaller-scale XY noise
@@ -91,7 +91,7 @@ def make_map(timer):
 
     left_shift = 0
     if rd_is_lined:
-        lane_width = random.uniform(3.1, 4.1) if is_highway else random.uniform(2.8, 3.9)
+        lane_width = random.uniform(3.0, 4.1) if is_highway else random.uniform(2.3, 3.6)
     else: # dirt gravel
         if random.random()<.85:
             lane_width = 4.
@@ -105,7 +105,10 @@ def make_map(timer):
 
     lane_width_actual = lane_width + left_shift
 
-    has_stops = 1 if rd_is_lined or lane_width_actual>3. else 0 # wide gravel also can have stops
+    has_stops = True
+    if (is_highway and random.random()<.5) or lane_width_actual<2.8:
+        has_stops = False
+    #has_stops = 1 if rd_is_lined or lane_width_actual>3. else 0 # wide gravel also can have stops
     get_node("has_stops", get_variables_nodes).outputs["Value"].default_value = has_stops
     
     is_wide_laned = lane_width>3.4 or wide_shoulder_add>0
@@ -366,7 +369,7 @@ def randomize_appearance(timer, episode_info, run_counter):
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes)
 
     if episode_info.rd_is_lined: # can consider going back down to min .2, just that sometimes too hard to see when combined w noise
-        white_lines_opacity.outputs["Value"].default_value = .25 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
+        white_lines_opacity.outputs["Value"].default_value = .2 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
         yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.5, 1.) if episode_info.is_only_yellow_lined else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
         # get_node("white_line_gate", dirt_gravel_nodes).mute = False
         # get_node("yellow_line_gate", dirt_gravel_nodes).mute = False
@@ -383,7 +386,14 @@ def randomize_appearance(timer, episode_info, run_counter):
     yellow_line_noise_mult_large_max = 4 if episode_info.is_only_yellow_lined else 20
     get_node("yellow_line_noise_mult_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 40)
     get_node("yellow_line_noise_mult_large", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .2 else random.uniform(1, yellow_line_noise_mult_large_max)
-    #TODO why don't have same mult setup for white lines?
+    get_node("white_line_noise_mult_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 40)
+    get_node("white_line_noise_mult_large", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .2 else random.uniform(1, 20)
+    
+    get_node("white_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.02, .09)
+    get_node("white_line_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, 10)
+    get_node("yellow_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.02, .09)
+    get_node("yellow_line_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, 10)
+    
 
     get_node("yellow_line_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.2, .5)
     get_node("yellow_line_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .7)
@@ -491,8 +501,8 @@ def randomize_appearance(timer, episode_info, run_counter):
     shadow_v = 0.0 if random.random() < .6 else 1.0 # value 0 blacks out colors anyways
     get_node("shadow_v", dirt_gravel_nodes).outputs["Value"].default_value = shadow_v
 
-    NO_SHADOWS_PROB = .6 #.3 if rd_is_lined else .7
-    has_shadows = random.random()<NO_SHADOWS_PROB
+    HAS_SHADOWS_PROB = .8 #.3 if rd_is_lined else .7
+    has_shadows = random.random()<HAS_SHADOWS_PROB
     if has_shadows:
         #get_node("shadows_gate", dirt_gravel_nodes).mute = False #NOTE for perf. Can test effects later
 
