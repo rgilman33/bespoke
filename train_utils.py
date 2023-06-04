@@ -238,12 +238,12 @@ class Trainer():
                 "wp_zs":cm(zs_loss), 
             }
 
-            # te. When in doubt, stay close to prev preds
-            _, bptt, _ = wps_p.shape
-            if bptt > 1:
-                te_loss = mse_loss_no_reduce(wps_p[:, :-1, :].detach(), wps_p[:, 1:, :], weights=weights[:, 1:, :]) #TODO this should also be scaled larger
-                te_loss *= 100
-                losses.update({"te": te_loss.mean()})
+            # # te. When in doubt, stay close to prev preds
+            # _, bptt, _ = wps_p.shape
+            # if bptt > 1:
+            #     te_loss = mse_loss_no_reduce(wps_p[:, :-1, :].detach(), wps_p[:, 1:, :], weights=weights[:, 1:, :]) 
+            #     te_loss *= 100
+            #     losses.update({"te": te_loss.mean()})
 
             #############
             # aux losses

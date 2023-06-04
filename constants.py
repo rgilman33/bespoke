@@ -112,13 +112,13 @@ device = 'cuda'
 
 FPS = 20 # WARNING this is hardcoded throughout codebase. Don't rely on this. TODO consolidate all the places we've hardcoded this
 
-# FRAMESKIP = True
-BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank_frameskip" # if FRAMESKIP else "/media/ssd2/blender_membank"
+FRAMESKIP = True
+BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank_frameskip" if FRAMESKIP else "/media/ssd2/blender_membank"
 
 BPTT = 1 #4 #8 #9
-FRAME_CAPTURE_N = 10 #if FRAMESKIP else 1
+FRAME_CAPTURE_N = 10 if FRAMESKIP else 1
 EPISODE_LEN = 1600 // FRAME_CAPTURE_N # measured in frames
-RUNS_TO_STORE_PER_PROCESS = 400 #if FRAMESKIP else 64
+RUNS_TO_STORE_PER_PROCESS = 400 if FRAMESKIP else 64
 N_RUNNERS = 12
 
 DATA_CONSUMPTION_RATIO_LIMIT = 1.5

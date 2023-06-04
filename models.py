@@ -61,6 +61,8 @@ class EffNet(nn.Module):
         self.acts = {}
         self.viz_ix = 5
 
+        self.carousel = False
+
     def copy_cnn_params_to_rnn(self):
         for p1, p2 in zip(self.cnn_finisher.parameters(), self.rnn_finisher.parameters()):
             p2.data = p1.data.clone()
@@ -82,6 +84,15 @@ class EffNet(nn.Module):
         # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
         self.h = self.hidden_init.expand(1, bs, self.inner_dim).contiguous()
         self.c = self.cell_init.expand(1, bs, self.inner_dim).contiguous()
+
+    def reset_hidden_carousel(self, bs): #TODO UNDO, only used for inference, bptt always one, bs always one
+        # self.h = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        self.h_carousel = [self.hidden_init.expand(1, bs, self.inner_dim).contiguous().clone() for _ in range(10)]
+        self.c_carousel = [self.cell_init.expand(1, bs, self.inner_dim).contiguous().clone() for _ in range(10)]
+        self.carousel = True
+        self.carousel_ix = 0
+        print("resetting hidden carousel")
 
     def get_hook(self, name):
         EPS = .99
@@ -123,7 +134,20 @@ class EffNet(nn.Module):
             x = self.backbone.conv_stem(x)
             x = self.backbone.bn1(x)
             x = self.backbone.act1(x)
-            x = checkpoint_sequential(self.backbone.blocks, 7, x)
+
+            # checkpointing each block separately has same memory requirements as checkpoint_sequential (24gb)
+            # For each module 24 gb to 11gb. We could go even lower by checkpointing even finer, though I'm unable to get it, don't understand the implementation
+            # doing each module in the list we get memory blowing up
+
+            # x = checkpoint_sequential(self.backbone.blocks, 7, x)
+
+            for block in self.backbone.blocks: # blocks is a sequential module # TODO check this, need to see we get good perf still. Burned here in the past. Also check how much slower it is.
+                for module in block: # each block is also a sequential module
+                    x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False) # False is recommended
+
+            # for module in get_children(self.backbone.blocks): # this runs out of memory also. Why?
+            #     x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False)
+
             x = self.backbone.conv_head(x)
             x = self.backbone.bn2(x)
             x = self.backbone.act2(x)
@@ -142,8 +166,25 @@ class EffNet(nn.Module):
         z = self.fcs1_rnn(z)
 
         #if self.training and not self.is_for_viz: x = dropout_no_rescale(x, p=.2) 
-        x, h_c = self.rnn(z, (self.h, self.c))
-        self.h, self.c = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
+        if self.carousel: #TODO UNDO only used for inference. Awkward. Bptt always one.
+            cc = self.carousel_ix % 10
+
+            test_ix = 0
+            if cc==test_ix: 
+                print(self.carousel_ix)
+                print(self.h_carousel[test_ix][0,0,:3])
+
+            x, h_c = self.rnn(z, (self.h_carousel[cc], self.c_carousel[cc]))
+            self.h_carousel[cc], self.c_carousel[cc] = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
+
+            if cc==test_ix: 
+                print(self.h_carousel[test_ix][0,0,:3])
+                print("\n")
+
+            self.carousel_ix += 1
+        else:
+            x, h_c = self.rnn(z, (self.h, self.c))
+            self.h, self.c = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
 
         wps_preds, aux_preds, obsnet_out = self.rnn_finisher(x)
         return wps_preds, aux_preds, obsnet_out

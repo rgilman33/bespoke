@@ -231,7 +231,7 @@ class ZLoader():
         self.bptt = bptt
         self.seqlen = seqlen
         self.constant_seq_aug = constant_seq_aug
-        normal_loader_bptt = 7 #3 # 7
+        normal_loader_bptt = 4 #7
         self.normal_loader = TrnLoader(bs=bs, bptt=normal_loader_bptt, seqlen=seqlen, constant_seq_aug=constant_seq_aug, n_workers=n_workers)
         self.queued_batches = []
         self.batches_delivered = 0
