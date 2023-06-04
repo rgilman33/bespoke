@@ -19,31 +19,6 @@ class Finisher(nn.Module):
         aux_preds = self.aux_targets_head(x)
         return wps_preds, aux_preds, obsnet_out
 
-#_mask = (torch.triu(torch.ones(SEQ_LEN, SEQ_LEN)) != 1).transpose(0, 1).to("cuda")
-
-class TransformerBlock(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward):
-        super(TransformerBlock, self).__init__()
-        self.attention = nn.MultiheadAttention(d_model, nhead, batch_first=True)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.feedforward = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            nn.ReLU(),
-            nn.Linear(dim_feedforward, d_model)
-        )
-        self.norm2 = nn.LayerNorm(d_model)
-
-    def forward(self, x, mask):
-        attn_output, _ = self.attention(x, x, x, need_weights=False, attn_mask=mask) #, TODO is_causal=True)  # Self-Attention
-        x = x + attn_output  # Add
-        x = self.norm1(x)  # Normalize
-
-        ff_output = self.feedforward(x)  # Feedforward
-        x = x + ff_output  # Add
-        x = self.norm2(x)  # Normalize
-
-        return x
-
 class EffNet(nn.Module):
     def __init__(self):
         super(EffNet, self).__init__()
@@ -56,21 +31,25 @@ class EffNet(nn.Module):
         n = self.backbone_out + len(AUX_MODEL_PROPS)
         self.inner_dim = 1024
 
-        self.fcs1_transformer = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
+        self.fcs1_rnn = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
         self.fcs1_cnn = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
         
         # finishers are same structure
         self.cnn_finisher = Finisher(self.inner_dim)
-        self.transformer_finisher = Finisher(self.inner_dim)
+        self.rnn_finisher = Finisher(self.inner_dim)
 
-        # transformer
-        emb_dim = self.inner_dim
-        n_head = 8
-        n_blocks = 6
-        dim_ff = emb_dim*2
-        self.transformer = nn.Sequential(*[TransformerBlock(emb_dim, n_head, dim_ff) for _ in range(n_blocks)])
+        # rnn
+        self.rnn = nn.LSTM(self.inner_dim, self.inner_dim, 1, batch_first=True)
+        self.h, self.c = None, None
 
-        self.use_transformer = True
+        # Create parameters for learnable hidden state and cell state
+        self.hidden_init = nn.Parameter(torch.zeros((1,1,self.inner_dim)), requires_grad=True)
+        self.cell_init = nn.Parameter(torch.zeros((1,1,self.inner_dim)), requires_grad=True)
+        # initialize hidden and cell states with xavier uniform
+        nn.init.xavier_uniform_(self.hidden_init)
+        nn.init.xavier_uniform_(self.cell_init)
+
+        self.use_rnn = True
 
         self.AUX_MODEL_IXS = torch.LongTensor(AUX_MODEL_IXS); self.AUX_CALIB_IXS = torch.LongTensor(AUX_CALIB_IXS)
     
@@ -82,6 +61,13 @@ class EffNet(nn.Module):
         self.acts = {}
         self.viz_ix = 5
 
+        self.carousel = False
+
+    def copy_cnn_params_to_rnn(self):
+        for p1, p2 in zip(self.cnn_finisher.parameters(), self.rnn_finisher.parameters()):
+            p2.data = p1.data.clone()
+        for p1, p2 in zip(self.fcs1_cnn.parameters(), self.fcs1_rnn.parameters()):
+            p2.data = p1.data.clone()
 
     def set_for_viz(self):
         # has to be called AFTER load state dict
@@ -92,6 +78,21 @@ class EffNet(nn.Module):
         import torch_tensorrt
         self.trt_backbone = torch.jit.load(TRT_MODEL_PATH).to(device)
         self.backbone_is_trt = True
+
+    def reset_hidden(self, bs):
+        # self.h = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        self.h = self.hidden_init.expand(1, bs, self.inner_dim).contiguous()
+        self.c = self.cell_init.expand(1, bs, self.inner_dim).contiguous()
+
+    def reset_hidden_carousel(self, bs): #TODO UNDO, only used for inference, bptt always one, bs always one
+        # self.h = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        self.h_carousel = [self.hidden_init.expand(1, bs, self.inner_dim).contiguous().clone() for _ in range(10)]
+        self.c_carousel = [self.cell_init.expand(1, bs, self.inner_dim).contiguous().clone() for _ in range(10)]
+        self.carousel = True
+        self.carousel_ix = 0
+        print("resetting hidden carousel")
 
     def get_hook(self, name):
         EPS = .99
@@ -161,10 +162,31 @@ class EffNet(nn.Module):
 
         return x
 
-    def transformer_head(self, z):
-        z = self.fcs1_transformer(z)
+    def rnn_head(self, z):
+        z = self.fcs1_rnn(z)
 
-        wps_preds, aux_preds, obsnet_out = self.transformer_finisher(z)
+        #if self.training and not self.is_for_viz: x = dropout_no_rescale(x, p=.2) 
+        if self.carousel: #TODO UNDO only used for inference. Awkward. Bptt always one.
+            cc = self.carousel_ix % 10
+
+            test_ix = 0
+            if cc==test_ix: 
+                print(self.carousel_ix)
+                print(self.h_carousel[test_ix][0,0,:3])
+
+            x, h_c = self.rnn(z, (self.h_carousel[cc], self.c_carousel[cc]))
+            self.h_carousel[cc], self.c_carousel[cc] = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
+
+            if cc==test_ix: 
+                print(self.h_carousel[test_ix][0,0,:3])
+                print("\n")
+
+            self.carousel_ix += 1
+        else:
+            x, h_c = self.rnn(z, (self.h, self.c))
+            self.h, self.c = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
+
+        wps_preds, aux_preds, obsnet_out = self.rnn_finisher(x)
         return wps_preds, aux_preds, obsnet_out
 
     def cnn_head(self, z):
@@ -177,12 +199,12 @@ class EffNet(nn.Module):
         x = self.cnn_features(x, aux)
         return self.cnn_head(x)
 
-    def forward_transformer(self, x, aux):
+    def forward_rnn(self, x, aux):
         x = self.cnn_features(x, aux)
-        return self.transformer_head(x)
+        return self.rnn_head(x)
 
     def forward(self, x, aux):
-        return self.forward_transformer(x, aux) if self.use_transformer else self.forward_cnn(x, aux)
+        return self.forward_rnn(x, aux) if self.use_rnn else self.forward_cnn(x, aux)
 
 
 def get_children(model: torch.nn.Module):
