@@ -19,7 +19,88 @@ class Finisher(nn.Module):
         aux_preds = self.aux_targets_head(x)
         return wps_preds, aux_preds, obsnet_out
 
+class TransformCombine(nn.Module):
 
+    def __init__(self, n_emb, seq_len):
+        """
+        Combine multiple obs in a seq into a single vector w a transform + add, transform based on pos.
+        Take a simple example with two seq items: the present obs is not
+        changed at all, the prev obs is transformed and added, the goal being to nestle, project it in in a way
+        that doesn't interfere w original obs.
+        To be used in place of mha.
+        """
+        super(TransformCombine, self).__init__()
+        self.identity = torch.eye(n_emb, requires_grad=False)
+        self.transform = nn.Parameter(torch.FloatTensor(n_emb, n_emb))
+        nn.init.xavier_uniform_(self.transform)
+        
+        self.alphas_matrix = self._create_alphas_matrix(seq_len)
+        self.seq_len == seq_len
+
+        self.final_proj = nn.Linear(n_emb, n_emb)
+        
+    def _create_alphas_matrix(seq_len):
+        base = torch.linspace(1,0, steps=seq_len)
+        alphas_matrix = torch.zeros(seq_len, seq_len)
+        for i in range(seq_len):
+            alphas_matrix[i:, i] = base[:seq_len - i]
+        return alphas_matrix
+    
+    def forward(self, x):
+        """ unsqueeze-expand lets you prep your inputs to the right shape, repeating where necessary,
+        then einsum lets you do a batch mm w as many batch dims as you want. Those are the keys
+        for how we arranged this. It's a gradual prepping for the einsum, which is where the mm is actually done"""
+        
+        bs, seq_len, n_emb = x.shape
+        assert seq_len == self.seq_len
+        
+        # expand (n_emb, n_emb) -> (seq_len, seq_len, n_emb, n_emb)
+        identity_exp = self.identity.unsqueeze(0).unsqueeze(0).expand(seq_len,seq_len, -1,-1)
+        transform_exp = self.transform.unsqueeze(0).unsqueeze(0).expand(seq_len,seq_len, -1,-1)
+        
+        # Mix weights, interpolating btwn identity along the diagonal, full transform in bottom left
+        mixed_weights = self.alphas_matrix[:,:, None,None]*identity_exp + (1-self.alphas_matrix[:,:,None,None])*transform_exp
+        # seq, seq, emb, emb
+        # This is a seq,seq matrix of transformations. 
+        # Each element in the seq x seq grid is a transformation matrix,
+        # interpolating btwn identity and full learned transform
+        
+        # expand for the batch dimension
+        mixed_weights = mixed_weights.unsqueeze(0).expand(bs, -1,-1,-1,-1)
+        
+        # expand input, repeat seq_len times to align w our seq x seq grid. Pad in prep for matmul
+        x_exp = x.unsqueeze(2).expand(-1, -1, seq_len, -1).unsqueeze(3)
+        # bs, seq, seq, 1, emb
+        
+        # matmul with three batch dimensions. Through the expanding, we've lined it up to allow this.
+        r = torch.einsum('bsznm,bszmp->bsznp', x_exp, mixed_weights)
+        # bs, seq, seq, 1, emb
+        
+        # collapse remnant of matmul
+        r = r.squeeze(3)
+        # bs, seq, seq, emb
+        
+        # attn mask. Apportions all items in seq equally
+        mask = torch.triu(torch.ones(seq_len,seq_len), diagonal=1).bool()
+        attn = torch.ones(seq_len,seq_len).masked_fill(mask, -np.inf)
+        attn = nn.Softmax(dim=-1)(attn)
+        attn = attn.unsqueeze(-1).unsqueeze(0)
+        # 1, seq, seq, 1
+        
+        # multiply by attn mask to zero out noncausal and scale in prep for sum
+        rr = (attn * r)
+        # bs, seq, seq, emb
+        
+        # Sum along the second seq dim. The final result.
+        # For any given batch item, the first obs in the seq will remain unchanged through this entire
+        # operation, as it has only passed through an identity, then summed w zeros
+        rrr = rr.sum(2)
+
+        # final proj
+        rrr = self.final_proj(rrr)
+        
+        return rrr
+    
 class TransformerBlock(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward):
         super(TransformerBlock, self).__init__()
@@ -90,7 +171,8 @@ class EffNet(nn.Module):
         n_head = 8
         n_blocks = 1
         dim_ff = emb_dim*2
-        self.transformer = nn.Sequential(*[TransformerBlock(emb_dim, n_head, dim_ff) for _ in range(n_blocks)])
+        seq_len = 8
+        self.transformer = TransformCombine(emb_dim, seq_len) #nn.Sequential(*[TransformerBlock(emb_dim, n_head, dim_ff) for _ in range(n_blocks)])
         self.pe = PositionalEncoding(emb_dim)
         self.use_transformer = True
 
@@ -191,7 +273,7 @@ class EffNet(nn.Module):
 
     def transformer_head(self, z):
         z = self.fcs1_transformer(z) 
-        z = self.pe(z)
+        # z = self.pe(z)
         z = self.transformer(z)
         wps_preds, aux_preds, obsnet_out = self.transformer_finisher(z)
         return wps_preds, aux_preds, obsnet_out
