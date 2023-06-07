@@ -19,31 +19,53 @@ class Finisher(nn.Module):
         aux_preds = self.aux_targets_head(x)
         return wps_preds, aux_preds, obsnet_out
 
-#_mask = (torch.triu(torch.ones(SEQ_LEN, SEQ_LEN)) != 1).transpose(0, 1).to("cuda")
 
 class TransformerBlock(nn.Module):
     def __init__(self, d_model, nhead, dim_feedforward):
         super(TransformerBlock, self).__init__()
         self.attention = nn.MultiheadAttention(d_model, nhead, batch_first=True)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.feedforward = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            nn.ReLU(),
-            nn.Linear(dim_feedforward, d_model)
-        )
-        self.norm2 = nn.LayerNorm(d_model)
+        # self.norm1 = nn.LayerNorm(d_model)
+        # self.feedforward = nn.Sequential(
+        #     nn.Linear(d_model, dim_feedforward),
+        #     nn.ReLU(),
+        #     nn.Linear(dim_feedforward, d_model)
+        # )
+        # self.norm2 = nn.LayerNorm(d_model)
 
-    def forward(self, x, mask):
+    def forward(self, x):
+        bs, seq_len, _ = x.shape
+        # print("transf input shape", x.shape)
+        # mask = (torch.triu(torch.ones(seq_len, seq_len)) != 1).transpose(0, 1).to("cuda")
+        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to("cuda")
         attn_output, _ = self.attention(x, x, x, need_weights=False, attn_mask=mask) #, TODO is_causal=True)  # Self-Attention
+        # print("attn_output shape", attn_output.shape)
         x = x + attn_output  # Add
-        x = self.norm1(x)  # Normalize
+        #x = self.norm1(x)  # Normalize
 
-        ff_output = self.feedforward(x)  # Feedforward
-        x = x + ff_output  # Add
-        x = self.norm2(x)  # Normalize
+        # ff_output = self.feedforward(x)  # Feedforward
+        # print("ff_output shape", ff_output.shape)
+        # x = x + ff_output  # Add
+        #x = self.norm2(x)  # Normalize
 
         return x
 
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        x = x + self.pe[:, :x.size(1), :]
+        return x
+    
 class EffNet(nn.Module):
     def __init__(self):
         super(EffNet, self).__init__()
@@ -66,10 +88,10 @@ class EffNet(nn.Module):
         # transformer
         emb_dim = self.inner_dim
         n_head = 8
-        n_blocks = 6
+        n_blocks = 1
         dim_ff = emb_dim*2
         self.transformer = nn.Sequential(*[TransformerBlock(emb_dim, n_head, dim_ff) for _ in range(n_blocks)])
-
+        self.pe = PositionalEncoding(emb_dim)
         self.use_transformer = True
 
         self.AUX_MODEL_IXS = torch.LongTensor(AUX_MODEL_IXS); self.AUX_CALIB_IXS = torch.LongTensor(AUX_CALIB_IXS)
@@ -92,6 +114,12 @@ class EffNet(nn.Module):
         import torch_tensorrt
         self.trt_backbone = torch.jit.load(TRT_MODEL_PATH).to(device)
         self.backbone_is_trt = True
+
+    def copy_cnn_fcs_to_transformer_fcs(self):
+        for p1, p2 in zip(self.cnn_finisher.parameters(), self.transformer_finisher.parameters()):
+            p2.data = p1.data.clone()
+        for p1, p2 in zip(self.fcs1_cnn.parameters(), self.fcs1_transformer.parameters()):
+            p2.data = p1.data.clone()
 
     def get_hook(self, name):
         EPS = .99
@@ -162,8 +190,9 @@ class EffNet(nn.Module):
         return x
 
     def transformer_head(self, z):
-        z = self.fcs1_transformer(z)
-
+        z = self.fcs1_transformer(z) 
+        z = self.pe(z)
+        z = self.transformer(z)
         wps_preds, aux_preds, obsnet_out = self.transformer_finisher(z)
         return wps_preds, aux_preds, obsnet_out
 
