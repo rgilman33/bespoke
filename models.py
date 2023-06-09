@@ -19,134 +19,6 @@ class Finisher(nn.Module):
         aux_preds = self.aux_targets_head(x)
         return wps_preds, aux_preds, obsnet_out
 
-class TransformCombine(nn.Module):
-
-    def __init__(self, n_emb, seq_len):
-        """
-        Combine multiple obs in a seq into a single vector w a transform + add, transform based on pos.
-        Take a simple example with two seq items: the present obs is not
-        changed at all, the prev obs is transformed and added, the goal being to nestle, project it in in a way
-        that doesn't interfere w original obs.
-        To be used in place of mha.
-        """
-        super(TransformCombine, self).__init__()
-        self.identity = torch.eye(n_emb, requires_grad=False)
-        self.transform = nn.Parameter(torch.FloatTensor(n_emb, n_emb))
-        nn.init.xavier_uniform_(self.transform)
-        
-        self.alphas_matrix = self._create_alphas_matrix(seq_len)
-        self.seq_len == seq_len
-
-        self.final_proj = nn.Linear(n_emb, n_emb)
-        
-    def _create_alphas_matrix(seq_len):
-        base = torch.linspace(1,0, steps=seq_len)
-        alphas_matrix = torch.zeros(seq_len, seq_len)
-        for i in range(seq_len):
-            alphas_matrix[i:, i] = base[:seq_len - i]
-        return alphas_matrix
-    
-    def forward(self, x):
-        """ unsqueeze-expand lets you prep your inputs to the right shape, repeating where necessary,
-        then einsum lets you do a batch mm w as many batch dims as you want. Those are the keys
-        for how we arranged this. It's a gradual prepping for the einsum, which is where the mm is actually done"""
-        
-        bs, seq_len, n_emb = x.shape
-        assert seq_len == self.seq_len
-        
-        # expand (n_emb, n_emb) -> (seq_len, seq_len, n_emb, n_emb)
-        identity_exp = self.identity.unsqueeze(0).unsqueeze(0).expand(seq_len,seq_len, -1,-1)
-        transform_exp = self.transform.unsqueeze(0).unsqueeze(0).expand(seq_len,seq_len, -1,-1)
-        
-        # Mix weights, interpolating btwn identity along the diagonal, full transform in bottom left
-        mixed_weights = self.alphas_matrix[:,:, None,None]*identity_exp + (1-self.alphas_matrix[:,:,None,None])*transform_exp
-        # seq, seq, emb, emb
-        # This is a seq,seq matrix of transformations. 
-        # Each element in the seq x seq grid is a transformation matrix,
-        # interpolating btwn identity and full learned transform
-        
-        # expand for the batch dimension
-        mixed_weights = mixed_weights.unsqueeze(0).expand(bs, -1,-1,-1,-1)
-        
-        # expand input, repeat seq_len times to align w our seq x seq grid. Pad in prep for matmul
-        x_exp = x.unsqueeze(2).expand(-1, -1, seq_len, -1).unsqueeze(3)
-        # bs, seq, seq, 1, emb
-        
-        # matmul with three batch dimensions. Through the expanding, we've lined it up to allow this.
-        r = torch.einsum('bsznm,bszmp->bsznp', x_exp, mixed_weights)
-        # bs, seq, seq, 1, emb
-        
-        # collapse remnant of matmul
-        r = r.squeeze(3)
-        # bs, seq, seq, emb
-        
-        # attn mask. Apportions all items in seq equally
-        mask = torch.triu(torch.ones(seq_len,seq_len), diagonal=1).bool()
-        attn = torch.ones(seq_len,seq_len).masked_fill(mask, -np.inf)
-        attn = nn.Softmax(dim=-1)(attn)
-        attn = attn.unsqueeze(-1).unsqueeze(0)
-        # 1, seq, seq, 1
-        
-        # multiply by attn mask to zero out noncausal and scale in prep for sum
-        rr = (attn * r)
-        # bs, seq, seq, emb
-        
-        # Sum along the second seq dim. The final result.
-        # For any given batch item, the first obs in the seq will remain unchanged through this entire
-        # operation, as it has only passed through an identity, then summed w zeros
-        rrr = rr.sum(2)
-
-        # final proj
-        rrr = self.final_proj(rrr)
-        
-        return rrr
-    
-class TransformerBlock(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward):
-        super(TransformerBlock, self).__init__()
-        self.attention = nn.MultiheadAttention(d_model, nhead, batch_first=True)
-        # self.norm1 = nn.LayerNorm(d_model)
-        # self.feedforward = nn.Sequential(
-        #     nn.Linear(d_model, dim_feedforward),
-        #     nn.ReLU(),
-        #     nn.Linear(dim_feedforward, d_model)
-        # )
-        # self.norm2 = nn.LayerNorm(d_model)
-
-    def forward(self, x):
-        bs, seq_len, _ = x.shape
-        # print("transf input shape", x.shape)
-        # mask = (torch.triu(torch.ones(seq_len, seq_len)) != 1).transpose(0, 1).to("cuda")
-        mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to("cuda")
-        attn_output, _ = self.attention(x, x, x, need_weights=False, attn_mask=mask) #, TODO is_causal=True)  # Self-Attention
-        # print("attn_output shape", attn_output.shape)
-        x = x + attn_output  # Add
-        #x = self.norm1(x)  # Normalize
-
-        # ff_output = self.feedforward(x)  # Feedforward
-        # print("ff_output shape", ff_output.shape)
-        # x = x + ff_output  # Add
-        #x = self.norm2(x)  # Normalize
-
-        return x
-
-
-class PositionalEncoding(nn.Module):
-    def __init__(self, d_model, max_len=5000):
-        super(PositionalEncoding, self).__init__()
-        
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * -(math.log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-        pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
-
-    def forward(self, x):
-        x = x + self.pe[:, :x.size(1), :]
-        return x
-    
 class EffNet(nn.Module):
     def __init__(self):
         super(EffNet, self).__init__()
@@ -159,22 +31,25 @@ class EffNet(nn.Module):
         n = self.backbone_out + len(AUX_MODEL_PROPS)
         self.inner_dim = 1024
 
-        self.fcs1_transformer = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
+        self.fcs1_rnn = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
         self.fcs1_cnn = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
         
         # finishers are same structure
         self.cnn_finisher = Finisher(self.inner_dim)
-        self.transformer_finisher = Finisher(self.inner_dim)
+        self.rnn_finisher = Finisher(self.inner_dim)
 
-        # transformer
-        emb_dim = self.inner_dim
-        n_head = 8
-        n_blocks = 1
-        dim_ff = emb_dim*2
-        seq_len = 8
-        self.transformer = TransformCombine(emb_dim, seq_len) #nn.Sequential(*[TransformerBlock(emb_dim, n_head, dim_ff) for _ in range(n_blocks)])
-        self.pe = PositionalEncoding(emb_dim)
-        self.use_transformer = True
+        # rnn
+        self.rnn = nn.LSTM(self.inner_dim, self.inner_dim, 1, batch_first=True)
+        self.h, self.c = None, None
+
+        # Create parameters for learnable hidden state and cell state
+        self.hidden_init = nn.Parameter(torch.zeros((1,1,self.inner_dim)), requires_grad=True)
+        self.cell_init = nn.Parameter(torch.zeros((1,1,self.inner_dim)), requires_grad=True)
+        # initialize hidden and cell states with xavier uniform
+        nn.init.xavier_uniform_(self.hidden_init)
+        nn.init.xavier_uniform_(self.cell_init)
+
+        self.use_rnn = True
 
         self.AUX_MODEL_IXS = torch.LongTensor(AUX_MODEL_IXS); self.AUX_CALIB_IXS = torch.LongTensor(AUX_CALIB_IXS)
     
@@ -186,6 +61,13 @@ class EffNet(nn.Module):
         self.acts = {}
         self.viz_ix = 5
 
+        self.carousel = False
+
+    def copy_cnn_params_to_rnn(self):
+        for p1, p2 in zip(self.cnn_finisher.parameters(), self.rnn_finisher.parameters()):
+            p2.data = p1.data.clone()
+        for p1, p2 in zip(self.fcs1_cnn.parameters(), self.fcs1_rnn.parameters()):
+            p2.data = p1.data.clone()
 
     def set_for_viz(self):
         # has to be called AFTER load state dict
@@ -197,11 +79,20 @@ class EffNet(nn.Module):
         self.trt_backbone = torch.jit.load(TRT_MODEL_PATH).to(device)
         self.backbone_is_trt = True
 
-    def copy_cnn_fcs_to_transformer_fcs(self):
-        for p1, p2 in zip(self.cnn_finisher.parameters(), self.transformer_finisher.parameters()):
-            p2.data = p1.data.clone()
-        for p1, p2 in zip(self.fcs1_cnn.parameters(), self.fcs1_transformer.parameters()):
-            p2.data = p1.data.clone()
+    def reset_hidden(self, bs):
+        # self.h = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        self.h = self.hidden_init.expand(1, bs, self.inner_dim).contiguous()
+        self.c = self.cell_init.expand(1, bs, self.inner_dim).contiguous()
+
+    def reset_hidden_carousel(self, bs): #TODO UNDO, only used for inference, bptt always one, bs always one
+        # self.h = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
+        self.h_carousel = [self.hidden_init.expand(1, bs, self.inner_dim).contiguous().clone() for _ in range(10)]
+        self.c_carousel = [self.cell_init.expand(1, bs, self.inner_dim).contiguous().clone() for _ in range(10)]
+        self.carousel = True
+        self.carousel_ix = 0
+        print("resetting hidden carousel")
 
     def get_hook(self, name):
         EPS = .99
@@ -271,11 +162,31 @@ class EffNet(nn.Module):
 
         return x
 
-    def transformer_head(self, z):
-        z = self.fcs1_transformer(z) 
-        # z = self.pe(z)
-        z = self.transformer(z)
-        wps_preds, aux_preds, obsnet_out = self.transformer_finisher(z)
+    def rnn_head(self, z):
+        z = self.fcs1_rnn(z)
+
+        #if self.training and not self.is_for_viz: x = dropout_no_rescale(x, p=.2) 
+        if self.carousel: #TODO UNDO only used for inference. Awkward. Bptt always one.
+            cc = self.carousel_ix % 10
+
+            test_ix = 0
+            if cc==test_ix: 
+                print(self.carousel_ix)
+                print(self.h_carousel[test_ix][0,0,:3])
+
+            x, h_c = self.rnn(z, (self.h_carousel[cc], self.c_carousel[cc]))
+            self.h_carousel[cc], self.c_carousel[cc] = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
+
+            if cc==test_ix: 
+                print(self.h_carousel[test_ix][0,0,:3])
+                print("\n")
+
+            self.carousel_ix += 1
+        else:
+            x, h_c = self.rnn(z, (self.h, self.c))
+            self.h, self.c = h_c[0].detach().contiguous(), h_c[1].detach().contiguous()
+
+        wps_preds, aux_preds, obsnet_out = self.rnn_finisher(x)
         return wps_preds, aux_preds, obsnet_out
 
     def cnn_head(self, z):
@@ -288,12 +199,12 @@ class EffNet(nn.Module):
         x = self.cnn_features(x, aux)
         return self.cnn_head(x)
 
-    def forward_transformer(self, x, aux):
+    def forward_rnn(self, x, aux):
         x = self.cnn_features(x, aux)
-        return self.transformer_head(x)
+        return self.rnn_head(x)
 
     def forward(self, x, aux):
-        return self.forward_transformer(x, aux) if self.use_transformer else self.forward_cnn(x, aux)
+        return self.forward_rnn(x, aux) if self.use_rnn else self.forward_cnn(x, aux)
 
 
 def get_children(model: torch.nn.Module):

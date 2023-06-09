@@ -120,10 +120,10 @@ class Trainer():
                 log_cadence=512, updates_per_epoch=5120, total_epochs=3000,
                 wandb=None,
                 rw_evaluator=None,
-                use_transformer=False,
+                use_rnn=False,
                 ):
 
-        self.dataloader = dataloader; self.model = model; self.opt = opt; self.model_stem = model_stem; self.use_transformer = use_transformer
+        self.dataloader = dataloader; self.model = model; self.opt = opt; self.model_stem = model_stem; self.use_rnn = use_rnn
         self.backwards, self.log_wandb = backwards, log_wandb
         self.log_cadence, self.updates_per_epoch, self.wandb = log_cadence, updates_per_epoch, wandb
         self.wandb = wandb
@@ -164,7 +164,7 @@ class Trainer():
         model, dataloader = self.model, self.dataloader
         logger = Logger()
         train_pause = 0 #seconds
-        # model.reset_hidden(dataloader.bs)
+        model.reset_hidden(dataloader.bs)
         self.reset_worsts()
 
         f = lambda t : (~torch.isfinite(t)).any() # True if has infs or nans
@@ -177,17 +177,21 @@ class Trainer():
             if not batch: break
             timer.log("get batch from dataloader")
 
-            if self.use_transformer:
-                zs, img, aux, wps, (to_pred_mask, is_first_in_seq) = batch
+            if self.use_rnn:
+                # zs, img, aux, wps, (to_pred_mask, is_first_in_seq) = batch # for Zs loader
+                img, aux, wps, (to_pred_mask, is_first_in_seq) = batch
+                if is_first_in_seq: model.reset_hidden(dataloader.bs)
 
-                # with torch.cuda.amp.autocast(): model_out = model.transformer_head(zs)
-                zs = zs.float(); aux=aux.float(); wps=wps.float(); to_pred_mask=to_pred_mask.float() # full precision
+                # with torch.cuda.amp.autocast(): model_out = model.rnn_head(zs)
+                # zs = zs.float(); 
                 #assert not f(zs), f"zs has nonfinite: {zs}"
-                if f(zs):
-                    print("zs has nonfinite") # this happens sometimes, was causing m outputs to have nonfinite. 
-                    continue
+                # if f(zs):
+                #     print("zs has nonfinite") # this happens sometimes, was causing m outputs to have nonfinite. 
+                #     continue
 
-                model_out = model.transformer_head(zs) 
+                with torch.cuda.amp.autocast(): z = model.cnn_features(img, aux)
+                aux=aux.float(); wps=wps.float(); to_pred_mask=to_pred_mask.float() # full precision
+                model_out = model.rnn_head(z.float()) 
             else:
                 img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
                 with torch.cuda.amp.autocast(): model_out= model.forward_cnn(img, aux)
@@ -202,7 +206,7 @@ class Trainer():
             #############
             # wp losses
             #############
-            loss_weights = self.LOSS_WEIGHTS.float() if self.use_transformer else self.LOSS_WEIGHTS
+            loss_weights = self.LOSS_WEIGHTS.float() if self.use_rnn else self.LOSS_WEIGHTS
             weights = (to_pred_mask*loss_weights).repeat((1,1,5))
             assert torch.isnan(wps).sum() == 0, f"wps has nans: {wps}"
 
@@ -270,7 +274,7 @@ class Trainer():
             # Stops
             stop_dist = aux_np[:,:,"stop_dist"]
             #stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
-            stops_min_buffer = -100 if self.use_transformer else 8
+            stops_min_buffer = -100 if self.use_rnn else 8
             stops_always_enforce = torch.from_numpy(((stops_min_buffer<stop_dist) & (stop_dist<STOP_DIST_MIN)) | (stop_dist>STOP_DIST_MAX)).to(device)
             m_sees_stop = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3)
             m_sees_true_stop = has_stop.bool() & m_sees_stop # already sigmoided
@@ -293,12 +297,12 @@ class Trainer():
             ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
 
             # # when cnn only, don't enforce stops when up close, don't enforce some losses in intx TODO put back in UNDO
-            # if not self.use_transformer: 
+            # if not self.use_rnn: 
             #     aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= ~ego_in_intx
             #     aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lane_width")] *= ~ego_in_intx
             #######################
 
-            losses_to_include = AUX_TARGET_PROPS if self.use_transformer else [p for p in AUX_TARGET_PROPS if p not in ["lead_speed"]]
+            losses_to_include = AUX_TARGET_PROPS if self.use_rnn else [p for p in AUX_TARGET_PROPS if p not in ["lead_speed"]]
             losses.update({p:aux_targets_losses[:,:,AUX_TARGET_PROPS.index(p)].mean() for p in losses_to_include})
 
             #############
@@ -324,7 +328,7 @@ class Trainer():
 
             opt = self.opt
             if self.backwards:
-                if self.use_transformer: # transformer, full precision no amp or scaler
+                if self.use_rnn: # rnn, full precision no amp or scaler
                     loss.backward() 
                     torch.nn.utils.clip_grad_value_(model.parameters(), 2.0) 
                     total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 60.0) 
