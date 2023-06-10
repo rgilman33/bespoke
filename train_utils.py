@@ -137,7 +137,8 @@ class Trainer():
         self.rw_evaluator = rw_evaluator
 
         # we're saying we don't care as much about the further wps, regardless of angle TODO i think get rid of this
-        self.LOSS_WEIGHTS = torch.from_numpy(np.concatenate([np.ones(20), np.linspace(1., .5, 10)]).astype(np.float16)).to(device)[None,None,:]  
+        # self.LOSS_WEIGHTS = torch.from_numpy(np.concatenate([np.ones(20), np.linspace(1., .5, 10)]).astype(np.float16)).to(device)[None,None,:]  
+        self.LOSS_WEIGHTS = torch.from_numpy(np.concatenate([np.ones(20), np.linspace(1., .5, 10)])).to(device)[None,None,:]  
 
     def train(self):
         while self.current_epoch < self.total_epochs:
@@ -189,9 +190,9 @@ class Trainer():
                 #     print("zs has nonfinite") # this happens sometimes, was causing m outputs to have nonfinite. 
                 #     continue
 
-                with torch.cuda.amp.autocast(): z = model.cnn_features(img, aux)
-                aux=aux.float(); wps=wps.float(); to_pred_mask=to_pred_mask.float() # full precision
-                model_out = model.rnn_head(z.float()) 
+                with torch.cuda.amp.autocast(): z = model.cnn_features(img, aux) 
+                # aux=aux.float(); wps=wps.float(); to_pred_mask=to_pred_mask.float() # full precision
+                model_out = model.rnn_head(z.float()) # keeping lstm in full precision
             else:
                 img, aux, wps, (to_pred_mask, is_first_in_seq) = batch  
                 with torch.cuda.amp.autocast(): model_out= model.forward_cnn(img, aux)
@@ -201,13 +202,17 @@ class Trainer():
             #assert torch.isnan(aux).sum() == 0, f"aux has nans: {aux}"
             timer.log("model forward")
 
+            # making full precision explicit from here on out
+            # All losses calculated in full precision
+            wps_p, aux_targets_p, obsnet_out = wps_p.float(), aux_targets_p.float(), obsnet_out.float() # full precision
+
             aux_targets = aux[:,:,AUX_TARGET_IXS] 
 
             #############
             # wp losses
             #############
-            loss_weights = self.LOSS_WEIGHTS.float() if self.use_rnn else self.LOSS_WEIGHTS
-            weights = (to_pred_mask*loss_weights).repeat((1,1,5))
+            loss_weights = self.LOSS_WEIGHTS #.float() if self.use_rnn else self.LOSS_WEIGHTS
+            weights = (to_pred_mask*loss_weights).repeat((1,1,5)).float() # why was this float64
             assert torch.isnan(wps).sum() == 0, f"wps has nans: {wps}"
 
             if f(wps_p):
@@ -223,14 +228,14 @@ class Trainer():
                 print("obsnet_out has nans")
                 self.should_stop = True
                 break
-            # if state_dict_has_nans(model.state_dict()): #NOTE this takes 50ms, so maybe shouldn't do so often
+            # if state_dict_has_nans(model.state_dict()): #NOTE this takes 50ms, so shouldn't do so often
             #     print("model has nans")
             #     self.img_for_viewing = img # for inspection
             #     self.nans_counter += 1
             #     self.should_stop = True
             #     break
 
-            _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER
+            _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
             _mm = 400
             cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
@@ -255,8 +260,7 @@ class Trainer():
                         
             aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
             aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
-            aux_targets_losses *= 100
-
+            aux_targets_losses *= 100 #TODO can prob get rid of scaling now that all is full float
             #######################
             # Zero out a buffer right at end of horizon, no need to be strict about exact horizon end
             aux_np = unprep_aux(aux)
@@ -321,30 +325,34 @@ class Trainer():
 
             loss = self.loss_manager.step(losses, logger=logger)
             timer.log("calc losses")
-
             # if is_first_in_seq:
             #     print("\n\n is first in seq")
             # print("Total loss:", loss.item(), loss.dtype)
 
             opt = self.opt
             if self.backwards:
-                if self.use_rnn: # rnn, full precision no amp or scaler
-                    loss.backward() 
-                    torch.nn.utils.clip_grad_value_(model.parameters(), 2.0) 
-                    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 60.0) 
-                    opt.step()
-                    opt.zero_grad()
-                else: # cnn
-                    scaler = self.scaler
-                    scaler.scale(loss).backward() 
-                    scaler.unscale_(opt)
-                    torch.nn.utils.clip_grad_value_(model.parameters(), 10.0) 
-                    total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 60.0)
-                    scaler.step(opt)
-                    scaler.update() 
-                    opt.zero_grad()
+                # if self.use_rnn: # rnn, full precision no amp or scaler
+                # loss.backward() 
+                # torch.nn.utils.clip_grad_value_(model.parameters(), 2.0) 
+                # total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 60.0) 
+                # opt.step()
+                # opt.zero_grad()
 
-                logger.log({"grad_norm": total_norm.item()})
+                # else: # cnn
+                scaler = self.scaler
+                scaler.scale(loss).backward() 
+                nonfinite_sum, none_sum, finite_sum = gradients_with_nonfinite(model)
+                if nonfinite_sum > 0: print("got nonfinite grad")
+                logger.log({"logistical/nonfinite grads": nonfinite_sum})
+                scaler.unscale_(opt)
+                torch.nn.utils.clip_grad_value_(model.parameters(), 2.0) 
+                total_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 60.0)
+                scaler.step(opt)
+                scaler.update() 
+                opt.zero_grad()
+
+                logger.log({"logistical/grad_norm": total_norm.item()})
+                logger.log({"logistical/amp scale": scaler.get_scale()})
                 time.sleep(train_pause)
             timer.log("backwards")
         
@@ -482,6 +490,16 @@ def get_snr(opt):
     # vms = np.array(vms)
     return snrs #, mms.mean(), vms.mean()
 
+def gradients_with_nonfinite(model):
+    nonfinite_sum, none_sum, finite_sum = 0, 0, 0
+    for p in model.parameters():
+        if p.grad is None:
+            none_sum += 1
+        elif not torch.isfinite(p.grad).all():
+            nonfinite_sum += 1
+        else:
+            finite_sum += 1
+    return nonfinite_sum, none_sum, finite_sum
 
 def state_dict_has_nans(state_dict):
     for k,v in state_dict.items():

@@ -31,7 +31,7 @@ def prep_img(img, is_for_trt=False):
     img = img.to('cuda') # ~40ms as uint8, more as half #TODO try the pinned memory thing here. Faster?
     img = img / 255. # <1ms # implicitly converts to float
     img = norm_img(img) # <1msnorming should return float32
-    if not is_for_trt: img = img.half() # <1ms
+    # if not is_for_trt: img = img.half() # <1ms
     return img
 
 def unprep_img(img):
@@ -59,7 +59,7 @@ WPS_NORM = np.concatenate([WP_NORM_ANGLE, WP_NORM_HEADING, WP_NORM_CURVATURE, WP
 def prep_wps(wps):    
     wps /= WPS_NORM
     wps = torch.from_numpy(wps).to('cuda') #.pin_memory().to("cuda", non_blocking=True) # "When non_blocking, tries to convert asynchronously with respect to the host if possible, e.g., converting a CPU Tensor with pinned memory to a CUDA Tensor."
-    wps = wps.half()
+    # wps = wps.half()
     return wps
 
 def unprep_wps(wps):
@@ -78,11 +78,11 @@ def denorm_aux(aux):
     return (aux * AUX_NORM_SCALES) + AUX_NORM_SHIFTS
 
 def prep_aux(aux, is_for_trt=False):
-    aux = norm_aux(aux)
+    aux = norm_aux(aux).astype("float32") # this was in float64, prob something to do w casting wps in float64
     aux = torch.from_numpy(aux).to(device)
-    if not is_for_trt:
-        # trt keeps as full float inputs, but will change them to halves itself
-        aux = aux.half()
+    # if not is_for_trt:
+    #     # trt keeps as full float inputs, but will change them to halves itself
+    #     aux = aux.half()
     return aux
 
 def unprep_aux(aux):
