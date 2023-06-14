@@ -40,17 +40,12 @@ class Autopilot():
 
             # noise for the map, position 
             BAD_GPS_PROB = .1
-            if random.random()<BAD_GPS_PROB:
-                maps_noise_mult = 60 # NOTE for each x and y, so actual will be higher
-                min_num_passes_exp = np.interp(maps_noise_mult, [0, 10, 60], [1, 2, 3])
-                num_passes = int(3 * 10**random.uniform(min_num_passes_exp, 3)) # more passes makes for longer periodocity
-                self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult # actually a bit time-consuming at higher num_passes
-                self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
-            else:
-                self.maps_noise_x = np.zeros_like(self.roll_noise)
-                self.maps_noise_y = np.zeros_like(self.roll_noise)
-                maps_noise_mult = 0
-            
+            maps_noise_mult = 60 if random.random()<BAD_GPS_PROB else 20 # NOTE for each x and y, so actual will be higher
+            min_num_passes_exp = np.interp(maps_noise_mult, [0, 10, 60], [1, 2, 3])
+            num_passes = int(3 * 10**random.uniform(min_num_passes_exp, 3)) # more passes makes for longer periodocity
+            self.maps_noise_x = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult # actually a bit time-consuming at higher num_passes
+            self.maps_noise_y = get_random_roll_noise(num_passes=num_passes) * maps_noise_mult
+
             episode_info.maps_noise_mult = maps_noise_mult
             
             # #
@@ -95,6 +90,9 @@ class Autopilot():
         self.should_yield = False
 
         self.wp_keep_up_correction = 0
+
+        self.never_map = episode_info.just_go_straight and random.random()<.5
+        self.never_route = (episode_info.just_go_straight and not self.never_map) and random.random()<.5
 
 
 
@@ -296,7 +294,8 @@ class Autopilot():
         if abs(self.dagger_shift):
             sec_to_undagger = self._sec_to_undagger(self.dagger_shift)
             meters_to_undagger = self.current_speed_mps * sec_to_undagger
-            meters_to_undagger = max(meters_to_undagger, 12)
+            MIN_DAGGER_M = 24 #12
+            meters_to_undagger = max(meters_to_undagger, MIN_DAGGER_M)
             
             perc_into_undaggering = np.clip(TRAJ_WP_DISTS_NP/meters_to_undagger, 0, 1)
             p = linear_to_sin_decay(perc_into_undaggering)
@@ -433,16 +432,13 @@ class Autopilot():
         # print("Saving data", self.overall_frame_counter)
         
         # rd maneuvers
-        RD_MANEUVER_LOOKAHEAD = 60 # meters
+        RD_MANEUVER_LOOKAHEAD = TRAJ_WP_DISTS[-1] # meters
         left_turn = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
         right_turn = any(self.is_right_turn[self.current_wp_ix:self.current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
-
-        ego_in_intx = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(8/WP_SPACING)]) or \
-                        any(self.is_right_turn[self.current_wp_ix:self.current_wp_ix+int(8/WP_SPACING)])
             
         # Maps
-        HAS_MAP_PROB = .5 if self.episode_info.just_go_straight else 1
-        HAS_ROUTE_PROB = .5 if self.episode_info.just_go_straight else 1
+        HAS_MAP_PROB = 0 if self.never_map else .5 if self.episode_info.just_go_straight else 1
+        HAS_ROUTE_PROB = 0 if self.never_route else .5 if self.episode_info.just_go_straight else 1
         if self.overall_frame_counter < 10: HAS_MAP_PROB, HAS_ROUTE_PROB = 0, 0 # First few obs, no maps bc heading tracker janky and rds cutoff
         
         self.has_map = random.random() < HAS_MAP_PROB
@@ -459,9 +455,13 @@ class Autopilot():
                                 self.heading_for_map,
                                 CLOSE_RADIUS,
                                 draw_route=self.has_route) if self.has_map else self.EMPTY_MAP
-
+        
+        EGO_IN_INTX_M = 8
+        ego_in_intx = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(EGO_IN_INTX_M/WP_SPACING)]) or \
+                        any(self.is_right_turn[self.current_wp_ix:self.current_wp_ix+int(EGO_IN_INTX_M/WP_SPACING)])
+        
         # will get repeated ~4 times in a row bc gps less hz
-        c = 0
+        c = 0 # just padding, as we only save single obs at a time now
         self.maps_container[c,:,:,:] = self.small_map 
         self.aux[c, "has_map"] = int(self.has_map)
         self.aux[c, "has_route"] = int(self.has_route)

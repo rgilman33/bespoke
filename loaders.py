@@ -28,7 +28,7 @@ def update_seq_inplace(*inputs):
         time.sleep(1)
         update_seq_inplace(*inputs)
 
-def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset, constant_seq_aug, timings_container):
+def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset, constant_seq_aug, aug_difficulty, timings_container):
 
     timer = Timer("update_seq_inplace")
 
@@ -78,7 +78,7 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset,
     timer.log("load imgs")
 
     constant_seq_aug = 0 #TODO remove this
-    imgs = aug_imgs(imgs, constant_seq_aug)
+    imgs = aug_imgs(imgs, constant_seq_aug, diff=aug_difficulty)
     imgs_bw = bwify_seq(imgs)
     timer.log("aug imgs")
 
@@ -93,7 +93,7 @@ from multiprocessing import Queue, Process, shared_memory
 
 
 
-def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, constant_seq_aug):
+def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, constant_seq_aug, aug_difficulty):
     # sets them in place. Takes about 2 sec per seq of len 116. Threading important for perf, as most of the time is io reading in imgs
     bs, seqlen, _,_,_ = img_chunk.shape
     is_done = np.zeros(bs)
@@ -101,7 +101,7 @@ def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, constant_seq_aug):
     timings_container = []
     offset = random.randint(0,1_000)
     for b in range(bs):
-        t = threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, b, is_done, offset, constant_seq_aug, timings_container))
+        t = threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, b, is_done, offset, constant_seq_aug, aug_difficulty, timings_container))
         threads.append(t)
         t.start()
 
@@ -115,10 +115,10 @@ def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, constant_seq_aug):
     assert is_done.sum() == bs
     return timings
 
-def keep_chunk_filled(shm_img, shm_aux, shm_targets, shm_is_ready, constant_seq_aug, timings_queue):
+def keep_chunk_filled(shm_img, shm_aux, shm_targets, shm_is_ready, constant_seq_aug, aug_difficulty, timings_queue):
     while True:
         if not shm_is_ready[0]:
-            timings = fill_chunk_inplace(shm_img, shm_aux, shm_targets, constant_seq_aug=constant_seq_aug)
+            timings = fill_chunk_inplace(shm_img, shm_aux, shm_targets, constant_seq_aug, aug_difficulty)
             timings_queue.put(timings)
             shm_is_ready[0] = 1
         else:
@@ -128,7 +128,7 @@ def keep_chunk_filled(shm_img, shm_aux, shm_targets, shm_is_ready, constant_seq_
 import atexit
 
 class TrnLoader():
-    def __init__(self, bs, n_batches=np.inf, bptt=BPTT, seqlen=1, constant_seq_aug=.5, n_workers=8):
+    def __init__(self, bs, n_batches=np.inf, bptt=BPTT, seqlen=1, constant_seq_aug=.5, aug_difficulty="easy", n_workers=8):
         self.bs = bs; self.bptt = bptt; self.logger = Logger(); self.path_stem = "trn"; self.run_id = "trn"; self.is_rw = False
         self.n_batches = n_batches; self.batches_delivered = 0; self.seqlen = seqlen; self.constant_seq_aug = constant_seq_aug
         self.seq_ix = 0; self.queued_batches = []; self.retry_counter = 0
@@ -155,8 +155,8 @@ class TrnLoader():
             shm_targets = get_targets_container(bs, seqlen, shm_targets)
             shm_is_ready = np.ndarray((1,), dtype=np.int8, buffer=shm_is_ready.buf)
             shm_is_ready[0] = 0
-            Process(target=keep_chunk_filled, args=(shm_img, shm_aux, shm_targets, shm_is_ready, constant_seq_aug, self.timings_queue)).start()
-            
+            Process(target=keep_chunk_filled, args=(shm_img, shm_aux, shm_targets, shm_is_ready, constant_seq_aug, aug_difficulty, self.timings_queue)).start()
+            # TODO consolidate aug info into a single dict
             self.queue.append((shm_img, shm_aux, shm_targets, shm_is_ready))
 
         self.refresh_chunk()
@@ -270,10 +270,6 @@ class ZLoader():
     def report_logs(self):
         stats = self.normal_loader.logger.finish()
         return stats
-
-
-    
-    
 
 
 from map_utils import *
@@ -405,6 +401,9 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
     img = img_chunk[:, ix:ix+bptt, :,:,:]
     aux = aux_chunk[:, ix:ix+bptt, :]
     speed = aux[:,:,"speed"] # grab this before putting on gpu. Need it for speed mask below
+    has_route = aux[:,:,"has_route"]
+    rd_is_lined = aux[:,:,"rd_is_lined"]
+    ego_in_intx = aux[:,:,"ego_in_intx"]
 
     img = prep_img(img)
     timer.log("prep image")
@@ -413,7 +412,7 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
     timer.log("prep aux")
 
     # Wps targets TODO time for these to go into prep chunk
-    wps, to_pred_mask = None, None
+    wps, to_pred_mask = None, None #TODO better called loss_weights
     if targets_chunk is not None:
         targets = targets_chunk[:, ix:ix+bptt, :].copy()
         wp_angles, wp_dists, wp_rolls, wp_zs = np.split(targets, 4, axis=2)
@@ -425,19 +424,19 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
         wp_curvatures = get_curvatures_from_headings_batch(wp_headings)
         timer.log("calc wp targets")
 
-        # Mask
-        MAX_ANGLE_TO_PRED = .48 #.36 #.18 #.16 
-        to_pred_mask = (np.abs(wp_angles) < MAX_ANGLE_TO_PRED)# .astype(np.float16)
-        to_pred_mask = (to_pred_mask*.9) + .1 # 1.0 for all normal angles, .1 for all big angles
+        # Angles masking
+        # emphasizing majority of angles, downweighting angles progressively as they get bigger. Zeroing out angles outside of frame
+        to_pred_mask = np.interp(np.abs(wp_angles), [0, .1, .7], [1, 1, 0]) 
 
-        ZERO_THRESH = .7 #1.0
-        zero_mask = (np.abs(wp_angles) < ZERO_THRESH)# .astype(np.float16)
-        to_pred_mask = to_pred_mask*zero_mask # totally zero out above this threshold
-
-        speed_mask = get_speed_mask(speed) # mask out loss for wps more than n seconds ahead
+        # Speed masking #TODO this can be more than just no-route and lined, can use masking for any situation where is especially challenging
+        pred_full_traj = np.clip(has_route+rd_is_lined, 0, 1)
+        speed_mask = get_speed_mask(speed, pred_full_traj) # mask out loss for wps more than n seconds ahead when no route. Otherwise full traj.
         to_pred_mask *= speed_mask
 
-        to_pred_mask = torch.from_numpy(speed_mask).to('cuda')
+        # ego_in_intx masking. TODO i don't really like this. Need something more refined. 
+        to_pred_mask = np.where(ego_in_intx.astype(bool)[:,:,None], to_pred_mask*.5, to_pred_mask)
+
+        to_pred_mask = torch.from_numpy(to_pred_mask).to('cuda')
         timer.log("assemble mask")
 
         wps = np.concatenate([wp_angles, wp_headings, wp_curvatures, wp_rolls, wp_zs], axis=-1)

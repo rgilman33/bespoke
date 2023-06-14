@@ -136,9 +136,9 @@ class Trainer():
         self.total_epochs = total_epochs
         self.rw_evaluator = rw_evaluator
 
-        # we're saying we don't care as much about the further wps, regardless of angle TODO i think get rid of this
+        # we're saying we don't care as much about the further wps, regardless of angle
         # self.LOSS_WEIGHTS = torch.from_numpy(np.concatenate([np.ones(20), np.linspace(1., .5, 10)]).astype(np.float16)).to(device)[None,None,:]  
-        self.LOSS_WEIGHTS = torch.from_numpy(np.concatenate([np.ones(20), np.linspace(1., .5, 10)])).to(device)[None,None,:]  
+        self.LOSS_WEIGHTS = torch.from_numpy(np.concatenate([np.ones(20), np.linspace(1., .2, 10)])).to(device)[None,None,:]  
 
     def train(self):
         while self.current_epoch < self.total_epochs:
@@ -530,49 +530,51 @@ def clip_activations(model, min_val=-2**15, max_val=2**15-1):
 
 import albumentations as A
 
-COMPRESSION_QUALITY_MIN = 30 # 15
 
 random_color = lambda : (random.randint(0,255), random.randint(0,255), random.randint(0,255))
-def get_transform(seqlen):
+def get_transform(seqlen, diff="easy"):
     # spatter is strongest when cutout is at or below mean. Best is within .1 of mean.
     spatter_mean = random.uniform(.1, .4)
     spatter_cutout = spatter_mean + random.uniform(.06, .12)
+    d = .3
+    COMPRESSION_QUALITY_MIN = 30
+    cutout_prob = .01 if diff=="easy" else .1 # right now just used for cnn
+    cutout_max_n_holes = 10 if diff=="easy" else 40
+
     transforms = [
-        A.AdvancedBlur(p=.4, blur_limit=(3, 3), sigmaX_limit=(0.1, 1.55), sigmaY_limit=(0.1, 1.51), rotate_limit=(-81, 81), beta_limit=(0.5, 8.0), noise_limit=(0.01, 22.05)),
-        A.RandomContrast(limit=(-.4, .4), p=.4),
-        A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=0, p=.4), # not doing brightness, doing it below
+        A.AdvancedBlur(p=d, blur_limit=(3, 3), sigmaX_limit=(0.1, 1.55), sigmaY_limit=(0.1, 1.51), rotate_limit=(-81, 81), beta_limit=(0.5, 8.0), noise_limit=(0.01, 22.05)),
+        A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=0, p=d), # not doing brightness, doing it below
         A.OneOf([ # Noise
-            A.GaussNoise(var_limit=250, p=.4),
-            A.ISONoise(intensity=(.2, .5), p=.4),
+            A.GaussNoise(var_limit=250, p=d),
+            A.ISONoise(intensity=(.2, .5), p=d),
         ]),
         A.OneOf([ # distractors
-            A.CoarseDropout(p=.1, max_holes=40, max_height=120, max_width=120, min_holes=10, min_height=10, min_width=10, fill_value=random_color(), mask_fill_value=None),
-            # A.CoarseDropout(p=.05, max_holes=40, max_height=60, max_width=60, min_holes=10, min_height=5, min_width=5, fill_value=random_color(), mask_fill_value=None),
+            A.CoarseDropout(p=cutout_prob, max_holes=cutout_max_n_holes, max_height=120, max_width=120, min_holes=3, min_height=10, min_width=10, fill_value=random_color(), mask_fill_value=None),
             A.Spatter(p=.1, mean=spatter_mean, std=(0.25, 0.35), gauss_sigma=(.8, 1.6), intensity=(-.3, 0.3), cutout_threshold=spatter_cutout, mode=['rain', 'mud']),
             A.PixelDropout(p=.1, dropout_prob=random.uniform(.01, .05), per_channel=random.choice([0,1]), drop_value=random_color(), mask_drop_value=None),
         ]),
         A.OneOf([ # compression artefacting
-            A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=0, p=.4),
-            A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=1, p=.4),
-            A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=.4)
+            A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=0, p=d),
+            A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=1, p=d),
+            A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=d)
         ]),
         A.OneOf([ # brightness
-            A.RandomGamma(gamma_limit=(50,150), p=.4), # higher is darker
-            A.RandomBrightness(p=.5, limit=(-0.2, 0.2)),
+            A.RandomGamma(gamma_limit=(50,150), p=d), # higher is darker
+            A.RandomBrightnessContrast(p=d, brightness_limit=(-0.2, 0.22), contrast_limit=(-.4, .4)),
         ]),
         A.OneOf([  # other 
-            A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)),
-            A.CLAHE(p=.1, clip_limit=(1, 4), tile_grid_size=(8, 8)),
-            A.Emboss(p=.1, alpha=(0.2, 0.5), strength=(0.2, 0.7)),
+            # A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)), # rw imgs are blurrier, never sharper
+            A.CLAHE(p=.05, clip_limit=(1, 4), tile_grid_size=(8, 8)),
+            A.Emboss(p=.05, alpha=(0.2, 0.5), strength=(0.2, 0.7)),
         ])
     ]
     random.shuffle(transforms)
     transform = A.Compose(transforms, additional_targets={f"image{i}":"image" for i in range(seqlen)})
     return transform
 
-def aug_imgs(img, constant_seq_aug):
+def aug_imgs(img, constant_seq_aug, diff="easy"):
     seqlen, _,_,_= img.shape # seqlen may be shorter than BPTT at the end of each seq
-    transform = get_transform(seqlen)
+    transform = get_transform(seqlen, diff=diff)
 
     if random.random() < constant_seq_aug: #TODO only works w len 2, fix it. How to pass in param names programatically? wtf shitty api
         transformed = transform(image=img[1], image0=img[0])

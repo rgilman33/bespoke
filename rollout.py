@@ -99,7 +99,7 @@ def calc_rollout_results(rollout):
     # additional_results[:,:,'te'] = get_te(additional_results[:,:,'tire_angle_p'])
     additional_results[:,:,'te'] = get_te_windowed(additional_results[:,:,'tire_angle_p'])
     
-    speed_mask = get_speed_mask(speeds)
+    speed_mask = get_speed_mask(speeds, rollout.aux[:, :, 'has_route'])
     additional_results[:,:,'traj_max_angle_p'] = np.abs((wp_angles_p * speed_mask)).max(axis=-1)
 
     # ccs, stops

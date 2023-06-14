@@ -121,7 +121,7 @@ EPISODE_LEN = 1600 // FRAME_CAPTURE_N # measured in frames
 RUNS_TO_STORE_PER_PROCESS = 400 if FRAMESKIP else 64
 N_RUNNERS = 12
 
-DATA_CONSUMPTION_RATIO_LIMIT = 1.5
+DATA_CONSUMPTION_RATIO_LIMIT = .25 #1.5
 
 # trn loader
 def get_loader_should_stop():

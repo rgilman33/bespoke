@@ -233,14 +233,14 @@ def tire_angles_to_max_speeds(tire_angles):
     max_speeds = mph_to_mps(max_speeds)
     return max_speeds
 
-def max_ix_from_speed(speed_mps):
-    long_consideration_max_m = max_pred_m_from_speeds(speed_mps)
+def max_ix_from_speed(speed_mps, decel):
+    long_consideration_max_m = max_pred_m_from_speeds(speed_mps, decel)
     long_consideration_max_ix = np.interp(long_consideration_max_m, TRAJ_WP_DISTS, list(range(len(TRAJ_WP_DISTS))))
     long_consideration_max_ix = math.ceil(long_consideration_max_ix)
     return long_consideration_max_ix
 
 MAX_SPEED_CCS = 30.0
-
+CCS_LOOKAHEAD_DECEL = 2.
 def _get_curve_constrained_speed(curvatures, current_speed_mps, rolls=None, max_accel=MAX_ACCEL, preempt_sec=1.0):
     # given a traj, what is the max speed we can be going right now to ensure we're able to hit all 
     # the upcoming wps at a speed appropriate for each one?
@@ -260,7 +260,7 @@ def _get_curve_constrained_speed(curvatures, current_speed_mps, rolls=None, max_
     # For each wp, there is a max speed we can be going now to make sure we're going the proper speed when we hit that wp
     current_max_speed_w_respect_to_each_wp = np.sqrt(np.array(TRAJ_WP_DISTS) * max_accel) + max_speeds_at_each_wp_preempted #max_speeds_at_each_wp # adds elementwise
 
-    long_consideration_max_ix = max_ix_from_speed(current_speed_mps)
+    long_consideration_max_ix = max_ix_from_speed(current_speed_mps, CCS_LOOKAHEAD_DECEL)
     curve_constrained_speed = current_max_speed_w_respect_to_each_wp[:long_consideration_max_ix].min()
 
     curve_constrained_speed = min(curve_constrained_speed, MAX_SPEED_CCS) # just for visual cleanliness
@@ -388,15 +388,15 @@ class StopSignManager():
 
 # "A Policy on Geometric Design of Highways and Streets recommends 3.4 m/s2
 # a comfortable deceleration rate for most drivers, as the deceleration threshold for determining adequate stopping sight distance"
-SPEED_MASK_DECEL = 2.0 #2.5 # m/s/s # NOTE pay attn to this, are we still training far enough on the traj? Tradeoff here in terms of apportioning trn load
+# NOTE pay attn to this, are we still training far enough on the traj? Tradeoff here in terms of apportioning trn load
 MAX_PRED_S = 8.0 #6.0
 MIN_M_TRAJ_PRED = 40.
 
-def max_pred_m_from_speeds(speeds_mps):
+def max_pred_m_from_speeds(speeds_mps, decel):
     # can be single obs, seq, or batch,seq. Returns same dims, just swaps speeds for meters.
 
     # Pred out as far as it will take us to comfortably to get to full stop
-    max_pred_s = speeds_mps / SPEED_MASK_DECEL
+    max_pred_s = speeds_mps / decel
 
     # But don't pred any further than MAX_PRED_S, TODO increase this to 10s. Now that we're clipping based on speed above, we won't hit this as often
     max_pred_s = np.clip(max_pred_s, 0., MAX_PRED_S)
@@ -407,13 +407,19 @@ def max_pred_m_from_speeds(speeds_mps):
 
     return max_pred_dists_m
 
-def get_speed_mask(speed):
-    # can be single obs, seq, or seq,batch. Returns same but w extra dim of sz 30 on the end.
-
+SPEED_MASK_DECEL = 2.2 #2.0 two was when using mask generally # m/s/s 
+def get_speed_mask(speed, has_route):
+    # can be single obs, seq,obs or batch,seq,obs. Returns same but w extra dim of sz 30 on the end.
+    # has_route same shape, etc, as speed
     if type(speed)!=np.ndarray: speed = np.array([speed])
+    if type(has_route)!=np.ndarray: has_route = np.array([has_route])
 
     # same shape as speeds, just swapped for distance
-    max_pred_dists_m = max_pred_m_from_speeds(speed)
+    max_pred_dists_m = max_pred_m_from_speeds(speed, SPEED_MASK_DECEL)
+
+    # if no route, truncate based on speed as normal. When route and map, force full pred
+    full_traj_pred = np.ones_like(has_route) * TRAJ_WP_DISTS[-1]
+    max_pred_dists_m = np.where(has_route.astype(bool), full_traj_pred, max_pred_dists_m) 
 
     # Pad to broadcast. Result is eg (batch,seq,30) if input have batch seq, or ()
     speed_mask = (np.array(TRAJ_WP_DISTS) <= max_pred_dists_m[...,None]).astype(np.float32)

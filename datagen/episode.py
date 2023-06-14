@@ -87,11 +87,11 @@ def make_map(timer):
     is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, no bumps, more often banked, no smaller-scale XY noise
     wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0 # no wide shoulder add when dirtgravel
 
-    is_just_straight = random.random()<.01
+    is_just_straight = random.random()<.05
 
     left_shift = 0
     if rd_is_lined:
-        lane_width = random.uniform(3.0, 4.1) if is_highway else random.uniform(2.3, 3.6)
+        lane_width = random.uniform(2.9, 3.9) if is_highway else random.uniform(2.4, 3.4)
     else: # dirt gravel
         if random.random()<.85:
             lane_width = 4.
@@ -111,7 +111,7 @@ def make_map(timer):
     #has_stops = 1 if rd_is_lined or lane_width_actual>3. else 0 # wide gravel also can have stops
     get_node("has_stops", get_variables_nodes).outputs["Value"].default_value = has_stops
     
-    is_wide_laned = lane_width>3.4 or wide_shoulder_add>0
+    is_wide_laned = lane_width>3.3 or wide_shoulder_add>0
 
     get_node("lane_width", get_variables_nodes).outputs["Value"].default_value = lane_width
     get_node("lane_width_actual", get_variables_nodes).outputs["Value"].default_value = lane_width_actual
@@ -119,12 +119,12 @@ def make_map(timer):
 
     get_node("has_lanelines", get_variables_nodes).outputs["Value"].default_value = 1 if rd_is_lined else 0
 
-    ONLY_YELLOW_LINES_PROB = .2 # applied after lanelines prob
-    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and rd_is_lined and not wide_shoulder_add>0 and lane_width<3.3
+    ONLY_YELLOW_LINES_PROB = .25 # applied after lanelines prob
+    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and rd_is_lined and not wide_shoulder_add>0 and lane_width<2.9
     get_node("is_only_yellow_lined", meshify_lines_nodes).outputs["Value"].default_value = 1 if is_only_yellow_lined else 0
 
-    IS_COUNTRY_MTN_PROB = .2 # interspersed very curvy with totally straight. Train slowdowns and sharp curves.
-    is_country_mtn = random.random() < IS_COUNTRY_MTN_PROB and lane_width < 3.6 and not (is_highway or is_just_straight)
+    IS_COUNTRY_MTN_PROB = .25 # interspersed very curvy with totally straight. Train slowdowns and sharp curves.
+    is_country_mtn = random.random()<IS_COUNTRY_MTN_PROB and not is_wide_laned and not (is_highway or is_just_straight)
     just_mtn = random.random() < .1 # subset of country_mtn, curviness without the straights
     get_node("country_mtn_border_noise", rd_noise_nodes).outputs["Value"].default_value = 0 if just_mtn else 16
 
@@ -160,7 +160,9 @@ def make_map(timer):
     nm2 = random.uniform(150,300) if is_country_mtn else 0 if no_noise_2 else random.uniform(20, 60) if nm2_r<.9 else random.uniform(60, 100)
     get_node("loop_noise_mult_2", rd_noise_nodes).outputs["Value"].default_value = nm2
 
+    #############
     # Z noise
+    #############
 
     # large hills
     r = random.random()
@@ -173,7 +175,7 @@ def make_map(timer):
     z1_mult_max = np.interp(z1_scale, [.5, 1, 3, 5], [25, 18, 6, 3]) * z1_mult_max_mult # too much large-scale hills makes intx strange
     z1_mult_max = z1_mult_max*.3 if rd_is_banked else z1_mult_max # small scale hills w banking isn't realistic, i don't think. Pay attn. 
     get_node("loop_noise_scale_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_scale
-    z1_mult = 0 if random.random()<.05 else random.uniform(0, z1_mult_max/2) if random.random()<.8 else random.uniform(z1_mult_max/2, z1_mult_max)
+    z1_mult = 0 if random.random()<.02 else random.uniform(0, z1_mult_max/2) if random.random()<.8 else random.uniform(z1_mult_max/2, z1_mult_max)
     get_node("loop_noise_mult_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_mult
 
     # rd bumpiness
@@ -369,8 +371,10 @@ def randomize_appearance(timer, episode_info, run_counter):
     yellow_lines_opacity = get_node("yellow_line_opacity", dirt_gravel_nodes)
 
     if episode_info.rd_is_lined: # can consider going back down to min .2, just that sometimes too hard to see when combined w noise
-        white_lines_opacity.outputs["Value"].default_value = .2 * 10**random.uniform(0, .6) # Deleting the mesh itself now when only yellow
-        yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.5, 1.) if episode_info.is_only_yellow_lined else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
+        w = .22 * 10**random.uniform(0, .6)
+        yellow_gotta_be_visible = episode_info.is_only_yellow_lined or w<.35
+        white_lines_opacity.outputs["Value"].default_value = w
+        yellow_lines_opacity.outputs["Value"].default_value = random.uniform(.5, 1.) if yellow_gotta_be_visible else .25*10**random.uniform(0, .6) # max is 1.0. less than min, sometimes just not visible, especially w aug
         # get_node("white_line_gate", dirt_gravel_nodes).mute = False
         # get_node("yellow_line_gate", dirt_gravel_nodes).mute = False
     else:
@@ -389,9 +393,9 @@ def randomize_appearance(timer, episode_info, run_counter):
     get_node("white_line_noise_mult_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 40)
     get_node("white_line_noise_mult_large", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .2 else random.uniform(1, 20)
     
-    get_node("white_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.02, .09)
+    get_node("white_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.03, .09)
     get_node("white_line_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, 10)
-    get_node("yellow_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.02, .09)
+    get_node("yellow_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.03, .09)
     get_node("yellow_line_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, 10)
     
 
@@ -501,12 +505,12 @@ def randomize_appearance(timer, episode_info, run_counter):
     shadow_v = 0.0 if random.random() < .6 else 1.0 # value 0 blacks out colors anyways
     get_node("shadow_v", dirt_gravel_nodes).outputs["Value"].default_value = shadow_v
 
-    HAS_SHADOWS_PROB = .8 #.3 if rd_is_lined else .7
+    HAS_SHADOWS_PROB = .4 #.3 if rd_is_lined else .7
     has_shadows = random.random()<HAS_SHADOWS_PROB
     if has_shadows:
         #get_node("shadows_gate", dirt_gravel_nodes).mute = False #NOTE for perf. Can test effects later
 
-        shadow_strength = random.uniform(.1, .7) if shadow_v==1.0 else random.uniform(.2, 1.05)
+        shadow_strength = random.uniform(.05, .5) if shadow_v==1.0 else random.uniform(.2, .9)
         get_node("shadow_strength", dirt_gravel_nodes).outputs["Value"].default_value = shadow_strength
         get_node("shadow_shape_subtracter", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(-.04, .1) if shadow_v==0.0 else random.uniform(-.01, .1)
         # shadow_noise_scale = ((10**random.uniform(0, 1.0)) / 10) - .05 # .05 to .95

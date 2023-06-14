@@ -34,11 +34,12 @@ def xz_from_angles_and_distances(angles, wp_dists):
     wp_zs = np.cos(angles) * wp_dists
     return wp_xs, wp_zs
 
-def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0), thickness=1, speed_mps=None):
+def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0), thickness=1, speed_mps=None, has_route=None):
     image = copy.deepcopy(image)
 
     if speed_mps is not None:
-        max_ix = max_ix_from_speed(speed_mps)
+        speed_mask = get_speed_mask(speed_mps, has_route)
+        max_ix = len(speed_mask[speed_mask==1])
         wp_angles = wp_angles[:max_ix]
         wp_dists = wp_dists[:max_ix]
 
@@ -66,9 +67,11 @@ def get_text_box(d):
 
 black = (0,0,0)
 
-def add_traj_preds(img, angles_p, speed, color=(255, 10, 10)):
+def add_traj_preds(img, angles_p, speed, has_route, color=(255, 10, 10)):
+    # helper fn used in enrich_img to wrap all the different traj pred drawing
+
     # Traj pred
-    img = draw_wps(img, angles_p, speed_mps=speed, color=color, thickness=-1)
+    img = draw_wps(img, angles_p, speed_mps=speed, has_route=has_route, color=color, thickness=-1)
 
     # Target wp, pred
     target_wp_angle = get_target_wp_angle(angles_p, speed)
@@ -78,10 +81,11 @@ def add_traj_preds(img, angles_p, speed, color=(255, 10, 10)):
     img = draw_wps(img, np.array([target_wp_angle]), wp_dists=np.array([wp_dist]), color=black, thickness=1)
 
     # Longitudinal wp, ie end of traj, pred
-    far_long_wp_dist = max_pred_m_from_speeds(speed)
+    far_long_wp_dist = max_pred_m_from_speeds(speed, CCS_LOOKAHEAD_DECEL)
     far_long_wp_angle = angle_to_wp_from_dist_along_traj(angles_p, far_long_wp_dist)
     img = draw_wps(img, np.array([far_long_wp_angle]), wp_dists=np.array([far_long_wp_dist]), color=color, thickness=-1)
     img = draw_wps(img, np.array([far_long_wp_angle]), wp_dists=np.array([far_long_wp_dist]), color=black, thickness=1)
+
     return img
 
 def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_targets_p=None, aux_targets_p2=None, obsnet_out=None):
@@ -90,16 +94,17 @@ def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_target
     img = img.copy() # have to do this bc otherwise was strange error w our new lstm loader. 
     # Trajs, targets if have them
     speed = aux["speed"]
+    has_route = aux["has_route"] # used to not truncate traj based on speed
 
     ##########
     # Pred wps
     ##########
     if wps_p2 is not None:
         angles_p2, curvatures_p2, headings_p2, rolls_p2, zs_p2 = np.split(wps_p2, 5, -1)
-        img = add_traj_preds(img, angles_p2, speed, color=(125, 45, 45)) # brown
+        img = add_traj_preds(img, angles_p2, speed, has_route, color=(125, 45, 45)) # brown
 
     angles_p, curvatures_p, headings_p, rolls_p, zs_p = np.split(wps_p, 5, -1)
-    img = add_traj_preds(img, angles_p, speed, color=(255, 40, 40))
+    img = add_traj_preds(img, angles_p, speed, has_route, color=(255, 40, 40))
 
 
     ##########
@@ -109,7 +114,7 @@ def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_target
     # if have target traj, draw it
     if wps is not None:
         angles, curvatures, headings, rolls, zs = np.split(wps, 5, -1)
-        img = draw_wps(img, angles, color=(100, 200, 200), speed_mps=speed)
+        img = draw_wps(img, angles, color=(100, 200, 200), speed_mps=speed, has_route=has_route)
 
     # Target wp, actual. The only actual wp rw has
     wp_dist = get_target_wp_dist(speed)
@@ -177,8 +182,10 @@ def _get_actgrad(m, img, aux, backwards_fn, clip_neg=False, do_abs=False, viz_lo
     actgrad = (acts * grads)[0][0].astype(np.float32)
     actgrad = cv2.resize(actgrad, (IMG_WIDTH,IMG_HEIGHT))
 
-    actgrad /= q_lookup[backwards_target] # rescale to clip dist for viewing
-    actgrad = np.clip(actgrad, -1, 1) # clip to -1, 1 for viewing
+    # actgrad /= q_lookup[backwards_target] # rescale to clip dist for viewing
+    m = max(actgrad.max(), abs(actgrad.min()))
+    actgrad /= m # scale -1 to 1
+    # actgrad = np.clip(actgrad, -1, 1) # clip to -1, 1 for viewing
 
     # need one or the other. Actgrad in range zero to one.
     if do_abs: actgrad = abs(actgrad)
@@ -199,7 +206,7 @@ def _backwards_stop(model_out, m, aux):
     return (pred_aux[:,:,AUX_TARGET_PROPS.index("has_stop")]).mean() # has stop
 
 def _backwards_traj(model_out, m, aux):
-    to_pred_mask = get_speed_mask(aux["speed"])
+    to_pred_mask = get_speed_mask(aux["speed"], aux["has_route"])
     to_pred_mask = torch.from_numpy(to_pred_mask).to(device)
     wp_preds, pred_aux, obsnet_out = model_out
     wp_angles_p, _, _, _, _ = torch.chunk(wp_preds, 5, -1)
@@ -212,12 +219,14 @@ def get_actgrad(m, img, aux, actgrad_target='traj', viz_loc=5):
     elif actgrad_target=='lead': return _get_actgrad(m, img, aux, _backwards_lead, clip_neg=True, backwards_target='lead', viz_loc=viz_loc)
     else: print("actgrad target not valid")
 
-def combine_img_actgrad(img, actgrad, color=(8,255,8)):
+def combine_img_actgrad(img, actgrad, color=(10, 10, 255)):
     """ actgrad in range zero to one, img in range 0 to 255 uint8 """
-    actgrad_mask = (actgrad > .01).astype(int)
-    actgrad *= actgrad_mask # do we want to do this?
+    q = np.quantile(actgrad, .95)
+    print("quantile limit for actgrad", q)
+    actgrad = (actgrad > q).astype(int)
     actgrad_fillin = (actgrad * np.array(color)).astype(np.uint8)
-    img_actgrad = (actgrad_fillin + img*(1-actgrad)).astype('uint8')
+    mix = .3 # actgrad weight
+    img_actgrad = (actgrad_fillin*mix + img*(1-actgrad*mix)).astype('uint8')
     return img_actgrad
 
 def make_enriched_vid_trn(rollout):

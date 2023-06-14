@@ -17,8 +17,8 @@ from dash_utils import *
 
 run_ids = ["run_636"] #["run_621", "run_622"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
 run_id = run_ids[0]
-model_stem = "5.25_e60"
-model_stem_b = "4.28_e118" #"4.17_e27" #"4.13_e33" #"4.5_e68"
+model_stem = "6.1_e45"
+model_stem_b = "5.25_e60" #"4.17_e27" #"4.13_e33" #"4.5_e68"
 
 MIN_PT = 0
 L = 4000
@@ -152,6 +152,7 @@ image = np.zeros((IMG_HEIGHT, IMG_WIDTH, 3), dtype=np.uint8)
 image[:,:,:] = 200
 image_display = image.copy()
 fig_img = None
+draw_rect = True
 def update_fig_img():
     global fig_img, image, image_display
     fig_img = px.imshow(image_display)
@@ -160,10 +161,10 @@ def update_fig_img():
         height=IMG_HEIGHT,
         xaxis_visible=False,
         yaxis_visible=False,
-        dragmode="drawrect",
+        dragmode="drawrect" if draw_rect else "drawclosedpath",
         margin=dict(l=0, r=0, t=0, b=0)
     )
-update_fig_img()
+update_fig_img() #TODO we can use animation_frame to automatically get video player for imshow
 
 from models import *
 from viz_utils import *
@@ -239,6 +240,7 @@ app.layout = html.Div(
                             style={"width": "200px"}
                         ),
                     html.Button('clear frozen', id='clear-frozen', n_clicks=0),
+                    html.Button('clear patches', id='clear-patches', n_clicks=0),
                 ], style={"position":"absolute", "top": "0px", "left": "0px", "width": "200px"}),
             ],
         ),
@@ -257,6 +259,49 @@ n_plots = len(plots)
 img_frozen = False
 
 
+# TODO this is from gpt. Can adapt and use.
+def fill_svg_path(image, svg_path_string):
+    print(svg_path_string)
+    img_width, img_height = image.shape[1], image.shape[0]
+    # Parse the SVG path string
+    points = []
+    # eg M1032,79.5L1021,82.5L1007,104.5L1009,122.5L1023,132.5L1052,134.5L1062,132.5L1065,94.5Z
+    commands = svg_path_string[1:-1].split('L')  # Points are separated by 'L', bookended by 'M' and 'Z'
+    for command in commands:
+        command = command.strip()  # Remove leading/trailing white space
+        x, y = map(float, command.split(','))  # Commands and points are separated by ','
+        points.append((x, y))
+
+    # Convert points to numpy coordinates
+    points = np.array(points)
+    # points[:, 0] *= img_width
+    # points[:, 1] *= img_height
+    print(points)
+    # Reshape the points array to a shape that fillPoly expects
+    pts = points.reshape((-1, 1, 2)).astype(np.int32)
+
+    # Directly fill the polygonal area in the image with black color
+    cv2.fillPoly(image, [pts], color=(0, 0, 0))
+
+    return image
+# Can create a background image that is desaturated, or blurred, or hue shifted, and then use a mask to fill one w the other 
+
+"""or can use matplotlib to do the same thing
+
+# Create a Path object
+path = Path(points)
+
+# Create a grid of pixel coordinates
+y, x = np.mgrid[:IMG_HEIGHT, :IMG_WIDTH]
+coords = np.column_stack((x.ravel(), y.ravel()))
+
+# Check which pixels are within the path
+mask = path.contains_points(coords)
+mask = mask.reshape((IMG_HEIGHT, IMG_WIDTH))
+"""
+
+svg_paths = []
+
 from viz_utils import *
 @app.callback(
     # Output("img", "src"),
@@ -265,7 +310,7 @@ from viz_utils import *
     prevent_initial_call=True,
 )
 def display_hover(hover_data, click_data, relayout_data):
-    global image, image_display, fig_img, num, img_frozen
+    global image, image_display, fig_img, num, img_frozen, svg_paths
     triggered_id = ctx.triggered_id
 
     #print(img_frozen, "\n", hover_data, "\n", click_data, "\n", "\n", )
@@ -273,16 +318,26 @@ def display_hover(hover_data, click_data, relayout_data):
         if "shapes" in relayout_data:
             d = relayout_data["shapes"]
             img_model = np.load(img_paths[num]).copy()
-            for rect in d:  
+
+            if draw_rect:
+                rect = d[0]
                 x0 = int(rect["x0"])
                 x1 = int(rect["x1"])
                 y0 = int(rect["y0"])
                 y1 = int(rect["y1"])
-                print(x0, x1, y0, y1)
-                image_display[y0:y1, x1:x0, :] = 0
-                img_model[y0:y1, x1:x0, :] = 0
-                
-            image = img_model[:,:,:3] #TODO combine these. We're doing twice through the model
+                print("drawing rect", x0, x1, y0, y1)
+                svg_path = f"M{x0},{y0}L{x1},{y0}L{x1},{y1}L{x0},{y1}Z"
+            else:
+                svg_path = d[0]["path"]
+
+            svg_paths.append(svg_path)
+            for p in svg_paths:
+                image_display = fill_svg_path(image_display, p)
+                img_model = fill_svg_path(img_model, p)
+            image = img_model
+
+            #TODO combine these. We're doing twice through the model
+
             # Actgrad
             if actgrad_target=='none':
                 image_display = image
@@ -372,6 +427,16 @@ def clear_frozen(n_clicks):
     img_frozen = False
     return str(n_clicks), *[None]*len(plots)
 
+@app.callback(
+    Output('clear-patches', 'value'),
+    Input('clear-patches', 'n_clicks'),
+    prevent_initial_call=True,
+)
+def clear_patches(n_clicks):
+    print("clearing patches")
+    global svg_paths
+    svg_paths = []
+    return str(n_clicks)
 
 if __name__ == '__main__':
     app.run_server(debug=True)
