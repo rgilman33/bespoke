@@ -234,6 +234,7 @@ class Trainer():
             #     self.nans_counter += 1
             #     self.should_stop = True
             #     break
+            ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
 
             _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
@@ -246,6 +247,9 @@ class Trainer():
                 "wp_rolls":cm(rolls_loss),
                 "wp_zs":cm(zs_loss), 
             }
+            intx_angles_loss_perc_total = angles_loss[ego_in_intx.unsqueeze(-1).expand(-1,-1,N_WPS)].sum() / angles_loss.sum()
+            logger.log({"logistical/intx_angles_loss_perc_total":intx_angles_loss_perc_total.item()})
+            logger.log({"logistical/intx_perc_total":ego_in_intx.float().mean().item()})
 
             # # te. When in doubt, stay close to prev preds
             # _, bptt, _ = wps_p.shape
@@ -268,7 +272,6 @@ class Trainer():
 
             # Leads
             lead_dist = aux_np[:,:,"lead_dist"]
-            # lead_buffer = torch.from_numpy(((lead_dist < LEAD_DIST_MAX) | (lead_dist > (LEAD_DIST_MAX+15))).astype(int)).to(device)
             leads_always_enforce = torch.from_numpy((lead_dist<LEAD_DIST_MIN) | (lead_dist>LEAD_DIST_MAX)).to(device)
             m_sees_lead = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_lead")].detach() > .3)
             m_sees_true_lead = has_lead.bool() & m_sees_lead # already sigmoided
@@ -277,7 +280,6 @@ class Trainer():
             
             # Stops
             stop_dist = aux_np[:,:,"stop_dist"]
-            #stop_buffer = torch.from_numpy(((stop_dist < STOP_DIST_MAX) | (stop_dist > (STOP_DIST_MAX+15))).astype(int)).to(device)
             stops_min_buffer = -100 if self.use_rnn else 8
             stops_always_enforce = torch.from_numpy(((stops_min_buffer<stop_dist) & (stop_dist<STOP_DIST_MIN)) | (stop_dist>STOP_DIST_MAX)).to(device)
             m_sees_stop = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3)
@@ -298,12 +300,10 @@ class Trainer():
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_dist")] *= m_sees_true_lead
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lead_speed")] *= m_sees_true_lead
 
-            ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
-
-            # # when cnn only, don't enforce stops when up close, don't enforce some losses in intx TODO put back in UNDO
-            # if not self.use_rnn: 
-            #     aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= ~ego_in_intx
-            #     aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lane_width")] *= ~ego_in_intx
+            # when cnn only, don't enforce stops when up close, don't enforce some losses in intx
+            if not self.use_rnn: 
+                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= ~ego_in_intx
+                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lane_width")] *= ~ego_in_intx
             #######################
 
             losses_to_include = AUX_TARGET_PROPS if self.use_rnn else [p for p in AUX_TARGET_PROPS if p not in ["lead_speed"]]

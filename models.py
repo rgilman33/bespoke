@@ -85,7 +85,7 @@ class EffNet(nn.Module):
         self.h = self.hidden_init.expand(1, bs, self.inner_dim).contiguous()
         self.c = self.cell_init.expand(1, bs, self.inner_dim).contiguous()
 
-    def reset_hidden_carousel(self, bs): #TODO UNDO, only used for inference, bptt always one, bs always one
+    def reset_hidden_carousel(self, bs): #NOTE, only used for inference, bptt always one, bs always one
         # self.h = torch.zeros((1,bs,self.inner_dim)).half().to(device)
         # self.c = torch.zeros((1,bs,self.inner_dim)).half().to(device)
         self.h_carousel = [self.hidden_init.expand(1, bs, self.inner_dim).contiguous().clone() for _ in range(10)]
@@ -136,14 +136,16 @@ class EffNet(nn.Module):
             x = self.backbone.act1(x)
 
             # checkpointing each block separately has same memory requirements as checkpoint_sequential (24gb)
-            # For each module 24 gb to 11gb. We could go even lower by checkpointing even finer, though I'm unable to get it, don't understand the implementation
+            # For each module 24 gb to 11gb. We could go even lower by checkpointing even finer, though I'm unable to get it, 
+            # don't understand the implementation
             # doing each module in the list we get memory blowing up
 
-            # x = checkpoint_sequential(self.backbone.blocks, 7, x)
+            x = checkpoint_sequential(self.backbone.blocks, 7, x)
 
-            for block in self.backbone.blocks: # blocks is a sequential module # TODO check this, need to see we get good perf still. Burned here in the past. Also check how much slower it is.
-                for module in block: # each block is also a sequential module
-                    x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False) # False is recommended
+            # This works, brings memory down to 11gb. Keep this in back pocket for when need it
+            # for block in self.backbone.blocks: # blocks is a sequential module # TODO check this, need to see we get good perf still. Burned here in the past. Also check how much slower it is.
+            #     for module in block: # each block is also a sequential module
+            #         x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False) # False is recommended
 
             # for module in get_children(self.backbone.blocks): # this runs out of memory also. Why?
             #     x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False)
@@ -166,7 +168,7 @@ class EffNet(nn.Module):
         z = self.fcs1_rnn(z)
 
         #if self.training and not self.is_for_viz: x = dropout_no_rescale(x, p=.2) 
-        if self.carousel: #TODO UNDO only used for inference. Awkward. Bptt always one.
+        if self.carousel: #NOTE only used for inference. Awkward. Bptt always one.
             cc = self.carousel_ix % 10
 
             test_ix = 0

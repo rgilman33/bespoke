@@ -198,7 +198,7 @@ def combine_vids(m_path_1, m_path_2, run_id):
     height1, width1, channels = frame_1.shape
     height2, width2, channels = frame_2.shape
     print(f"{f1} shape {frame_1.shape}, {f2} shape {frame_2.shape}")
-    #assert width1==width2 # currently supporting older vids TODO UNDO
+    #assert width1==width2 # currently supporting older vids
     height = height1 *2 #+ height2
     width = width1
 

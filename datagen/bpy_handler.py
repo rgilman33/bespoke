@@ -213,19 +213,47 @@ def reset_npc_objects(bpy):
     """
     In blender, clears the existing copies of the master npc object. Makes MAX_N_NPCS copies of the master npc. 
     To be run once at beginning of datagen to make sure npcs are up to date.
+
+    Also makes N_NPC_ARCHETYPES copies of the master npc body archetype and material
     """
-    # remove old npcs
+    # remove old npcs and bodies
     for o in bpy.data.objects:
-        if "npc." in o.name:
+        if "npc." in o.name: # NPCs
             bpy.data.objects.remove(o, do_unlink=True)
+        elif "_npc_body." in o.name: # npc body archetypes
+            bpy.data.objects.remove(o, do_unlink=True)
+
+    # Remove old npc materials
+    for m in bpy.data.materials:
+        if "npc." in m.name:
+            bpy.data.materials.remove(m, do_unlink=True)
+
+    available_bodies = []
+    # make n copies of master archetype body and material
+    for i in range(N_NPC_ARCHETYPES):
+        # material
+        material = bpy.data.materials["npc"].copy()
+        #material.node_tree = material.node_tree.copy()
+
+        # Body
+        c = bpy.data.objects["_npc_body"].copy() # copy master
+        c.data = c.data.copy()
+        c.modifiers["GeometryNodes"].node_group = c.modifiers["GeometryNodes"].node_group.copy()
+        bpy.data.collections['npc_bodies'].objects.link(c) # link directly into collection
+        c.data.materials.append(material) # doesn't actually have to be on that specific object i don't think
+        get_node("npc_material_assigner", c.modifiers["GeometryNodes"].node_group.nodes).inputs[2].default_value = material # this is what actually assigns material in the geonodes
+        available_bodies.append(c)
 
     # make n copies of master npc. Make the max num, we'll mute the others
     for i in range(MAX_N_NPCS):
         c = bpy.data.objects["npc"].copy()
         c.data = c.data.copy()
         c.modifiers["GeometryNodes"].node_group = c.modifiers["GeometryNodes"].node_group.copy()
-        bpy.context.collection.objects.link(c)
+        bpy.data.collections['npcs'].objects.link(c) # link directly into collection
         # we now have a copy of the form "npc.001" in the blender scene, which we'll grab and use later
+
+        get_node("npc_body_assigner", c.modifiers["GeometryNodes"].node_group.nodes).inputs[0].default_value = available_bodies[i%N_NPC_ARCHETYPES]
+
 
 class NPC():
     def __init__(self, ap, nodes, blender_object, dist_from_ego_start_go):

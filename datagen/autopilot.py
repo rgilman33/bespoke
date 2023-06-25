@@ -99,7 +99,7 @@ class Autopilot():
     def set_route(self, route):
 
         self.waypoints = np.empty((len(route), 3), dtype="float64")
-        XY_SMOOTH = 160 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. less than 160 is not sharp enough w some settings
+        XY_SMOOTH = 130 #160 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. less than 160 is not sharp enough w some settings
         # NOTE will have to be wary of this smoothing when we're doing intersections, as this may be too much. Also our close wp dist.
         self.waypoints[:,0] = moving_average(route.pos_x.to_numpy(), XY_SMOOTH)
         self.waypoints[:,1] = moving_average(route.pos_y.to_numpy(), XY_SMOOTH)
@@ -322,22 +322,24 @@ class Autopilot():
         # stopsign constrained speed
         STOPPED_SPEED = mph_to_mps(1.6)
         STOP_OUTER_DIST = 80
+        RESET_STOPSIGN_M = 10
         n_advance_wps_for_stop = int(STOP_OUTER_DIST / WP_SPACING) # always looking 100 m ahead
+        n_behind_wps_for_stop = int(RESET_STOPSIGN_M / WP_SPACING) # always looking 100 m ahead
         upcoming_wps_is_stop = self.wp_is_stop[self.current_wp_ix:self.current_wp_ix+n_advance_wps_for_stop]
+        prev_wps_is_stop = self.wp_is_stop[self.current_wp_ix-n_behind_wps_for_stop:self.current_wp_ix]
 
-        # Normal stopsign logic
+        ###############################################
+        # Normal stopsign logic. Used for moving ap
         # NONE -> "APPROACHING_STOP" or "STOPPED"
         if True in upcoming_wps_is_stop and not self.stopsign_state=="LEAVING_STOP":
             stop_ix = np.where(upcoming_wps_is_stop==True)[0][0]
-            stop_dist = abs(stop_ix * WP_SPACING)
+            stop_dist = stop_ix * WP_SPACING
             stop_dist = stop_dist if stop_dist > .1 else 0
             stop_sign_constrained_speed = np.sqrt(self.max_accel * stop_dist) 
             # the fastest we can be going now in order to hit zero m/s in the given dist at given decel
             self.stopsign_state = "APPROACHING_STOP" if self.current_speed_mps > STOPPED_SPEED else "STOPPED"
-            self.stop_dist = stop_dist
         else:
             stop_sign_constrained_speed = 1e6
-            stop_dist = DIST_NA_PLACEHOLDER
         
         # if stopped, increment counter
         # STOPPED -> LEAVING_STOP
@@ -352,7 +354,6 @@ class Autopilot():
 
         # if recently stopped, but now leaving stop-zone, reset stopsign apparatus
         # LEAVING_STOP -> NONE
-        RESET_STOPSIGN_M = 10
         if self.stopsign_state == "LEAVING_STOP" and (self.current_wp_ix-self.stopped_at_ix) > RESET_STOPSIGN_M/WP_SPACING:
             self.stopsign_state = "NONE"
 
@@ -363,19 +364,31 @@ class Autopilot():
         if True not in upcoming_wps_is_stop:
             self.stopsign_state = "NONE"
             stop_sign_constrained_speed = 1e6
-            self.stop_dist = DIST_NA_PLACEHOLDER
             self.stopped_counter = 0
             self.stopped_at_ix = None
 
-        # if self.is_ego:
-        #     if self.lead_dist < DIST_NA_PLACEHOLDER:
-        #         print(f"Lead dist {round(self.lead_dist, 2)} speed {round(self.lead_relative_speed, 2)}")
-        #     if self.stopsign_state != "NONE":
-        #         print(self.stopsign_state, round(stop_dist, 2), round(stop_sign_constrained_speed, 2))
-        #     if self.is_rando_yielding:
-        #         print("Rando yielding", self.rando_yield_counter)
-        #     if abs(self.dagger_shift) > .0:
-        #         print("Dagger shift", self.dagger_shift, self.dagger_counter)
+        ###############################################
+        # Stop dist used for targets
+        if True in upcoming_wps_is_stop:
+            stop_ix = np.where(upcoming_wps_is_stop==True)[0][0]
+            self.stop_dist = stop_ix * WP_SPACING
+        elif True in prev_wps_is_stop:
+            stop_ix = np.where(prev_wps_is_stop==True)[0][-1]
+            self.stop_dist = -(n_behind_wps_for_stop - stop_ix) * WP_SPACING
+        else:
+            self.stop_dist = DIST_NA_PLACEHOLDER
+
+        VERBOSE = False
+        if VERBOSE:
+            if self.is_ego:
+                if self.lead_dist < DIST_NA_PLACEHOLDER:
+                    print(f"Lead dist {round(self.lead_dist, 2)} speed {round(self.lead_relative_speed, 2)}")
+                if self.stop_dist < DIST_NA_PLACEHOLDER:
+                    print("stopsign", self.stopsign_state, round(self.stop_dist, 2))
+                if self.is_rando_yielding:
+                    print("Rando yielding", self.rando_yield_counter)
+                if abs(self.dagger_shift) > .0:
+                    print("Dagger shift", round(self.dagger_shift, 3), self.dagger_counter)
 
         if self.obeys_stops:
             target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
@@ -483,7 +496,7 @@ class Autopilot():
         # get_clf_range = lambda s : np.clip(s*5.0, 40., 100) # looking five seconds out, but clamped. TODO should prob be more sec ahead
         # r = get_clf_range(self.current_speed_mps)
 
-        stop_angle = angle_to_wp_from_dist_along_traj(self.angles_to_wps, self.stop_dist)
+        stop_angle = 0 if self.stop_dist<0 else angle_to_wp_from_dist_along_traj(self.angles_to_wps, self.stop_dist)
         lead_angle = angle_to_wp_from_dist_along_traj(self.angles_to_wps, self.lead_dist)
         
         self.aux[c, "speed"] = self.current_speed_mps

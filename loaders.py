@@ -434,7 +434,8 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
         to_pred_mask *= speed_mask
 
         # ego_in_intx masking. TODO i don't really like this. Need something more refined. 
-        to_pred_mask = np.where(ego_in_intx.astype(bool)[:,:,None], to_pred_mask*.5, to_pred_mask)
+        INTX_DOWNWEIGHT = .1 # brings intx roughly in line w where they should be based on proportion of data
+        to_pred_mask = np.where(ego_in_intx.astype(bool)[:,:,None], to_pred_mask*INTX_DOWNWEIGHT, to_pred_mask)
 
         to_pred_mask = torch.from_numpy(to_pred_mask).to('cuda')
         timer.log("assemble mask")

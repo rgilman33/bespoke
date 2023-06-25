@@ -117,11 +117,11 @@ BLENDER_MEMBANK_ROOT = "/media/ssd2/blender_membank_frameskip" if FRAMESKIP else
 
 BPTT = 1 #4 #8 #9
 FRAME_CAPTURE_N = 10 if FRAMESKIP else 1
-EPISODE_LEN = 1600 // FRAME_CAPTURE_N # measured in frames
+EPISODE_LEN = 1700 // FRAME_CAPTURE_N # measured in frames
 RUNS_TO_STORE_PER_PROCESS = 400 if FRAMESKIP else 64
 N_RUNNERS = 12
 
-DATA_CONSUMPTION_RATIO_LIMIT = .25 #1.5
+DATA_CONSUMPTION_RATIO_LIMIT = 1.5
 
 # trn loader
 def get_loader_should_stop():
@@ -257,6 +257,7 @@ TRAJ_WP_IXS = np.round(np.array(TRAJ_WP_DISTS) / WP_SPACING).astype('int')
 TRAJ_WP_DISTS_NP = np.array(TRAJ_WP_DISTS, dtype='float32')
 
 MAX_N_NPCS = 12
+N_NPC_ARCHETYPES = 3
 
 DIST_NA_PLACEHOLDER = 150
 
