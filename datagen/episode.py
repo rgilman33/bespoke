@@ -563,8 +563,9 @@ def randomize_appearance(timer, episode_info, run_counter):
     # vertex spacing.
     # Startup time perf very sensitive to this. Directionality lines only show up where are edges, so this strongly affects directionality appearance.
     #TODO should depend on if rd is lined. Why? Bc startup time? changed it to depend on directionlity mult NOTE only relevent w old directionality
-    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = .7 #random.uniform(.4 if directionality_mult>0 else .5, .7)
-
+    get_node("rd_base_vertex_spacing", get_variables_nodes).outputs["Value"].default_value = .6 #random.uniform(.4 if directionality_mult>0 else .5, .7)
+    # was .7 sometimes giving us too big space, not registering?
+    
     timer.log("randomize -- vertex spacing")
 
     # # tiremarks
