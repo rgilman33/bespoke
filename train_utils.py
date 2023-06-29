@@ -240,6 +240,7 @@ class Trainer():
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
             _mm = 400
             cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
+            _c = lambda t : torch.clamp(t, -_mm, _mm)
             losses = {
                 "wp_angles": cm(angles_loss),
                 "wp_headings": cm(headings_loss),
@@ -247,9 +248,16 @@ class Trainer():
                 "wp_rolls":cm(rolls_loss),
                 "wp_zs":cm(zs_loss), 
             }
-            intx_angles_loss_perc_total = angles_loss[ego_in_intx.unsqueeze(-1).expand(-1,-1,N_WPS)].sum() / angles_loss.sum()
+            intx_angles_loss_perc_total = _c(angles_loss)[ego_in_intx.unsqueeze(-1).expand(-1,-1,N_WPS)].sum() / _c(angles_loss).sum()
             logger.log({"logistical/intx_angles_loss_perc_total":intx_angles_loss_perc_total.item()})
             logger.log({"logistical/intx_perc_total":ego_in_intx.float().mean().item()})
+
+            logger.log({"logistical/angles_loss_std":_c(angles_loss).std().item()})
+            logger.log({"logistical/angles_loss_mean":_c(angles_loss).mean().item()})
+            logger.log({"logistical/angles_loss_median":_c(angles_loss).median().item()})
+            logger.log({"logistical/angles_loss_max":_c(angles_loss).max().item()})
+            logger.log({"logistical/angles_loss_min":_c(angles_loss).min().item()})
+
 
             # # te. When in doubt, stay close to prev preds
             # _, bptt, _ = wps_p.shape

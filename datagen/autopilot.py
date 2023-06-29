@@ -469,7 +469,7 @@ class Autopilot():
                                 CLOSE_RADIUS,
                                 draw_route=self.has_route) if self.has_map else self.EMPTY_MAP
         
-        EGO_IN_INTX_M = 8
+        EGO_IN_INTX_M = 10 #8
         ego_in_intx = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(EGO_IN_INTX_M/WP_SPACING)]) or \
                         any(self.is_right_turn[self.current_wp_ix:self.current_wp_ix+int(EGO_IN_INTX_M/WP_SPACING)])
         

@@ -123,6 +123,8 @@ N_RUNNERS = 12
 
 DATA_CONSUMPTION_RATIO_LIMIT = 1.5
 
+ANGLES_MASKOUT_THRESH = .45
+
 # trn loader
 def get_loader_should_stop():
     return np.load(f"{BESPOKE_ROOT}/tmp/trnloader_should_stop.npy")[0]

@@ -37,9 +37,15 @@ def xz_from_angles_and_distances(angles, wp_dists):
 def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0), thickness=1, speed_mps=None, has_route=None):
     image = copy.deepcopy(image)
 
-    if speed_mps is not None:
-        speed_mask = get_speed_mask(speed_mps, has_route)
-        max_ix = len(speed_mask[speed_mask==1])
+    # if speed_mps is not None:
+    #     speed_mask = get_speed_mask(speed_mps, has_route)
+    #     max_ix = len(speed_mask[speed_mask==1])
+    #     wp_angles = wp_angles[:max_ix]
+    #     wp_dists = wp_dists[:max_ix]
+
+    max_ix = np.where(wp_angles>ANGLES_MASKOUT_THRESH)[0]
+    if len(max_ix) > 0:
+        max_ix = max_ix[0]
         wp_angles = wp_angles[:max_ix]
         wp_dists = wp_dists[:max_ix]
 
