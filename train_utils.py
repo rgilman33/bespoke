@@ -19,6 +19,12 @@ def mse_loss_no_reduce(targets, preds, weights=None, clip=None):
         loss_no_reduce = torch.clip(loss_no_reduce, min=clip[0], max=clip[1])
     return loss_no_reduce
     
+_mae_loss_no_reduce = nn.L1Loss(reduction='none').cuda()
+def mae_loss_no_reduce(targets, preds, weights=None):
+    loss_no_reduce = _mae_loss_no_reduce(targets, preds)
+    if weights is not None:
+        loss_no_reduce *= weights
+    return loss_no_reduce
 
 class LossManager():
     """
@@ -236,11 +242,11 @@ class Trainer():
             #     break
             ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
 
-            _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
+            # _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
+            _wps_loss = mae_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
             _mm = 400
             cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
-            _c = lambda t : torch.clamp(t, -_mm, _mm)
             losses = {
                 "wp_angles": cm(angles_loss),
                 "wp_headings": cm(headings_loss),
@@ -248,15 +254,29 @@ class Trainer():
                 "wp_rolls":cm(rolls_loss),
                 "wp_zs":cm(zs_loss), 
             }
+            _c = lambda t : torch.clamp(t, -_mm, _mm)
+
             intx_angles_loss_perc_total = _c(angles_loss)[ego_in_intx.unsqueeze(-1).expand(-1,-1,N_WPS)].sum() / _c(angles_loss).sum()
             logger.log({"logistical/intx_angles_loss_perc_total":intx_angles_loss_perc_total.item()})
             logger.log({"logistical/intx_perc_total":ego_in_intx.float().mean().item()})
 
-            logger.log({"logistical/angles_loss_std":_c(angles_loss).std().item()})
-            logger.log({"logistical/angles_loss_mean":_c(angles_loss).mean().item()})
-            logger.log({"logistical/angles_loss_median":_c(angles_loss).median().item()})
-            logger.log({"logistical/angles_loss_max":_c(angles_loss).max().item()})
-            logger.log({"logistical/angles_loss_min":_c(angles_loss).min().item()})
+            rd_is_lined = aux[:,:,AUX_PROPS.index("rd_is_lined")].bool()
+            rd_is_lined_loss_perc_total = _c(angles_loss)[rd_is_lined.unsqueeze(-1).expand(-1,-1,N_WPS)].sum() / _c(angles_loss).sum()
+            logger.log({"logistical/rd_is_lined_loss_perc_total":rd_is_lined_loss_perc_total.item()})
+            logger.log({"logistical/rd_is_lined_perc_total":rd_is_lined.float().mean().item()})
+
+            # Batchwise loss statistics. What does distribution for the losses per batch item look like?
+            _ca = torch.clamp(angles_loss, -_mm, _mm).mean(-1)
+            _max = _ca.max().item()
+            _med = _ca.median().item()
+            _min = _ca.min().item()
+            logger.log({"logistical/angles_loss_std":_ca.std().item()})
+            logger.log({"logistical/angles_loss_mean":_ca.mean().item()})
+            logger.log({"logistical/angles_loss_median":_med})
+            logger.log({"logistical/angles_loss_max":_max})
+            logger.log({"logistical/angles_loss_min":_min})
+            logger.log({"logistical/angles_loss_max_median_ratio":_max/_med})
+            if _min>0: logger.log({"logistical/angles_loss_max_min_ratio":_max/(_min+.01)})
 
 
             # # te. When in doubt, stay close to prev preds
@@ -295,7 +315,7 @@ class Trainer():
             stops_enforce = stops_always_enforce | m_sees_true_stop
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stops_enforce
 
-            # Rd is lined NOTE can't do this when just starting trn TODO put back in UNDO
+            # Rd is lined NOTE can't do this when just starting trn
             lenient_is_lined = False
             if lenient_is_lined:
                 m_sees_rd_is_lined = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("rd_is_lined")].detach() > .3)
@@ -312,6 +332,7 @@ class Trainer():
             if not self.use_rnn: 
                 aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= ~ego_in_intx
                 aux_targets_losses[:,:,AUX_TARGET_PROPS.index("lane_width")] *= ~ego_in_intx
+                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("dagger_shift")] *= ((~ego_in_intx).float()*.95 + .05)
             #######################
 
             losses_to_include = AUX_TARGET_PROPS if self.use_rnn else [p for p in AUX_TARGET_PROPS if p not in ["lead_speed"]]

@@ -426,7 +426,6 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
 
         # Angles masking
         wp_angles_cummax, _ = torch.cummax(torch.from_numpy(np.abs(wp_angles)), -1) # np doesn't have cummax, torch doesn't have interp
-        print(wp_angles_cummax[0,0,:])
         to_pred_mask = np.interp(wp_angles_cummax.numpy(), [0, .2, ANGLES_MASKOUT_THRESH], [1, 1, 0]) 
 
         # # Speed masking #TODO this can be more than just no-route and lined, can use masking for any situation where is especially challenging
@@ -434,9 +433,14 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
         # speed_mask = get_speed_mask(speed, pred_full_traj) # mask out loss for wps more than n seconds ahead when no route. Otherwise full traj.
         # to_pred_mask *= speed_mask
 
-        # ego_in_intx masking. TODO i don't really like this. Need something more refined. 
+        # ego_in_intx masking
         INTX_DOWNWEIGHT = .05 #.1 # brings intx roughly in line w where they should be based on proportion of data
         to_pred_mask = np.where(ego_in_intx.astype(bool)[:,:,None], to_pred_mask*INTX_DOWNWEIGHT, to_pred_mask)
+
+        # dirtgravel masking
+        DIRTGRAVEL_DOWNWEIGHT = .4
+        to_pred_mask = np.where(rd_is_lined.astype(bool)[:,:,None], to_pred_mask, to_pred_mask*DIRTGRAVEL_DOWNWEIGHT)
+
 
         to_pred_mask = torch.from_numpy(to_pred_mask).to('cuda')
 

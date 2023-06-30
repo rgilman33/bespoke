@@ -43,11 +43,12 @@ def draw_wps(image, wp_angles, wp_dists=np.array(TRAJ_WP_DISTS), color=(255,0,0)
     #     wp_angles = wp_angles[:max_ix]
     #     wp_dists = wp_dists[:max_ix]
 
-    max_ix = np.where(wp_angles>ANGLES_MASKOUT_THRESH)[0]
+    max_ix = np.where(np.abs(wp_angles)>ANGLES_MASKOUT_THRESH)[0]
     if len(max_ix) > 0:
-        max_ix = max_ix[0]
+        max_ix = max(max_ix[0], 1)
         wp_angles = wp_angles[:max_ix]
         wp_dists = wp_dists[:max_ix]
+    # print(max_ix, wp_angles)
 
     wp_xs, wp_zs = xz_from_angles_and_distances(wp_angles, wp_dists)
     wp_ys = np.ones_like(wp_xs) * -1.5

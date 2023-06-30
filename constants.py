@@ -123,7 +123,7 @@ N_RUNNERS = 12
 
 DATA_CONSUMPTION_RATIO_LIMIT = 1.5
 
-ANGLES_MASKOUT_THRESH = .45
+ANGLES_MASKOUT_THRESH = .5
 
 # trn loader
 def get_loader_should_stop():
