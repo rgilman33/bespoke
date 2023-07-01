@@ -235,6 +235,25 @@ def pretty_print(d):
     for k,v in d.items():
         print(f"{k.split('/')[-1]}: {round(v, 3)}")
 
+class MedianTracker():
+    def __init__(self):
+        self.median_emas = {}
+        self.counters = {}
+        self.momentum_lookup = lambda c : np.interp(c, [0,100], [.5, .99]) # gradually increase momentum, allow more sensitive in first few updates
+
+    def step(self, loss_dict):
+        # loss is in pytorch, only batch dim
+        for k,v in loss_dict.items():
+            median = v.median().item()
+            if k in self.median_emas:
+                m = self.momentum_lookup(self.counters[k])
+                self.median_emas[k] = m*self.median_emas[k] + (1-m)*median
+                self.counters[k] += 1
+            else:
+                self.median_emas[k] = median
+                self.counters[k] = 0
+
+
 
 OBS_PER_SEC_F = "obs_per_sec.npy"
 RENDER_TIME_F = "render_time.npy"

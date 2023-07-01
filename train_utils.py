@@ -170,6 +170,7 @@ class Trainer():
     def _run_epoch(self):
         model, dataloader = self.model, self.dataloader
         logger = Logger()
+        median_tracker = MedianTracker()
         train_pause = 0 #seconds
         model.reset_hidden(dataloader.bs)
         self.reset_worsts()
@@ -242,62 +243,74 @@ class Trainer():
             #     break
             ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
 
-            # _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
+            ##################
+            # wp losses
+            ##################
+
             _wps_loss = mae_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
             
-            
-            # Batchwise loss statistics. What does distribution for the losses per batch item look like?
-            _angles_loss = angles_loss.mean(-1).mean(-1) # collapse wps dim and bptt dim
-            _max = _angles_loss.max().item()
-            _med = _angles_loss.median().item()
-            _med_h = 1.4 # hardcoded for now. Will use ema.
-            _min = _angles_loss.min().item()
-            m3 = (_angles_loss > _med_h*3).sum().item()
-            logger.log({"logistical/angles_loss_std":_angles_loss.std().item()})
-            logger.log({"logistical/angles_loss_mean":_angles_loss.mean().item()})
-            logger.log({"logistical/angles_loss_median":_med})
-            logger.log({"logistical/angles_loss_max":_max})
-            logger.log({"logistical/angles_loss_min":_min})
-            logger.log({"logistical/angles_loss_max_median_ratio":_max/_med})
-            logger.log({"logistical/angles_loss_m3_perc":m3/_angles_loss.shape[0]})
-            if _min>0: logger.log({"logistical/angles_loss_max_min_ratio":_max/(_min+.01)})
-            
-            save_img_t = (_angles_loss > _med_h*30)
+            # collapse wps dim and bptt dim. Now have single loss for each batch item #TODO should do smart mean, not using zeroed out values at end of traj
+            # Our unit of analysis here is the batch item. Collapsing bptt is a nonsignificant thing to do, but i like the simplicity of 
+            # dealing w batch items only. 
+            angles_loss = angles_loss.mean(-1).mean(-1); headings_loss = headings_loss.mean(-1).mean(-1); curvatures_loss = curvatures_loss.mean(-1).mean(-1)
+            rolls_loss = rolls_loss.mean(-1).mean(-1); zs_loss = zs_loss.mean(-1).mean(-1)
+
+            median_emas = median_tracker.step({"wp_angles":angles_loss,
+                                                "wp_headings":headings_loss,
+                                                "wp_curvatures":curvatures_loss,
+                                                "wp_rolls":rolls_loss,
+                                                "wp_zs":zs_loss,
+                                                })
+
+            CLAMP_MEDIAN_MULTIPLE, SAVE_IMG_MEDIAN_MULTIPLE, MASKOUT_MEDIAN_MULTIPLE = 3, 35, 45
+
+            # Save bad imgs for debugging
+            save_img_t = (angles_loss > median_emas["wp_angles"]*SAVE_IMG_MEDIAN_MULTIPLE)
             if save_img_t.sum().item()>0:
                 batch = (img[save_img_t], wps[save_img_t], wps_p[save_img_t], aux[save_img_t], aux_targets_p[save_img_t], obsnet_out[save_img_t])
                 _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
-                # save img to file
-                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/e{self.current_epoch}u{update_counter}m{round(_angles_loss[save_img_t][0].item())}.png", _img)
+                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/e{self.current_epoch}u{update_counter}m{round(angles_loss[save_img_t][0].item())}.png", _img)
 
-            maskout = (_angles_loss > _med_h*50)
+            # Maskout the worst, not using their loss at all, discarding the data. Using wp_angles to maskout all wp losses
+            # The assumption is this is useless, harmful data, bc our procgen isn't perfect. 
+            # TODO can also maskout aux target losses below using this mask
+            maskout = (angles_loss > median_emas["wp_angles"]*MASKOUT_MEDIAN_MULTIPLE)
             if maskout.sum() > 0:
-                print("masking out angles loss")
-                _angles_loss[maskout] = 0
-            _angles_loss_clamped = torch.clamp(_angles_loss, max=_med_h*3)
-            # perc_drop = (_angles_loss.sum() - _angles_loss_clamped.sum()) / _angles_loss.sum()
-            # print(f"clamped {m3} obs, dropped loss by {round(perc_drop.item(), 2)} perc")
-            
-            _mm = 400
-            cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
-            losses = {
-                #"wp_angles": cm(angles_loss),
-                "wp_angles": _angles_loss_clamped.mean(),
-                "wp_headings": cm(headings_loss),
-                "wp_curvatures": cm(curvatures_loss),
-                "wp_rolls":cm(rolls_loss),
-                "wp_zs":cm(zs_loss), 
-            }
-            _c = lambda t : torch.clamp(t, -_mm, _mm)
+                print("masking out based on angles loss")
+                angles_loss[maskout] = 0; headings_loss[maskout] = 0; curvatures_loss[maskout] = 0; rolls_loss[maskout] = 0; zs_loss[maskout] = 0
 
-            intx_angles_loss_perc_total = _c(angles_loss)[ego_in_intx.unsqueeze(-1).expand(-1,-1,N_WPS)].sum() / _c(angles_loss).sum()
-            logger.log({"logistical/intx_angles_loss_perc_total":intx_angles_loss_perc_total.item()})
-            logger.log({"logistical/intx_perc_total":ego_in_intx.float().mean().item()})
+            # log maskout percentage, ensure we're not discarding too much
+            logger.log({"logistical/maskout_perc":maskout.float().mean().item()})
+
+
+            # Clamping all losses to multiple of their respective medians 
+            # Each item in the batch will never account for more than clamped proportion of loss. Addressing outliers, focusing attn on fine-grained details.
+            c = lambda l, ln : torch.clamp(l, max=median_emas[ln]*CLAMP_MEDIAN_MULTIPLE)
+
+            # Log the amount loss is reduced by the clamping, for wp_angles only. Diagnostic
+            angles_loss_clamped = c(angles_loss, "wp_angles")
+            _a = angles_loss.mean().item()
+            logger.log({"logistical/angles_loss_clamp_reduction":(_a - angles_loss_clamped.mean().item())/_a})
+
+            losses = {
+                "wp_angles": angles_loss_clamped.mean(),
+                "wp_headings": c(headings_loss, "wp_headings").mean(),
+                "wp_curvatures": c(curvatures_loss, "wp_curvatures").mean(),
+                "wp_rolls":c(rolls_loss, "wp_rolls").mean(),
+                "wp_zs":c(zs_loss, "wp_zs").mean(), 
+            }
+
+
+            # Logging the proportion of loss that is coming from intx, rd_is_lined, as proportion of total loss
+            intx_angles_loss_perc = angles_loss_clamped[ego_in_intx[:,0]].sum().item() / angles_loss.sum().item() # taking first bptt item of ego_in_intx
+            logger.log({"logistical/intx_angles_loss_perc":intx_angles_loss_perc})
+            logger.log({"logistical/intx_perc":ego_in_intx[:,0].float().mean().item()})
 
             rd_is_lined = aux[:,:,AUX_PROPS.index("rd_is_lined")].bool()
-            rd_is_lined_loss_perc_total = _c(angles_loss)[rd_is_lined.unsqueeze(-1).expand(-1,-1,N_WPS)].sum() / _c(angles_loss).sum()
-            logger.log({"logistical/rd_is_lined_loss_perc_total":rd_is_lined_loss_perc_total.item()})
-            logger.log({"logistical/rd_is_lined_perc_total":rd_is_lined.float().mean().item()})
+            rd_is_lined_angles_loss_perc = angles_loss_clamped[rd_is_lined[:,0]].sum().item() / angles_loss.sum().item() # taking first bptt item 
+            logger.log({"logistical/rd_is_lined_loss_perc":rd_is_lined_angles_loss_perc})
+            logger.log({"logistical/rd_is_lined_perc":rd_is_lined[:,0].float().mean().item()})
 
 
 
@@ -366,7 +379,7 @@ class Trainer():
             # pitch_loss = mse_loss(aux[:,:,AUX_PROPS.index('pitch')], obsnet_out[:,:,OBSNET_PROPS.index('pitch')])
             # yaw_loss = mse_loss(aux[:,:,AUX_PROPS.index('yaw')], obsnet_out[:,:,OBSNET_PROPS.index('yaw')])
             unc_p = obsnet_out[:,:,OBSNET_PROPS.index('unc_p')]
-            unc_loss = mse_loss(torch.log(angles_loss.mean(dim=-1).detach()), unc_p)
+            unc_loss = mse_loss(torch.log(angles_loss_clamped.mean().detach()), unc_p)
             losses.update({
                 #"pitch":pitch_loss,
                 #"yaw":yaw_loss,
@@ -411,10 +424,11 @@ class Trainer():
             CHECK_FOR_WORST_FREQ = 10 # takes a long time, so not each update
             if update_counter%CHECK_FOR_WORST_FREQ==0 and self.log_wandb and img is not None:
                 with torch.no_grad():
-                    # collapse the wp traj for any traj related losses
+
                     b = (img, wps, wps_p, aux, aux_targets_p, obsnet_out)
 
-                    angles_loss,_ = angles_loss.max(-1)
+                    # using the masked-out but not clamped losses for viewing wps losses. We've collapsed along bptt for wps losses above
+                    angles_loss = angles_loss[:,None] # padding the bptt dim bc that's what fn expects. Collapsed bptt above w new apparatus. Can update this fn later
                     angles_loss_no_intx = angles_loss * ~ego_in_intx
                     self.update_worst("angles", angles_loss_no_intx, b)
 
