@@ -245,10 +245,44 @@ class Trainer():
             # _wps_loss = mse_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
             _wps_loss = mae_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
+            
+            
+            # Batchwise loss statistics. What does distribution for the losses per batch item look like?
+            _angles_loss = angles_loss.mean(-1).mean(-1) # collapse wps dim and bptt dim
+            _max = _angles_loss.max().item()
+            _med = _angles_loss.median().item()
+            _med_h = 1.4 # hardcoded for now. Will use ema.
+            _min = _angles_loss.min().item()
+            m3 = (_angles_loss > _med_h*3).sum().item()
+            logger.log({"logistical/angles_loss_std":_angles_loss.std().item()})
+            logger.log({"logistical/angles_loss_mean":_angles_loss.mean().item()})
+            logger.log({"logistical/angles_loss_median":_med})
+            logger.log({"logistical/angles_loss_max":_max})
+            logger.log({"logistical/angles_loss_min":_min})
+            logger.log({"logistical/angles_loss_max_median_ratio":_max/_med})
+            logger.log({"logistical/angles_loss_m3_perc":m3/_angles_loss.shape[0]})
+            if _min>0: logger.log({"logistical/angles_loss_max_min_ratio":_max/(_min+.01)})
+            
+            save_img_t = (_angles_loss > _med_h*30)
+            if save_img_t.sum().item()>0:
+                batch = (img[save_img_t], wps[save_img_t], wps_p[save_img_t], aux[save_img_t], aux_targets_p[save_img_t], obsnet_out[save_img_t])
+                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
+                # save img to file
+                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/e{self.current_epoch}u{update_counter}m{round(_angles_loss[save_img_t][0].item())}.png", _img)
+
+            maskout = (_angles_loss > _med_h*50)
+            if maskout.sum() > 0:
+                print("masking out angles loss")
+                _angles_loss[maskout] = 0
+            _angles_loss_clamped = torch.clamp(_angles_loss, max=_med_h*3)
+            # perc_drop = (_angles_loss.sum() - _angles_loss_clamped.sum()) / _angles_loss.sum()
+            # print(f"clamped {m3} obs, dropped loss by {round(perc_drop.item(), 2)} perc")
+            
             _mm = 400
             cm = lambda t : torch.clamp(t, -_mm, _mm).mean()
             losses = {
-                "wp_angles": cm(angles_loss),
+                #"wp_angles": cm(angles_loss),
+                "wp_angles": _angles_loss_clamped.mean(),
                 "wp_headings": cm(headings_loss),
                 "wp_curvatures": cm(curvatures_loss),
                 "wp_rolls":cm(rolls_loss),
@@ -265,18 +299,6 @@ class Trainer():
             logger.log({"logistical/rd_is_lined_loss_perc_total":rd_is_lined_loss_perc_total.item()})
             logger.log({"logistical/rd_is_lined_perc_total":rd_is_lined.float().mean().item()})
 
-            # Batchwise loss statistics. What does distribution for the losses per batch item look like?
-            _ca = torch.clamp(angles_loss, -_mm, _mm).mean(-1)
-            _max = _ca.max().item()
-            _med = _ca.median().item()
-            _min = _ca.min().item()
-            logger.log({"logistical/angles_loss_std":_ca.std().item()})
-            logger.log({"logistical/angles_loss_mean":_ca.mean().item()})
-            logger.log({"logistical/angles_loss_median":_med})
-            logger.log({"logistical/angles_loss_max":_max})
-            logger.log({"logistical/angles_loss_min":_min})
-            logger.log({"logistical/angles_loss_max_median_ratio":_max/_med})
-            if _min>0: logger.log({"logistical/angles_loss_max_min_ratio":_max/(_min+.01)})
 
 
             # # te. When in doubt, stay close to prev preds

@@ -434,7 +434,7 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
         # to_pred_mask *= speed_mask
 
         # ego_in_intx masking
-        INTX_DOWNWEIGHT = .05 #.1 # brings intx roughly in line w where they should be based on proportion of data
+        INTX_DOWNWEIGHT = .2 #.1 # brings intx roughly in line w where they should be based on proportion of data
         to_pred_mask = np.where(ego_in_intx.astype(bool)[:,:,None], to_pred_mask*INTX_DOWNWEIGHT, to_pred_mask)
 
         # dirtgravel masking
