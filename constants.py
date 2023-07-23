@@ -119,9 +119,9 @@ BPTT = 1 #4 #8 #9
 FRAME_CAPTURE_N = 10 if FRAMESKIP else 1
 EPISODE_LEN = 1700 // FRAME_CAPTURE_N # measured in frames
 RUNS_TO_STORE_PER_PROCESS = 400 if FRAMESKIP else 64
-N_RUNNERS = 12
+N_RUNNERS = 8 #12
 
-DATA_CONSUMPTION_RATIO_LIMIT = 1.5
+DATA_CONSUMPTION_RATIO_LIMIT = 1.0 #1.5
 
 ANGLES_MASKOUT_THRESH = .5
 
@@ -239,15 +239,15 @@ class MedianTracker():
     def __init__(self):
         self.median_emas = {}
         self.counters = {}
-        self.momentum_lookup = lambda c : np.interp(c, [0,100], [.5, .99]) # gradually increase momentum, allow more sensitive in first few updates
+        self.momentum_lookup = lambda c : np.interp(c, [0,50,100,200], [.5, .9, .99, .995]) # gradually increase momentum, allow more sensitive in first few updates
 
     def step(self, loss_dict):
         # loss is in pytorch, only batch dim
         for k,v in loss_dict.items():
             median = v.median().item()
             if k in self.median_emas:
-                m = self.momentum_lookup(self.counters[k])
-                self.median_emas[k] = m*self.median_emas[k] + (1-m)*median
+                momentum = self.momentum_lookup(self.counters[k])
+                self.median_emas[k] = momentum*self.median_emas[k] + (1-momentum)*median
                 self.counters[k] += 1
             else:
                 self.median_emas[k] = median
@@ -279,12 +279,12 @@ TRAJ_WP_DISTS_NP = np.array(TRAJ_WP_DISTS, dtype='float32')
 
 MAX_N_NPCS = 12
 N_NPC_ARCHETYPES = 3
-
+N_RDSIGN_ARCHETYPES = 5
 DIST_NA_PLACEHOLDER = 150
 
 # used for targets
-LEAD_DIST_MIN, LEAD_DIST_MAX = 50, 100
-STOP_DIST_MIN, STOP_DIST_MAX = 40, 80
+LEAD_DIST_MIN, LEAD_DIST_MAX = 40, 110
+STOP_DIST_MIN, STOP_DIST_MAX = 35, 90
 
 class EpisodeInfo():
     def __init__(self):

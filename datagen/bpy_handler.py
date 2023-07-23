@@ -215,25 +215,26 @@ def reset_npc_objects(bpy):
     To be run once at beginning of datagen to make sure npcs are up to date.
 
     Also makes N_NPC_ARCHETYPES copies of the master npc body archetype and material
+    NOTE also resetting rdsigns, prob others later. Change name to more general
     """
+
     # remove old npcs and bodies
     for o in bpy.data.objects:
-        if "npc." in o.name: # NPCs
-            bpy.data.objects.remove(o, do_unlink=True)
-        elif "_npc_body." in o.name: # npc body archetypes
+        if len([n for n in ["npc.", "_npc_body.", "rd_signs."] if n in o.name])>0: # NPCs
             bpy.data.objects.remove(o, do_unlink=True)
 
     # Remove old npc materials
     for m in bpy.data.materials:
-        if "npc." in m.name:
+        if len([n for n in ["npc.", "rdsigns."] if n in m.name])>0:
             bpy.data.materials.remove(m, do_unlink=True)
 
+    ###################
+    # NPCs
     available_bodies = []
     # make n copies of master archetype body and material
     for i in range(N_NPC_ARCHETYPES):
         # material
         material = bpy.data.materials["npc"].copy()
-        #material.node_tree = material.node_tree.copy()
 
         # Body
         c = bpy.data.objects["_npc_body"].copy() # copy master
@@ -253,6 +254,21 @@ def reset_npc_objects(bpy):
         # we now have a copy of the form "npc.001" in the blender scene, which we'll grab and use later
 
         get_node("npc_body_assigner", c.modifiers["GeometryNodes"].node_group.nodes).inputs[0].default_value = available_bodies[i%N_NPC_ARCHETYPES]
+
+    ###################
+    # Rdsigns
+    # make n copies of master archetype body and material
+    for i in range(N_RDSIGN_ARCHETYPES):
+        # material
+        material = bpy.data.materials["rdsigns"].copy()
+
+        # Body
+        c = bpy.data.objects["rd_signs"].copy() # copy master
+        c.data = c.data.copy()
+        c.modifiers["GeometryNodes"].node_group = c.modifiers["GeometryNodes"].node_group.copy()
+        bpy.data.collections['rdsign_bodies'].objects.link(c) # link directly into collection
+        c.data.materials.append(material) # doesn't actually have to be on that specific object i don't think
+        get_node("rdsign_material_assigner", c.modifiers["GeometryNodes"].node_group.nodes).inputs[2].default_value = material # this is what actually assigns material in the geonodes
 
 
 class NPC():

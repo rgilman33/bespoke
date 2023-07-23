@@ -39,8 +39,8 @@ grass_trees_material = bpy.data.materials["grass_trees"].node_tree.nodes
 stopsign_material = bpy.data.materials["stopsign"].node_tree.nodes
 stopsign_nodes = bpy.data.node_groups['stopsign_nodes'].nodes
 
-rdsigns_material = bpy.data.materials["rdsigns"].node_tree.nodes
-rdsigns_nodes = bpy.data.node_groups['rdsigns_nodes'].nodes
+# rdsigns_material = bpy.data.materials["rdsigns"].node_tree.nodes
+# rdsigns_nodes = bpy.data.node_groups['rdsigns_nodes'].nodes
 
 grass_material = bpy.data.materials["rdside_grass_master"].node_tree.nodes
 
@@ -83,24 +83,24 @@ def make_map(timer):
     is_single_rd = True #random.random() < 1 
     get_node("is_single_rd", get_variables_nodes).outputs["Value"].default_value = 1 if is_single_rd else 0
 
-    HAS_LANELINES_PROB = .8 #.7 # .8
+    is_neighborhood = random.random() < .1
+
+    HAS_LANELINES_PROB = 0 if is_neighborhood else .9 #.7 # .8
     rd_is_lined = random.random() < HAS_LANELINES_PROB
 
     is_highway = rd_is_lined and random.random() < .3 # highways are faster, wider laned, always lined, no bumps, more often banked, no smaller-scale XY noise
     wide_shoulder_add = random.uniform(.2, 6) if (rd_is_lined and random.random() < .2) else 0 # no wide shoulder add when dirtgravel
 
-    is_just_straight = random.random()<.05
+    is_just_straight = random.random()<(.5 if is_neighborhood else .05)
 
     left_shift = 0
     if rd_is_lined:
         lane_width = random.uniform(2.9, 3.9) if is_highway else random.uniform(2.4, 3.4)
-    else: # dirt gravel
-        if random.random()<.85:
+    else: # No lines
+        if is_neighborhood or random.random()<.85: # normal to wide
             lane_width = 4.
-            if random.random() < .05: # manually forcing a bit more wide dirtgravel, as it's especially challenging
-                left_shift = -.4
-            else:
-                left_shift = -random.uniform(.4, lane_width/2)
+            extra_wide_prob = .5 if is_neighborhood else .05
+            left_shift = -random.uniform(.4, .7) if random.random()<extra_wide_prob else -random.uniform(.7, lane_width/2)
         else: # narrow dirt gravel
             lane_width = 2.2 #random.uniform(2.4, 4)
             left_shift = -lane_width/2
@@ -108,7 +108,7 @@ def make_map(timer):
     lane_width_actual = lane_width + left_shift
 
     has_stops = True
-    if (is_highway and random.random()<.5) or lane_width_actual<2.8:
+    if random.random()<.1 or lane_width_actual<2.3: # all is-lined should have stops
         has_stops = False
     #has_stops = 1 if rd_is_lined or lane_width_actual>3. else 0 # wide gravel also can have stops
     get_node("has_stops", get_variables_nodes).outputs["Value"].default_value = has_stops
@@ -121,8 +121,8 @@ def make_map(timer):
 
     get_node("has_lanelines", get_variables_nodes).outputs["Value"].default_value = 1 if rd_is_lined else 0
 
-    ONLY_YELLOW_LINES_PROB = .25 # applied after lanelines prob
-    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and rd_is_lined and not wide_shoulder_add>0 and lane_width<2.9
+    ONLY_YELLOW_LINES_PROB = .3 # applied after lanelines prob
+    is_only_yellow_lined = random.random() < ONLY_YELLOW_LINES_PROB and rd_is_lined and not wide_shoulder_add>0 and lane_width<2.7
     get_node("is_only_yellow_lined", meshify_lines_nodes).outputs["Value"].default_value = 1 if is_only_yellow_lined else 0
 
     IS_COUNTRY_MTN_PROB = .25 # interspersed very curvy with totally straight. Train slowdowns and sharp curves.
@@ -136,7 +136,7 @@ def make_map(timer):
     # the cube in a janky way, but i believe is fine.
 
     # Rd roll / supereleveation
-    RD_IS_BANKED_PROB = 0 if (not rd_is_lined or is_just_straight) else .7 if is_highway else .4
+    RD_IS_BANKED_PROB = 0 if (not rd_is_lined or is_just_straight or is_neighborhood) else .7 if is_highway else .4
     rd_is_banked = random.random()<RD_IS_BANKED_PROB
     get_node("max_rd_roll", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.02, .05) if is_country_mtn else random.uniform(.1, .14) # max roll is 8 deg (.14 rad) on rural rds in WY
     get_node("max_roll_at_this_curvature", z_adjustment_nodes).outputs["Value"].default_value = random.uniform(.06, .16)
@@ -150,6 +150,7 @@ def make_map(timer):
     # XY noise scale one
     noise_scale_1 = random.uniform(.15, .45) # /= 100 in blender
     noise_mult_1_max = np.interp(noise_scale_1, [.15, .45], [1000, 500])
+    noise_mult_1_max *= .5 if is_neighborhood else 1 
     get_node("loop_noise_scale_1", rd_noise_nodes).outputs["Value"].default_value = noise_scale_1
     nm1 = 0 if (is_just_straight or is_country_mtn) else noise_mult_1_max*random.uniform((.7 if rd_is_banked else .3), 1)
     get_node("loop_noise_mult_1", rd_noise_nodes).outputs["Value"].default_value = nm1
@@ -158,8 +159,8 @@ def make_map(timer):
     noise_scale_2 = random.uniform(.6, 1.1) #  /= 100 in blender
     get_node("loop_noise_scale_2", rd_noise_nodes).outputs["Value"].default_value = noise_scale_2
     nm2_r = random.random()
-    no_noise_2 = (nm2_r<.7 or is_highway or is_wide_laned or is_just_straight)
-    nm2 = random.uniform(150,300) if is_country_mtn else 0 if no_noise_2 else random.uniform(20, 60) if nm2_r<.9 else random.uniform(60, 100)
+    no_noise_2 = (nm2_r<.7 or is_highway or is_wide_laned or is_just_straight or is_neighborhood)
+    nm2 = 0 if no_noise_2 else random.uniform(150,300) if is_country_mtn else random.uniform(20, 60) if nm2_r<.9 else random.uniform(60, 100)
     get_node("loop_noise_mult_2", rd_noise_nodes).outputs["Value"].default_value = nm2
 
     #############
@@ -210,11 +211,12 @@ def make_map(timer):
     intersection_3 = get_node("intersection_3", get_map_nodes)
 
     single_rd = [intersection_1, intersection_2, intersection_3]
+    can_have_outer_2 = rd_is_lined and not is_only_yellow_lined
     for intersection in single_rd:
         set_intersection_property(intersection, "has_top_r", True if random.random()<.2 else False)
 
         for n in ["top_right", "top_left", "bottom_right", "bottom_left"]:
-            set_intersection_property(intersection, f"{n}_has_outer_2", True if (random.random()<.02 and rd_is_lined) else False)
+            set_intersection_property(intersection, f"{n}_has_outer_2", True if (random.random()<.02 and can_have_outer_2) else False)
         
     # town
     intersection_a1 = get_node("intersection_a1", get_map_nodes)
@@ -298,6 +300,9 @@ def make_map(timer):
     episode_info.has_stops = has_stops
     episode_info.is_only_yellow_lined = is_only_yellow_lined
     episode_info.wide_shoulder_add = wide_shoulder_add
+    episode_info.is_neighborhood = is_neighborhood
+    episode_info.is_just_straight = is_just_straight
+    episode_info.is_country_mtn = is_country_mtn
 
     return episode_info    
 
@@ -350,7 +355,7 @@ def randomize_appearance(timer, episode_info, run_counter):
 
     # lanelines mod 
     get_node("y_mod_period", get_section_nodes).outputs["Value"].default_value = random.uniform(8, 24) 
-    get_node("y_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .8)
+    get_node("y_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .7)
 
     get_node("w_mod_period", get_section_nodes).outputs["Value"].default_value = random.uniform(8, 18)
     get_node("w_mod_space", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, .8)
@@ -400,9 +405,10 @@ def randomize_appearance(timer, episode_info, run_counter):
     get_node("white_line_noise_mult_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 40)
     get_node("white_line_noise_mult_large", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .2 else random.uniform(1, 20)
     
-    get_node("white_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.03, .09)
+    min_noise_scale = .03 
+    get_node("white_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(min_noise_scale, .12)
     get_node("white_line_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, 10)
-    get_node("yellow_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.03, .09)
+    get_node("yellow_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(min_noise_scale, .12)
     get_node("yellow_line_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, 10)
 
     get_node("yellow_line_specular", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .8 else random.uniform(.2, .5)
@@ -439,16 +445,18 @@ def randomize_appearance(timer, episode_info, run_counter):
     ############### # all is relative to edge of rd, ie outer white line
     # inner_shoulder is the same surface as rd
 
-    inner_shoulder_width = .25 if episode_info.is_only_yellow_lined else .8 if not episode_info.rd_is_lined else (episode_info.wide_shoulder_add*.5 + random.uniform(.2, 1.5))
+    inner_shoulder_width = .4 if episode_info.is_only_yellow_lined else .8 if not episode_info.rd_is_lined else (episode_info.wide_shoulder_add*.5 + random.uniform(.2, 1.5))
 
     # outer shoulder is different surface from rd
-    outer_shoulder_width = random.uniform(0.01, .3)
+    outer_shoulder_max = 3 if episode_info.is_neighborhood else .5
+    outer_shoulder_width = random.uniform(0.01, outer_shoulder_max)
 
     # constant inner-shoulder width when only-yellow or dirtgravel, and narrower edge fade (.3 -> 1.5) rather than (.3, 3.0)
     rd_start_fade = inner_shoulder_width 
-    rd_fade_width = .3*(10**random.uniform(0, .7)) if (episode_info.is_only_yellow_lined or not episode_info.rd_is_lined) else .3*(10**random.uniform(0, 1.))
+    sharp_edge = (episode_info.is_neighborhood or episode_info.is_only_yellow_lined or not episode_info.rd_is_lined)
+    rd_fade_width = random.uniform(.05, .5) if sharp_edge else .3*(10**random.uniform(0, 1.))
     outer_shoulder_start_fade = rd_start_fade + outer_shoulder_width # inner + outer shoulder widths
-    outer_shoulder_fade_width = random.uniform(0.1, 1.)
+    outer_shoulder_fade_width = random.uniform(0.05, .5) if sharp_edge else random.uniform(0.1, 1.)
 
     get_node("rd_start_fade", dirt_gravel_nodes).outputs["Value"].default_value = rd_start_fade
     get_node("rd_fade_width", dirt_gravel_nodes).outputs["Value"].default_value = rd_fade_width
@@ -465,7 +473,7 @@ def randomize_appearance(timer, episode_info, run_counter):
 
     get_node("terrain_up_gate", main_map_nodes).mute = has_adv_billboards
 
-    get_node("rd_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, 2.)
+    get_node("rd_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random()<.2 else random.uniform(0, 1.) #2.)
     get_node("shoulder_normal_strength", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, 5)
 
     get_node("rd_roughness", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.3, .9)
@@ -476,12 +484,21 @@ def randomize_appearance(timer, episode_info, run_counter):
 
     get_node("rd_overlay_mixer", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8)
 
-    ##
-    get_node("rd_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = 2*10**random.uniform(1.0, 2.5)
-    get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random()<.1 else .1*(10**random.uniform(1, 2.0))
+    ## Rd and shoulder edges
+    limited_edge_noise = False if episode_info.is_just_straight else \
+                            (random.random() < .2 or episode_info.is_only_yellow_lined or episode_info.is_neighborhood)
 
-    get_node("shoulder_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = 10**random.uniform(1.0, 4.0)
-    get_node("shoulder_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, 6.0)
+    rd_edge_noise_scale = 2*10**random.uniform(1.0, 2.5) # 20 -> 600
+    _m = np.interp(rd_edge_noise_scale, [20,600], [3, 10])
+    _m *= .2 if limited_edge_noise else 1.0
+    get_node("rd_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = rd_edge_noise_scale
+    get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, _m)
+
+    shoulder_edge_noise_scale = 2*10**random.uniform(1.0, 2.5) # 20 -> 600
+    _m = np.interp(shoulder_edge_noise_scale, [20,600], [3, 10])
+    _m *= .2 if limited_edge_noise else 1.0
+    get_node("shoulder_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = shoulder_edge_noise_scale
+    get_node("shoulder_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, _m)
     ##
 
     get_node("rd_hue", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.48, .52)
@@ -503,6 +520,21 @@ def randomize_appearance(timer, episode_info, run_counter):
         get_node("rd_overlay_v", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .5) 
 
     timer.log("randomize -- rd, terrain")
+
+    # Pullouts
+    has_pullouts = random.random() < .95 and not episode_info.is_country_mtn
+    get_node("pullout_loc", get_section_nodes).outputs["Value"].default_value = random.randint(30, 160) if has_pullouts else 1000
+    pullout_length_max = 50 if episode_info.is_just_straight else 25
+    get_node("pullout_length", get_section_nodes).outputs["Value"].default_value = random.uniform(pullout_length_max/2, pullout_length_max)
+    get_node("pullout_sharpness", get_section_nodes).outputs["Value"].default_value = random.uniform(1, 20)
+    get_node("pullout_width", get_section_nodes).outputs["Value"].default_value = random.uniform(.5, 5)
+
+
+    # adversarial voronoi
+    get_node("yellow_or_white_adv_voronoi", dirt_gravel_nodes).outputs["Value"].default_value = random.choice([0, 1])
+    get_node("adv_voronoi_width", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.002, .006)
+    get_node("adv_voronoi_maskout", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 6)
+
 
     # shadows, dapples
     is_puddles = random.random() < .2
@@ -641,7 +673,8 @@ def randomize_appearance(timer, episode_info, run_counter):
     ######################
     get_node("red_hue", stopsign_material).outputs["Value"].default_value  = random.uniform(-.1, .07)
     get_node("red_sat", stopsign_material).outputs["Value"].default_value  = random.uniform(.7, 1.0)
-    get_node("red_val", stopsign_material).outputs["Value"].default_value  = random.uniform(.3, 1.0)
+    get_node("red_val", stopsign_material).outputs["Value"].default_value  = random.uniform(.02, 1.0)
+    get_node("white_val", stopsign_material).outputs["Value"].default_value  = random.uniform(.2, 1.0)
     get_node("metallic", stopsign_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.0, 1.0)
     get_node("roughness", stopsign_material).outputs["Value"].default_value = .5 if random.random()<.5 else random.uniform(.0, 1.0)
     get_node("base_sat", stopsign_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.3, .8)
@@ -654,12 +687,12 @@ def randomize_appearance(timer, episode_info, run_counter):
     get_node("stopsign_y_scale", stopsign_nodes).outputs["Value"].default_value = random.uniform(.8, 1.2)
     get_node("rotation_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
     get_node("rotation_y", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.05, .05)
-    get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.9, .2)
-    get_node("rotation_ccw", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.15, .15)
+    get_node("rotation_z", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.3, .2)
+    get_node("rotation_ccw", stopsign_nodes).outputs["Value"].default_value = random.uniform(-.1, .1)
 
     stop_shift_y = random.uniform(-2, 0) # neg moves it along rd closer up before stopline
     get_node("shift_y", stopsign_nodes).outputs["Value"].default_value = stop_shift_y
-    get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(-1, -stop_shift_y/2) # i like 2m out, but then more often blocked, not fair, if could make fair i'd like that
+    get_node("shift_x", stopsign_nodes).outputs["Value"].default_value = random.uniform(0, 3) # i like 4m out, but then more often blocked, not fair, if could make fair i'd like that
     # neg moves closer to rd. When further up, can also be further out. 
 
     # don't shift in stopsign object itself, do so aftewards, otherwise was keeping origin of obj as center, stopsign itself was in rd
@@ -670,43 +703,50 @@ def randomize_appearance(timer, episode_info, run_counter):
     ######################
     # Rdsigns
     ######################
-    get_node("front_hue", rdsigns_material).outputs["Value"].default_value  = random.uniform(.1, .9)
-    if random.random()<.2: # white sign black text
-        sat = 0
-        val = random.uniform(1,3)
-        text_val = 0
-    else:
-        sat, val, text_val = random.uniform(.7, 1.0), random.uniform(.3, 1.0), 1.0
-    get_node("front_sat", rdsigns_material).outputs["Value"].default_value  = sat
-    get_node("front_val", rdsigns_material).outputs["Value"].default_value  = val
-    get_node("text_val", rdsigns_material).outputs["Value"].default_value  = text_val
+    rdsign_bodies_nodes = [o.modifiers["GeometryNodes"].node_group.nodes for o in bpy.data.objects if "rd_signs." in o.name]
+    rdsign_materials = [m.node_tree.nodes for m in bpy.data.materials if "rdsigns." in m.name]
+    print(f"{len(rdsign_bodies_nodes)} rdsign bodies, {len(rdsign_materials)} rdsign materials")
+    get_node("rdsigns_density", main_map_nodes).outputs["Value"].default_value = .001 if random.random()<.5 else .001 * 10**random.uniform(0,1)
 
-    get_node("metallic", rdsigns_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.0, 1.0)
-    get_node("roughness", rdsigns_material).outputs["Value"].default_value = .5 if random.random()<.5 else random.uniform(.0, 1.0)
-    get_node("base_sat", rdsigns_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.3, .8)
-    get_node("base_val", rdsigns_material).outputs["Value"].default_value = random.uniform(.0, .2)
+    for rdsigns_material, rdsigns_nodes in zip(rdsign_materials, rdsign_bodies_nodes):
 
-    radius = random.uniform(.2, .5) 
-    get_node("radius", rdsigns_nodes).outputs["Value"].default_value = radius
-    n_vertices = 30 if random.random()<.05 else random.randint(3,4)
-    get_node("n_vertices", rdsigns_nodes).outputs["Value"].default_value = n_vertices
-    if n_vertices==3:
-        rotation = random.choice([np.pi/2, -np.pi/2])
-    elif n_vertices==4:
-        rotation = random.choice([0, np.pi/4])
-    else:
-        rotation = 0
-    get_node("rotation", rdsigns_nodes).outputs["Value"].default_value = rotation
+        front_hue = random.uniform(.1, .14) if random.random()<.2 else random.uniform(.1, .9) # overweight yield-yellow
+        get_node("front_hue", rdsigns_material).outputs["Value"].default_value = front_hue
+        if random.random()<.1: # white sign black text
+            sat = 0
+            val = random.uniform(1,3)
+            text_val = 0
+        else:
+            sat, val, text_val = random.uniform(.7, 1.1), random.uniform(.3, 1.1), random.choice([1,0])
+        get_node("front_sat", rdsigns_material).outputs["Value"].default_value  = sat
+        get_node("front_val", rdsigns_material).outputs["Value"].default_value  = val
+        get_node("text_val", rdsigns_material).outputs["Value"].default_value  = text_val
 
-    x_scale = random.uniform(1, 2)
-    get_node("x_scale", rdsigns_nodes).outputs["Value"].default_value = x_scale
-    get_node("y_scale", rdsigns_nodes).outputs["Value"].default_value = random.uniform(1, 2)
+        get_node("metallic", rdsigns_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.0, 1.0)
+        get_node("roughness", rdsigns_material).outputs["Value"].default_value = .5 if random.random()<.5 else random.uniform(.0, 1.0)
+        get_node("base_sat", rdsigns_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.3, .8)
+        get_node("base_val", rdsigns_material).outputs["Value"].default_value = random.uniform(.0, .2)
 
-    random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    sign_text = "".join([random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(random.randint(0, 4))])
-    bpy.data.node_groups["rdsigns_nodes"].nodes["String"].string = sign_text
-    text_max = np.interp(radius*x_scale, [.25, .5, 1], [.19, .37, .8])
-    get_node("text_size", rdsigns_nodes).outputs["Value"].default_value = random.uniform(text_max*.7, text_max)
+        radius = random.uniform(.2, .8) 
+        get_node("radius", rdsigns_nodes).outputs["Value"].default_value = radius
+        n_vertices = 30 if random.random()<.05 else random.randint(3,4)
+        get_node("n_vertices", rdsigns_nodes).outputs["Value"].default_value = n_vertices
+        if n_vertices==3:
+            rotation = random.choice([np.pi/2, -np.pi/2])
+        elif n_vertices==4:
+            rotation = random.choice([0, np.pi/4])
+        else:
+            rotation = 0
+        get_node("rotation", rdsigns_nodes).outputs["Value"].default_value = rotation
+
+        x_scale = random.uniform(1, 2)
+        get_node("x_scale", rdsigns_nodes).outputs["Value"].default_value = x_scale
+        get_node("y_scale", rdsigns_nodes).outputs["Value"].default_value = random.uniform(1, 2)
+
+        sign_text = "".join([random.choice("ABCDEFGHIJKLMNOPQRSTUVWXYZ") for _ in range(random.randint(0, 4))])
+        rdsigns_nodes["String"].string = sign_text
+        text_max = np.interp(radius*x_scale, [.25, .5, 1], [.19, .37, .8])
+        get_node("text_size", rdsigns_nodes).outputs["Value"].default_value = random.uniform(text_max*.7, text_max)
 
     timer.log("randomize -- signs")
 
@@ -745,20 +785,20 @@ def randomize_appearance(timer, episode_info, run_counter):
     ######################
     # NPCs
     ######################
-    # npc_body_nodes = bpy.data.node_groups['npc_body_nodes'].nodes
-    npc_archetypes_nodes = [o.modifiers["GeometryNodes"].node_group.nodes for o in bpy.data.objects if "_npc_body." in o.name]
-    print("npc_archetypes_nodes", len(npc_archetypes_nodes))
-    # these have to be gathered after the npc_body archetypes have been refreshed TODO which other things should be inside this fn?
 
-    npc_material = bpy.data.materials["npc"].node_tree.nodes
-    npc_materials = [m.node_tree.nodes for m in bpy.data.materials if "npc." in m.name]
-    print("npc_materials", len(npc_materials))
-
+    has_oa = episode_info.is_neighborhood and random.random()<.5
+    get_node("obstacle_mod", place_obstacles_nodes).outputs["Value"].default_value = 1000 if has_oa else 5000
+    get_node("obstacle_mod_loc", place_obstacles_nodes).outputs["Value"].default_value = random.randint(0, 500)
     npc_body_width = random.uniform(.5, 1.1) # NOTE have to do this out here for now bc of how we're doing obs avoidance in geonodes. Ideally each body would get its own width
-
     get_node("obstacle_hwidth", place_obstacles_nodes).outputs["Value"].default_value = npc_body_width
-    get_node("obs_shift", place_obstacles_nodes).outputs["Value"].default_value = random.uniform(-2, -.2) # NOTE for now not allowing to impede. Zero is technically no impedance.
+    get_node("obs_shift", place_obstacles_nodes).outputs["Value"].default_value = random.uniform(-3, -.2) # NOTE for now not allowing to impede. Zero is technically no impedance.
 
+
+    npc_archetypes_nodes = [o.modifiers["GeometryNodes"].node_group.nodes for o in bpy.data.objects if "_npc_body." in o.name]
+    # these have to be gathered after the npc_body archetypes have been refreshed
+    npc_materials = [m.node_tree.nodes for m in bpy.data.materials if "npc." in m.name]
+
+    
     for npc_material, npc_body_nodes in zip(npc_materials, npc_archetypes_nodes):
         # material
         get_node("npc_img_normal", npc_material).image.filepath = random.choice(literally_all_normals)

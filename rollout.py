@@ -224,9 +224,10 @@ class RwEvaluator():
             plt.figure(figsize=(20,2))
             plt.plot(rollout.aux[:,"tire_angle"])
             plt.plot(rollout.additional_results[:,"tire_angle_p"])
-            self.wandb.log({
-                f"rw/te_{rollout.run_id}": te,
-                f"rw/tire_angle_loss_{rollout.run_id}": tire_angle_loss,
-                f"rw/avg_unc_{rollout.run_id}": unc_p,
-                f"rw_plots/tire_angle_{rollout.run_id}": plt,
-            })
+            if self.wandb is not None:
+                self.wandb.log({
+                    f"rw/te_{rollout.run_id}": te,
+                    f"rw/tire_angle_loss_{rollout.run_id}": tire_angle_loss,
+                    f"rw/avg_unc_{rollout.run_id}": unc_p,
+                    f"rw_plots/tire_angle_{rollout.run_id}": plt,
+                })

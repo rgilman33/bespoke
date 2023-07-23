@@ -74,7 +74,16 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset,
 
     # imgs
     img_paths = [f"{run_path}/imgs/{format_ix(i)}.jpg" for i in range(ix+1-seqlen-FS_LOOKBACK, ix+1)]
-    imgs = np.stack([cv2.imread(img_path) for img_path in img_paths])[:, :,:,::-1] # bgr to rgb
+    imgs = np.empty((len(img_paths), IMG_HEIGHT, IMG_WIDTH, 3), dtype=np.uint8)
+    for i,img_path in enumerate(img_paths):
+        img = cv2.imread(img_path)[:,:,::-1]
+        imgs[i,:,:,:] = img
+        if check_img_for_dark(img):
+            _run_path = run_path.split("/")
+            dl_id = _run_path[-3]
+            run_id = _run_path[-2]
+            plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs_dl/{dl_id},{run_id}.png", img)
+    #imgs = np.stack([cv2.imread(img_path) for img_path in img_paths])[:, :,:,::-1] # bgr to rgb
     timer.log("load imgs")
 
     constant_seq_aug = 0 #TODO remove this
@@ -91,7 +100,8 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset,
 
 from multiprocessing import Queue, Process, shared_memory
 
-
+def check_img_for_dark(img):
+    return img[-100:, 200:1000, :].mean() < 10
 
 def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, constant_seq_aug, aug_difficulty):
     # sets them in place. Takes about 2 sec per seq of len 116. Threading important for perf, as most of the time is io reading in imgs
@@ -434,13 +444,12 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, ix, bptt, timer=None):
         # to_pred_mask *= speed_mask
 
         # ego_in_intx masking
-        INTX_DOWNWEIGHT = .2 #.1 # brings intx roughly in line w where they should be based on proportion of data
+        INTX_DOWNWEIGHT = .25 #.1 # brings intx roughly in line w where they should be based on proportion of data
         to_pred_mask = np.where(ego_in_intx.astype(bool)[:,:,None], to_pred_mask*INTX_DOWNWEIGHT, to_pred_mask)
 
         # dirtgravel masking
-        DIRTGRAVEL_DOWNWEIGHT = .4
+        DIRTGRAVEL_DOWNWEIGHT = .35
         to_pred_mask = np.where(rd_is_lined.astype(bool)[:,:,None], to_pred_mask, to_pred_mask*DIRTGRAVEL_DOWNWEIGHT)
-
 
         to_pred_mask = torch.from_numpy(to_pred_mask).to('cuda')
 

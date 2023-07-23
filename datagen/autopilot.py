@@ -14,13 +14,8 @@ class Autopilot():
         self.overall_frame_counter = 0 # bc incrementing before save. 1 here corresponds to frame 1, the first frame
 
         self.DRIVE_STYLE_CHANGE_IX = random.randint(300, 600)
-        self.DAGGER_FREQ = random.randint(500, 800) # NOTE min can't exceed dagger duration
+        self.DAGGER_FREQ = random.randint(80, 600) if episode_info.is_just_straight else random.randint(500, 800) 
         self.dagger_freq_offset = random.randint(0, 10_000)
-
-        # doing these here so they don't change mid stopsign
-        self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,4)
-        OBEYS_STOPS_PROB = .3
-        self.obeys_stops = random.random()<OBEYS_STOPS_PROB
 
         self.reset_dagger()
 
@@ -91,7 +86,9 @@ class Autopilot():
 
         self.wp_keep_up_correction = 0
 
-        self.never_map = episode_info.just_go_straight and random.random()<.5
+        #TODO horrible naming convention, is_just_straight vs just_go_straight
+        never_map_prob = .8 if episode_info.is_just_straight else .6
+        self.never_map = episode_info.just_go_straight and random.random()<never_map_prob
         self.never_route = (episode_info.just_go_straight and not self.never_map) and random.random()<.5
 
 
@@ -444,14 +441,24 @@ class Autopilot():
     def save_data(self):
         # print("Saving data", self.overall_frame_counter)
         
+        EGO_IN_INTX_M = 14 #8
+        EGO_IN_INTX_BEHIND_M = 4 #8
+        s, e = self.current_wp_ix-int(EGO_IN_INTX_BEHIND_M/WP_SPACING), self.current_wp_ix+int(EGO_IN_INTX_M/WP_SPACING)
+        ego_in_intx = any(self.is_left_turn[s:e]) or any(self.is_right_turn[s:e])
+        
         # rd maneuvers
-        RD_MANEUVER_LOOKAHEAD = TRAJ_WP_DISTS[-1] # meters
+        RD_MANEUVER_LOOKAHEAD = TRAJ_WP_DISTS[-1] + 20 # meters
         left_turn = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
         right_turn = any(self.is_right_turn[self.current_wp_ix:self.current_wp_ix+int(RD_MANEUVER_LOOKAHEAD/WP_SPACING)])
             
+        has_maneuver = (left_turn or right_turn or ego_in_intx)
+
         # Maps
-        HAS_MAP_PROB = 0 if self.never_map else .5 if self.episode_info.just_go_straight else 1
-        HAS_ROUTE_PROB = 0 if self.never_route else .5 if self.episode_info.just_go_straight else 1
+        # HAS_MAP_PROB = 0 if self.never_map else .5 if self.episode_info.just_go_straight else 1
+        # HAS_ROUTE_PROB = 0 if self.never_route else .5 if self.episode_info.just_go_straight else 1
+        HAS_MAP_PROB = 0 if self.never_map else 1 if has_maneuver else .85 #.5
+        HAS_ROUTE_PROB = 0 if self.never_route else 1 if has_maneuver else .85 #.5 
+
         if self.overall_frame_counter < 10: HAS_MAP_PROB, HAS_ROUTE_PROB = 0, 0 # First few obs, no maps bc heading tracker janky and rds cutoff
         
         self.has_map = random.random() < HAS_MAP_PROB
@@ -468,10 +475,6 @@ class Autopilot():
                                 self.heading_for_map,
                                 CLOSE_RADIUS,
                                 draw_route=self.has_route) if self.has_map else self.EMPTY_MAP
-        
-        EGO_IN_INTX_M = 10 #8
-        ego_in_intx = any(self.is_left_turn[self.current_wp_ix:self.current_wp_ix+int(EGO_IN_INTX_M/WP_SPACING)]) or \
-                        any(self.is_right_turn[self.current_wp_ix:self.current_wp_ix+int(EGO_IN_INTX_M/WP_SPACING)])
         
         # will get repeated ~4 times in a row bc gps less hz
         c = 0 # just padding, as we only save single obs at a time now
@@ -498,13 +501,13 @@ class Autopilot():
 
         stop_angle = 0 if self.stop_dist<0 else angle_to_wp_from_dist_along_traj(self.angles_to_wps, self.stop_dist)
         lead_angle = angle_to_wp_from_dist_along_traj(self.angles_to_wps, self.lead_dist)
-        
+        max_angle_for_stops_leads = .5
         self.aux[c, "speed"] = self.current_speed_mps
         self.aux[c, "tire_angle"] = angle_to_wp_d #self.current_tire_angle
         self.aux[c, "tire_angle_ap"] = self.current_tire_angle # actual tire angle used for ap steering
-        self.aux[c, "has_stop"] = self.stop_dist < STOP_DIST_MAX and (abs(stop_angle) < .6) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
+        self.aux[c, "has_stop"] = self.stop_dist < STOP_DIST_MAX and (abs(stop_angle) < max_angle_for_stops_leads) #smooth_dist_clf(self.stop_dist, 60, 80) #self.stopsign_state=="APPROACHING_STOP"
         self.aux[c, "stop_dist"] = self.stop_dist
-        self.aux[c, "has_lead"] = (self.lead_dist < LEAD_DIST_MAX) and (abs(lead_angle) < .6) # .6 is directly out of frame #smooth_dist_clf(self.lead_dist, 80, 100)
+        self.aux[c, "has_lead"] = (self.lead_dist < LEAD_DIST_MAX) and (abs(lead_angle) < max_angle_for_stops_leads) # .6 is directly out of frame #smooth_dist_clf(self.lead_dist, 80, 100)
         self.aux[c, "lead_dist"] = self.lead_dist
         self.aux[c, "lead_speed"] = self.lead_relative_speed
         self.aux[c, "should_yield"] = self.should_yield
@@ -528,9 +531,16 @@ class Autopilot():
 
     def reset_dagger(self):
         # Get max dagger shift
+        is_neighborhood = self.episode_info.is_neighborhood
 
-        normal_shift = random.uniform(NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX)
-        self.normal_shift = normal_shift if random.random()<.5 else -normal_shift
+        if is_neighborhood: # pull the eff away from rd edge. Trn to decouple pos and is-lined
+            normal_shift = random.uniform(NORMAL_SHIFT_MIN*2, NORMAL_SHIFT_MAX)
+            self.normal_shift = normal_shift if random.random()<.8 else -normal_shift
+            max_dagger_hold_s = 4
+        else:
+            normal_shift = random.uniform(NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX)
+            self.normal_shift = normal_shift if random.random()<.5 else -normal_shift
+            max_dagger_hold_s = 2
 
         # reset state
         self.is_doing_dagger = False
@@ -539,7 +549,7 @@ class Autopilot():
 
         # How long dagger will take, ie this is what ap will follow. Based on normal shift, but with some randomness bc
         # doesn't need to be tied, and want agent to be able to not be too distracted when off policy human driving.
-        self.dagger_duration = int(self._sec_to_undagger(normal_shift)*2*FPS*random.uniform(1., 2.)) # frames NOTE don't exceed frequency
+        self.dagger_duration = int(self._sec_to_undagger(normal_shift)*2*FPS*random.uniform(1., max_dagger_hold_s)) # frames 
 
 
     def reset_drive_style(self):
@@ -559,6 +569,11 @@ class Autopilot():
         self.max_accel = random.uniform(2.6, 3.5) #
 
         self.wheelbase = random.uniform(2., 2.66) # crv is 2.66, but that begins to be too slow on the turns, like a yacht
+
+        # doing these here so they don't change mid stopsign
+        self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,2)
+        OBEYS_STOPS_PROB = .1
+        self.obeys_stops = random.random()<OBEYS_STOPS_PROB
 
 
 

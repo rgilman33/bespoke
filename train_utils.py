@@ -115,6 +115,7 @@ def get_and_enrich_img(b, b_ix, seq_ix):
 
 LOSS_SCALER = 100
 
+
 class Trainer():
     def __init__(self,
                 dataloader,
@@ -216,10 +217,8 @@ class Trainer():
             aux_targets = aux[:,:,AUX_TARGET_IXS] 
 
             #############
-            # wp losses
+            # Nan checks
             #############
-            loss_weights = self.LOSS_WEIGHTS #.float() if self.use_rnn else self.LOSS_WEIGHTS
-            weights = (to_pred_mask*loss_weights).repeat((1,1,5)).float() # why was this float64
             assert torch.isnan(wps).sum() == 0, f"wps has nans: {wps}"
 
             if f(wps_p):
@@ -241,31 +240,65 @@ class Trainer():
             #     self.nans_counter += 1
             #     self.should_stop = True
             #     break
+
+
+            #############
+            # aux losses 
+            #############      
             ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
+
+            aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
+            aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
+            aux_targets_losses *= 100 #TODO can prob get rid of scaling now that all is full float            
+            
+            # is-lined
+            m_sees_rd_is_lined = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("rd_is_lined")].detach() > .3) # threshold chosen manually
+            rd_is_lined = aux_targets[:,:,AUX_TARGET_PROPS.index("rd_is_lined")]
+            # rd_is_lined_enforce = (rd_is_lined.bool() & m_sees_rd_is_lined) | ~rd_is_lined.bool()
+
+            m_doesnt_see_lines = (rd_is_lined.bool() & ~m_sees_rd_is_lined & ~ego_in_intx)[:,0] # Not removing when intx, bc not enforcing anyways. bs, just taking first of bptt NOTE bptt? 
+            if m_doesnt_see_lines.sum().item()>0:
+                batch = (img[m_doesnt_see_lines], wps[m_doesnt_see_lines], wps_p[m_doesnt_see_lines], 
+                         aux[m_doesnt_see_lines], aux_targets_p[m_doesnt_see_lines], obsnet_out[m_doesnt_see_lines])
+                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
+                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/lines_e{self.current_epoch}u{update_counter}.png", _img)
+            logger.log({"logistical/maskout_bc_lines_perc":m_doesnt_see_lines.float().mean().item()})
+
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")][~rd_is_lined.bool()] *= 4 # upweighting the loss when we're not lined, make is-lined detector less senstive
 
             ##################
             # wp losses
             ##################
-
+            to_pred_mask = (to_pred_mask * self.LOSS_WEIGHTS).float() # why was this float64?
+            weights = (to_pred_mask).repeat((1,1,5)).float() # why was this float64?
             _wps_loss = mae_loss_no_reduce(wps, wps_p, weights=weights) * LOSS_SCALER #TODO can prob get rid of scaling now that all is full float
             angles_loss, headings_loss, curvatures_loss, rolls_loss, zs_loss = torch.chunk(_wps_loss, 5, -1)
             
-            # collapse wps dim and bptt dim. Now have single loss for each batch item #TODO should do smart mean, not using zeroed out values at end of traj
-            # Our unit of analysis here is the batch item. Collapsing bptt is a nonsignificant thing to do, but i like the simplicity of 
-            # dealing w batch items only. 
-            angles_loss = angles_loss.mean(-1).mean(-1); headings_loss = headings_loss.mean(-1).mean(-1); curvatures_loss = curvatures_loss.mean(-1).mean(-1)
-            rolls_loss = rolls_loss.mean(-1).mean(-1); zs_loss = zs_loss.mean(-1).mean(-1)
+            # collapse wps dim and bptt dim. Now have single loss for each batch item
+            # Our unit of analysis here is the batch item. Collapsing bptt is a nontrivial thing to do, but i like the simplicity of 
+            # dealing w batch items only when it comes to weighting and eliminating observations
 
-            median_emas = median_tracker.step({"wp_angles":angles_loss,
-                                                "wp_headings":headings_loss,
-                                                "wp_curvatures":curvatures_loss,
-                                                "wp_rolls":rolls_loss,
-                                                "wp_zs":zs_loss,
-                                                })
+            # weighted-mean followed by mean over bptt dim
+            sm = lambda l : l.mean(-1) #l.sum(-1) / to_pred_mask.sum(-1) # smart mean, not using zeroed out values at end of traj
 
-            CLAMP_MEDIAN_MULTIPLE, SAVE_IMG_MEDIAN_MULTIPLE, MASKOUT_MEDIAN_MULTIPLE = 3, 35, 45
+            # using for unc_p. Should use for everything.
+            angles_loss_sm = angles_loss.sum(-1) / to_pred_mask.sum(-1) # bs, bptt
 
-            # Save bad imgs for debugging
+            angles_loss = sm(angles_loss).mean(-1)
+            headings_loss = sm(headings_loss).mean(-1); curvatures_loss = sm(curvatures_loss).mean(-1)
+            rolls_loss = sm(rolls_loss).mean(-1); zs_loss = sm(zs_loss).mean(-1)
+
+            median_tracker.step({"wp_angles":angles_loss,
+                                "wp_headings":headings_loss,
+                                "wp_curvatures":curvatures_loss,
+                                "wp_rolls":rolls_loss,
+                                "wp_zs":zs_loss,
+                                })
+            median_emas = median_tracker.median_emas
+
+            CLAMP_MEDIAN_MULTIPLE, SAVE_IMG_MEDIAN_MULTIPLE, MASKOUT_MEDIAN_MULTIPLE = 2, 30, 30
+
+            # Save bad imgs for viewing and debugging
             save_img_t = (angles_loss > median_emas["wp_angles"]*SAVE_IMG_MEDIAN_MULTIPLE)
             if save_img_t.sum().item()>0:
                 batch = (img[save_img_t], wps[save_img_t], wps_p[save_img_t], aux[save_img_t], aux_targets_p[save_img_t], obsnet_out[save_img_t])
@@ -274,44 +307,48 @@ class Trainer():
 
             # Maskout the worst, not using their loss at all, discarding the data. Using wp_angles to maskout all wp losses
             # The assumption is this is useless, harmful data, bc our procgen isn't perfect. 
-            # TODO can also maskout aux target losses below using this mask
-            maskout = (angles_loss > median_emas["wp_angles"]*MASKOUT_MEDIAN_MULTIPLE)
+            maskout = (angles_loss > median_emas["wp_angles"]*MASKOUT_MEDIAN_MULTIPLE) # size bs, masking out per obs (bptt collapsed)
+            # log maskout percentage, ensure we're not discarding too much
+            logger.log({"logistical/maskout_perc":maskout.float().mean().item()})
+
+            # also masking out if there are lines but m doesn't see them. Lines affects traj loc, and our data is often unfair on this point.
+            maskout = maskout | m_doesnt_see_lines
+
             if maskout.sum() > 0:
                 print("masking out based on angles loss")
                 angles_loss[maskout] = 0; headings_loss[maskout] = 0; curvatures_loss[maskout] = 0; rolls_loss[maskout] = 0; zs_loss[maskout] = 0
 
-            # log maskout percentage, ensure we're not discarding too much
-            logger.log({"logistical/maskout_perc":maskout.float().mean().item()})
-
-
             # Clamping all losses to multiple of their respective medians 
-            # Each item in the batch will never account for more than clamped proportion of loss. Addressing outliers, focusing attn on fine-grained details.
+            # Each item in the batch will never account for more than clamped proportion of loss. 
+            # Focusing attn on fine-grained details rather than coarse outliers.
             c = lambda l, ln : torch.clamp(l, max=median_emas[ln]*CLAMP_MEDIAN_MULTIPLE)
 
             # Log the amount loss is reduced by the clamping, for wp_angles only. Diagnostic
             angles_loss_clamped = c(angles_loss, "wp_angles")
             _a = angles_loss.mean().item()
             logger.log({"logistical/angles_loss_clamp_reduction":(_a - angles_loss_clamped.mean().item())/_a})
+            logger.log({"logistical/angles_loss_clamp_perc_obs":(angles_loss > median_emas["wp_angles"]*CLAMP_MEDIAN_MULTIPLE).float().mean().item()})
+
 
             losses = {
                 "wp_angles": angles_loss_clamped.mean(),
                 "wp_headings": c(headings_loss, "wp_headings").mean(),
                 "wp_curvatures": c(curvatures_loss, "wp_curvatures").mean(),
-                "wp_rolls":c(rolls_loss, "wp_rolls").mean(),
+                # "wp_rolls":c(rolls_loss, "wp_rolls").mean(), # roll usually zero, so median is often zero, so don't median-clamp
+                "wp_rolls":rolls_loss.mean(),
                 "wp_zs":c(zs_loss, "wp_zs").mean(), 
             }
 
 
             # Logging the proportion of loss that is coming from intx, rd_is_lined, as proportion of total loss
-            intx_angles_loss_perc = angles_loss_clamped[ego_in_intx[:,0]].sum().item() / angles_loss.sum().item() # taking first bptt item of ego_in_intx
+            intx_angles_loss_perc = angles_loss_clamped[ego_in_intx[:,0]].sum().item() / angles_loss_clamped.sum().item() # taking first bptt item of ego_in_intx
             logger.log({"logistical/intx_angles_loss_perc":intx_angles_loss_perc})
             logger.log({"logistical/intx_perc":ego_in_intx[:,0].float().mean().item()})
 
             rd_is_lined = aux[:,:,AUX_PROPS.index("rd_is_lined")].bool()
-            rd_is_lined_angles_loss_perc = angles_loss_clamped[rd_is_lined[:,0]].sum().item() / angles_loss.sum().item() # taking first bptt item 
+            rd_is_lined_angles_loss_perc = angles_loss_clamped[rd_is_lined[:,0]].sum().item() / angles_loss_clamped.sum().item() # taking first bptt item 
             logger.log({"logistical/rd_is_lined_loss_perc":rd_is_lined_angles_loss_perc})
             logger.log({"logistical/rd_is_lined_perc":rd_is_lined[:,0].float().mean().item()})
-
 
 
             # # te. When in doubt, stay close to prev preds
@@ -321,15 +358,10 @@ class Trainer():
             #     te_loss *= 100
             #     losses.update({"te": te_loss.mean()})
 
-            #############
-            # aux losses
-            #############
-                        
-            aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
-            aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
-            aux_targets_losses *= 100 #TODO can prob get rid of scaling now that all is full float
+
+
             #######################
-            # Zero out a buffer right at end of horizon, no need to be strict about exact horizon end
+            # Aux losses: Stops and leads
             aux_np = unprep_aux(aux)
             has_stop, has_lead = aux_targets[:,:,AUX_TARGET_PROPS.index("has_stop")], aux_targets[:,:,AUX_TARGET_PROPS.index("has_lead")]
 
@@ -340,23 +372,38 @@ class Trainer():
             m_sees_true_lead = has_lead.bool() & m_sees_lead # already sigmoided
             leads_enforce = leads_always_enforce | m_sees_true_lead
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")] *= leads_enforce
+            leads_buffer = torch.from_numpy(((LEAD_DIST_MAX-20)<lead_dist) & (lead_dist<LEAD_DIST_MAX)).to(device)
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_lead")][leads_buffer] = 0 # deadzone, don't trn either direction
             
+            ######################
             # Stops
+            ######################
             stop_dist = aux_np[:,:,"stop_dist"]
-            stops_min_buffer = -100 if self.use_rnn else 8
-            stops_always_enforce = torch.from_numpy(((stops_min_buffer<stop_dist) & (stop_dist<STOP_DIST_MIN)) | (stop_dist>STOP_DIST_MAX)).to(device)
+            stops_min_buffer = -100 if self.use_rnn else 10
+            stops_always_enforce_pos = torch.from_numpy((stops_min_buffer<stop_dist) & (stop_dist<STOP_DIST_MIN))
+            stops_always_enforce_neg = torch.from_numpy(stop_dist>STOP_DIST_MAX)
+            stops_always_enforce = (stops_always_enforce_pos | stops_always_enforce_neg).to(device)
             m_sees_stop = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3)
             m_sees_true_stop = has_stop.bool() & m_sees_stop # already sigmoided
             stops_enforce = stops_always_enforce | m_sees_true_stop
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")] *= stops_enforce
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")][m_sees_true_stop] *= 2 # upping has_stop weight to make detector more sensitive
+            
+            # buffer zone, don't enforce up or down
+            stops_buffer_end = torch.from_numpy(((STOP_DIST_MAX-20)<stop_dist) & (stop_dist<STOP_DIST_MAX))
+            stops_buffer_beginning = torch.from_numpy(stop_dist<10) 
+            stops_buffer = (stops_buffer_beginning | stops_buffer_end).to(device)
+            aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")][stops_buffer] = 0 # deadzone, don't trn either direction
+            
+            # logging the stops that we're allowing leniency on
+            m_doesnt_see_stop = (stops_always_enforce_pos & ~m_sees_stop)[:,0]
+            if m_doesnt_see_stop.sum().item()>0:
+                batch = (img[m_doesnt_see_stop], wps[m_doesnt_see_stop], wps_p[m_doesnt_see_stop], 
+                         aux[m_doesnt_see_stop], aux_targets_p[m_doesnt_see_stop], obsnet_out[m_doesnt_see_stop])
+                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
+                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/stop_e{self.current_epoch}u{update_counter}.png", _img)
+            # logger.log({"logistical/lenient_stop_maskout_perc":m_doesnt_see_stop.float().mean().item()})
 
-            # Rd is lined NOTE can't do this when just starting trn
-            lenient_is_lined = False
-            if lenient_is_lined:
-                m_sees_rd_is_lined = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("rd_is_lined")].detach() > .3)
-                rd_is_lined = aux_targets[:,:,AUX_TARGET_PROPS.index("rd_is_lined")]
-                rd_is_lined_enforce = (rd_is_lined.bool() & m_sees_rd_is_lined) | ~rd_is_lined.bool()
-                aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")] *= rd_is_lined_enforce
 
             # Only enforce stops and lead metrics when we have stops and leads
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= m_sees_true_stop #has_stop
@@ -370,6 +417,9 @@ class Trainer():
                 aux_targets_losses[:,:,AUX_TARGET_PROPS.index("dagger_shift")] *= ((~ego_in_intx).float()*.95 + .05)
             #######################
 
+            # masking out all losses for the obs we're discarding above based on angle. Across entire bptt.
+            aux_targets_losses[maskout] = 0
+
             losses_to_include = AUX_TARGET_PROPS if self.use_rnn else [p for p in AUX_TARGET_PROPS if p not in ["lead_speed"]]
             losses.update({p:aux_targets_losses[:,:,AUX_TARGET_PROPS.index(p)].mean() for p in losses_to_include})
 
@@ -379,7 +429,8 @@ class Trainer():
             # pitch_loss = mse_loss(aux[:,:,AUX_PROPS.index('pitch')], obsnet_out[:,:,OBSNET_PROPS.index('pitch')])
             # yaw_loss = mse_loss(aux[:,:,AUX_PROPS.index('yaw')], obsnet_out[:,:,OBSNET_PROPS.index('yaw')])
             unc_p = obsnet_out[:,:,OBSNET_PROPS.index('unc_p')]
-            unc_loss = mse_loss(torch.log(angles_loss_clamped.mean().detach()), unc_p)
+            angles_loss_sm = torch.clamp(angles_loss_sm, max=median_emas["wp_angles"]*10) # giving a bit more room for pred unc. Also these units aren't the same bc median taken w dumb median
+            unc_loss = mse_loss(angles_loss_sm.detach(), unc_p) 
             losses.update({
                 #"pitch":pitch_loss,
                 #"yaw":yaw_loss,
@@ -604,6 +655,8 @@ def get_transform(seqlen, diff="easy"):
     d = .3
     COMPRESSION_QUALITY_MIN = 30
     cutout_prob = .01 if diff=="easy" else .1 # right now just used for cnn
+    spatter_prob = .03 if diff=="easy" else .1
+    pixdrop_prob = .03 if diff=="easy" else .1
     cutout_max_n_holes = 10 if diff=="easy" else 40
 
     transforms = [
@@ -615,8 +668,8 @@ def get_transform(seqlen, diff="easy"):
         ]),
         A.OneOf([ # distractors
             A.CoarseDropout(p=cutout_prob, max_holes=cutout_max_n_holes, max_height=120, max_width=120, min_holes=3, min_height=10, min_width=10, fill_value=random_color(), mask_fill_value=None),
-            A.Spatter(p=.1, mean=spatter_mean, std=(0.25, 0.35), gauss_sigma=(.8, 1.6), intensity=(-.3, 0.3), cutout_threshold=spatter_cutout, mode=['rain', 'mud']),
-            A.PixelDropout(p=.1, dropout_prob=random.uniform(.01, .05), per_channel=random.choice([0,1]), drop_value=random_color(), mask_drop_value=None),
+            A.Spatter(p=spatter_prob, mean=spatter_mean, std=(0.25, 0.35), gauss_sigma=(.8, 1.6), intensity=(-.3, 0.3), cutout_threshold=spatter_cutout, mode=['rain', 'mud']),
+            A.PixelDropout(p=pixdrop_prob, dropout_prob=random.uniform(.01, .05), per_channel=random.choice([0,1]), drop_value=random_color(), mask_drop_value=None),
         ]),
         A.OneOf([ # compression artefacting
             A.ImageCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, compression_type=0, p=d),
@@ -624,8 +677,8 @@ def get_transform(seqlen, diff="easy"):
             A.JpegCompression(quality_lower=COMPRESSION_QUALITY_MIN, quality_upper=80, p=d)
         ]),
         A.OneOf([ # brightness
-            A.RandomGamma(gamma_limit=(50,150), p=d), # higher is darker
-            A.RandomBrightnessContrast(p=d, brightness_limit=(-0.2, 0.22), contrast_limit=(-.4, .4)),
+            A.RandomGamma(gamma_limit=(60,135), p=d), # higher is darker
+            A.RandomBrightnessContrast(p=d, brightness_limit=(-0.18, 0.2), contrast_limit=(-.3, .3)),
         ]),
         A.OneOf([  # other 
             # A.Sharpen(p=.1, alpha=(0.2, 0.5), lightness=(0.5, 1.0)), # rw imgs are blurrier, never sharper

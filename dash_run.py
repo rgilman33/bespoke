@@ -17,8 +17,8 @@ from dash_utils import *
 
 run_ids = ["run_636"] #["run_621", "run_622"] #["run_596"] #["run_555b", "run_556d", "run_555a", "run_556a", "run_556b", "run_556c", "run_567", "none"]
 run_id = run_ids[0]
-model_stem = "6.1_e45"
-model_stem_b = "5.25_e60" #"4.17_e27" #"4.13_e33" #"4.5_e68"
+model_stem = "7.9_e81"
+model_stem_b = "7.9_e41" #"5.25_e60" #"4.17_e27" #"4.13_e33" #"4.5_e68"
 
 MIN_PT = 0
 L = 4000
@@ -234,7 +234,7 @@ app.layout = html.Div(
                             style={"width": "200px"}
                         ),
                     dcc.Dropdown(
-                            [0, 4000, 8000, 12000, 16000, 20000, 24000, 28000, 32000],
+                            [0, 4000, 8000, 12000, 16000, 20000, 24000, 28000, 32000, 36000, 40000],
                             value=0,
                             id='_start_ix',
                             style={"width": "200px"}
