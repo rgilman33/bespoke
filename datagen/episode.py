@@ -15,7 +15,7 @@ bdd100k = glob.glob("/media/ssd2/bdd100k/bdd100k/bdd100k/images/*/*/*.jpg")
 # Getting nodes and filepaths
 rd_noise_nodes = bpy.data.node_groups['getRdNoise'].nodes 
 npc_nodes = bpy.data.node_groups['npc'].nodes
-main_map_nodes = bpy.data.node_groups['main_map'].nodes # 
+main_map_nodes = bpy.data.node_groups['main_map'].nodes 
 z_adjustment_nodes = bpy.data.node_groups['apply_z_adjustment'].nodes
 random_value_nodes = bpy.data.node_groups['getRandomValue'].nodes
 meshify_lines_nodes = bpy.data.node_groups['meshify_lines'].nodes
@@ -174,11 +174,11 @@ def make_map(timer):
 
     # small rises
     z1_scale = .5 * 10**random.uniform(0, 1) # /= 100 in blender
-    z1_mult_max_mult = 1 if is_country_mtn else .8
+    z1_mult_max_mult = .8 #1 if is_country_mtn else .8
     z1_mult_max = np.interp(z1_scale, [.5, 1, 3, 5], [25, 18, 6, 3]) * z1_mult_max_mult # too much large-scale hills makes intx strange
     z1_mult_max = z1_mult_max*.3 if rd_is_banked else z1_mult_max # small scale hills w banking isn't realistic, i don't think. Pay attn. 
     get_node("loop_noise_scale_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_scale
-    z1_mult = 0 if random.random()<.02 else random.uniform(0, z1_mult_max/2) if random.random()<.8 else random.uniform(z1_mult_max/2, z1_mult_max)
+    z1_mult = 0 if random.random()<.02 else random.uniform(0, z1_mult_max/2) if random.random()<.9 else random.uniform(z1_mult_max/2, z1_mult_max)
     get_node("loop_noise_mult_z_1", rd_noise_nodes).outputs["Value"].default_value = z1_mult
 
     # rd bumpiness
@@ -189,14 +189,6 @@ def make_map(timer):
     rd_hump = random.uniform(.2, .8) 
     get_node("rd_hump", z_adjustment_nodes).outputs["Value"].default_value = rd_hump
     get_node("rd_hump_rampup", z_adjustment_nodes).outputs["Value"].default_value = 16 #random.uniform(4, 10) 
-
-    # Camera calib
-    BASE_PITCH = 89
-    BASE_YAW = 180
-    pitch_perturbation = random.uniform(-2, 2)
-    yaw_perturbation = 0 #random.uniform(-2, 2)
-    bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation)
-    bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation)
 
     # lanelines
     r = random.random()
@@ -292,8 +284,8 @@ def make_map(timer):
 
     episode_info.is_highway = is_highway
     episode_info.rd_is_lined = rd_is_lined
-    episode_info.pitch = pitch_perturbation
-    episode_info.yaw = yaw_perturbation
+    # episode_info.pitch = pitch_perturbation
+    # episode_info.yaw = yaw_perturbation
     episode_info.has_npcs = has_npcs
     episode_info.is_single_rd = is_single_rd
     episode_info.lane_width = lane_width_actual # left shift is zero for lined, for dirtgravel this gives effective lane width. left shift is neg
@@ -405,7 +397,7 @@ def randomize_appearance(timer, episode_info, run_counter):
     get_node("white_line_noise_mult_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(2, 40)
     get_node("white_line_noise_mult_large", dirt_gravel_nodes).outputs["Value"].default_value = 0 if random.random() < .2 else random.uniform(1, 20)
     
-    min_noise_scale = .03 
+    min_noise_scale = .06
     get_node("white_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(min_noise_scale, .12)
     get_node("white_line_noise_scale_small", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(1, 10)
     get_node("yellow_line_noise_scale_large", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(min_noise_scale, .12)
@@ -485,12 +477,14 @@ def randomize_appearance(timer, episode_info, run_counter):
     get_node("rd_overlay_mixer", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(.1, .8)
 
     ## Rd and shoulder edges
-    limited_edge_noise = False if episode_info.is_just_straight else \
-                            (random.random() < .2 or episode_info.is_only_yellow_lined or episode_info.is_neighborhood)
+    limited_edge_noise = False if episode_info.is_just_straight else (random.random() < .2 or episode_info.is_neighborhood)
 
-    rd_edge_noise_scale = 2*10**random.uniform(1.0, 2.5) # 20 -> 600
-    _m = np.interp(rd_edge_noise_scale, [20,600], [3, 10])
-    _m *= .2 if limited_edge_noise else 1.0
+    rd_edge_noise_scale = 2*10**random.uniform(1.0, 2.) # 20 -> 200
+    # _m = np.interp(rd_edge_noise_scale, [20,600], [3, 10])
+    # _m *= .2 if limited_edge_noise else 1.0
+    _m = 1.2 if limited_edge_noise else 2.0
+    # reducing strength of rd edge noise substantially. Spurred by bev semseg, but also in general the rd edge itself is never that
+    # messy. Shoulder can be messy but not rd edge
     get_node("rd_edge_noise_scale", dirt_gravel_nodes).outputs["Value"].default_value = rd_edge_noise_scale
     get_node("rd_edge_noise_mult", dirt_gravel_nodes).outputs["Value"].default_value = random.uniform(0, _m)
 
@@ -646,8 +640,8 @@ def randomize_appearance(timer, episode_info, run_counter):
 
     get_node("terrain_roughness", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.4, 1.0)
 
-    # turning this off for now. Don't like the unnatural colors.
-    get_node("terrain_overlay_fac", dirt_gravel_nodes).outputs["Value"].default_value  = 0 # if random.random() < .6 else random.uniform(0, 1.0)
+    terrain_overlay_hue = random.uniform(.2, .4) if random.random()<.8 else random.uniform(.1, 1.0) # oversample greens
+    get_node("terrain_overlay_fac", dirt_gravel_nodes).outputs["Value"].default_value  = 0 if random.random()<.9 else terrain_overlay_hue
     get_node("terrain_overlay_hue", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(0, 1.0)
     get_node("terrain_overlay_sat", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.4, 2.0)
     get_node("terrain_overlay_value", dirt_gravel_nodes).outputs["Value"].default_value  = random.uniform(.1, 3.0)
@@ -706,7 +700,7 @@ def randomize_appearance(timer, episode_info, run_counter):
     rdsign_bodies_nodes = [o.modifiers["GeometryNodes"].node_group.nodes for o in bpy.data.objects if "rd_signs." in o.name]
     rdsign_materials = [m.node_tree.nodes for m in bpy.data.materials if "rdsigns." in m.name]
     print(f"{len(rdsign_bodies_nodes)} rdsign bodies, {len(rdsign_materials)} rdsign materials")
-    get_node("rdsigns_density", main_map_nodes).outputs["Value"].default_value = .001 if random.random()<.5 else .001 * 10**random.uniform(0,1)
+    get_node("rdsigns_density", main_map_nodes).outputs["Value"].default_value = .005 if random.random()<.5 else .005 * 10**random.uniform(0,.5)
 
     for rdsigns_material, rdsigns_nodes in zip(rdsign_materials, rdsign_bodies_nodes):
 
@@ -727,7 +721,7 @@ def randomize_appearance(timer, episode_info, run_counter):
         get_node("base_sat", rdsigns_material).outputs["Value"].default_value = 0 if random.random()<.5 else random.uniform(.3, .8)
         get_node("base_val", rdsigns_material).outputs["Value"].default_value = random.uniform(.0, .2)
 
-        radius = random.uniform(.2, .8) 
+        radius = random.uniform(.2, .6) 
         get_node("radius", rdsigns_nodes).outputs["Value"].default_value = radius
         n_vertices = 30 if random.random()<.05 else random.randint(3,4)
         get_node("n_vertices", rdsigns_nodes).outputs["Value"].default_value = n_vertices

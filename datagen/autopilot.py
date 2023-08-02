@@ -1,5 +1,5 @@
 import numpy as np
-import os, random, sys, bpy, time, glob
+import os, random, sys, bpy, time, glob, copy
 
 sys.path.append("/home/beans/bespoke")
 from constants import *
@@ -10,14 +10,12 @@ class Autopilot():
     def __init__(self, episode_info, run_root=None, ap_id=None, is_ego=False):
         self.episode_info, self.run_root, self.ap_id, self.is_ego = episode_info, run_root, ap_id, is_ego
 
-        self.reset_drive_style()
-        self.overall_frame_counter = 0 # bc incrementing before save. 1 here corresponds to frame 1, the first frame
+        self.set_randoms()
 
         self.DRIVE_STYLE_CHANGE_IX = random.randint(300, 600)
         self.DAGGER_FREQ = random.randint(80, 600) if episode_info.is_just_straight else random.randint(500, 800) 
         self.dagger_freq_offset = random.randint(0, 10_000)
 
-        self.reset_dagger()
 
         if self.is_ego:
             self.targets_container = get_targets_container(1,1)[0] # angles, dists, rolls, z deltas
@@ -51,13 +49,13 @@ class Autopilot():
 
             #
             self.EMPTY_MAP = np.zeros_like(self.maps_container[0])
+            self.small_map = None
             
-        self.small_map = None
-        self.should_yield = False
-        self.route_is_done = False
+        # doing these here so they don't change mid stopsign
+        self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,2)
+        OBEYS_STOPS_PROB = .01
+        self.obeys_stops = random.random()<OBEYS_STOPS_PROB
 
-        self.is_rando_yielding = False
-        self.rando_yield_counter = 0
         self.RANDO_YIELD_FREQ = random.randint(600, 800) if not (episode_info.is_highway or random.random()<.4) else 100_000
         self.RANDO_YIELD_DURATION = random.randint(30, 120)
         self.rando_yield_offset = random.randint(0, 10_000)
@@ -65,35 +63,19 @@ class Autopilot():
         self.N_NEGOTIATION_WPS = 100
         NEGOTIATION_TRAJ_LEN_SEC = random.uniform(2.5, 3.5) # follow dist. TODO uncouple follow dist and negotiation traj
         self.S_PER_WP = NEGOTIATION_TRAJ_LEN_SEC / self.N_NEGOTIATION_WPS
-
-        # 
-        self.negotiation_traj = np.empty((self.N_NEGOTIATION_WPS, 3), dtype=np.float32)
-        self.negotiation_traj_ixs = np.empty((self.N_NEGOTIATION_WPS), dtype=int)
-        self.m_per_wp = 1
-
-        # Stopsigns
-        self.stopsign_state = "NONE"
-        self.stopped_counter = 0
-        self.stopped_at_ix = 0
-        self.stop_dist = DIST_NA_PLACEHOLDER
-
-        # Lead car. Set in TM
-        self.lead_dist = DIST_NA_PLACEHOLDER
-        self.lead_relative_speed = 100
-        self.is_in_yield_zone = False
-
-        self.should_yield = False
-
-        self.wp_keep_up_correction = 0
-
+        
         #TODO horrible naming convention, is_just_straight vs just_go_straight
         never_map_prob = .8 if episode_info.is_just_straight else .6
         self.never_map = episode_info.just_go_straight and random.random()<never_map_prob
         self.never_route = (episode_info.just_go_straight and not self.never_map) and random.random()<.5
 
+        l = EPISODE_LEN*FRAME_CAPTURE_N*FPS
+        self.rando_fps = np.clip(np.random.normal(20, 2, l), 17, 23)
+
 
 
     def set_route(self, route):
+        # only called once
 
         self.waypoints = np.empty((len(route), 3), dtype="float64")
         XY_SMOOTH = 130 #160 #120 #60 # 180 visibly cuts corners a bit, but still not as much as humans. less than 160 is not sharp enough w some settings
@@ -140,24 +122,72 @@ class Autopilot():
         self._route_way_ids = list(route.way_id.unique())
 
         self.route_len = len(self.waypoints)
-        self.reset_position()
 
-    def reset_position(self):
+        self.reset()
+
+    def reset(self):
+        # has to be called after set_route
+        # can be called multiple times
+
+        self.dagger_randos_ix = 0
+        self.drive_style_randos_ix = 0
+        self.randomize_drive_style()
+        self.randomize_dagger()
+        
+        ###################################
+        # 
+        self.overall_frame_counter = 0 # bc incrementing before save. 1 here corresponds to frame 1, the first frame
+
+        self.negotiation_traj = np.empty((self.N_NEGOTIATION_WPS, 3), dtype=np.float32)
+        self.negotiation_traj_ixs = np.empty((self.N_NEGOTIATION_WPS), dtype=int)
+        self.m_per_wp = 1
+
+        # Stopsigns
+        self.stopsign_state = "NONE"
+        self.stopped_counter = 0
+        self.stopped_at_ix = 0
+        self.stop_dist = DIST_NA_PLACEHOLDER
+
+        # Lead car. Set in TM
+        self.lead_dist = DIST_NA_PLACEHOLDER
+        self.lead_relative_speed = 100
+        self.is_in_yield_zone = False
+
+        self.should_yield = False
+        self.wp_keep_up_correction = 0
+
+        self.is_rando_yielding = False
+        self.rando_yield_counter = 0
+
+        self.route_is_done = False
+        ###################################
+
         START_IX = 120
-        self.current_pos = self.waypoints[START_IX]
-        self.current_rotation = self.wp_rotations[START_IX]
+        self.current_pos = copy.deepcopy(self.waypoints[START_IX]) # Was taking slice, then changing that inplace, so when restarted this entry had been updated! idiot!
+        self.current_rotation = copy.deepcopy(self.wp_rotations[START_IX])
         self.distance_along_loop = START_IX * WP_SPACING
         self.current_wp_ix = int(round(self.distance_along_loop / WP_SPACING, 0))
-        self.traj_granular = self.waypoints[START_IX:START_IX+1]
+        self.traj_granular = copy.deepcopy(self.waypoints[START_IX:START_IX+1])
 
-        self.current_speed_mps = self.speed_limit / 2
+        self.current_speed_mps = self.speed_limit / 2 
         self.current_tire_angle = 0
+
         
     def set_nav_map(self, coarse_map_df):
+        # Only called once
+
         self.way_ids = coarse_map_df.way_id.to_numpy()
         self.map_xs, self.map_ys = coarse_map_df.pos_x.to_numpy(), coarse_map_df.pos_y.to_numpy()
-        n_noise_rds = 0 if random.random()<.1 else random.randint(5, 25)
-        self.map_ys, self.map_xs, self.way_ids = add_noise_rds_to_map(self.map_ys, self.map_xs, self.way_ids, n_noise_rds=n_noise_rds)
+        
+        if random.random()<.5:
+            n_noise_rds = 0 if random.random()<.1 else random.randint(5, 25)
+            self.map_ys, self.map_xs, self.way_ids = add_noise_rds_to_map(self.map_ys, self.map_xs, self.way_ids, n_noise_rds=n_noise_rds)
+        else: # sometimes use shifted map. Gives parallel rds
+            self.map_ys, self.map_xs, self.way_ids = add_noise_rds_to_map(self.map_ys, self.map_xs, self.way_ids, n_noise_rds=random.randint(0,5))
+            self.map_ys, self.map_xs, self.way_ids = add_noise_rds_to_map_shifted(self.map_ys, 
+                                                                                  self.map_xs, 
+                                                                                  self.way_ids, 
+                                                                                  n_shifted_rds=random.choice([1,1,2]))
 
         self.refresh_nav_map_freq = random.choice([3,4,5]) # alternatively, can use vehicle speed and heading to interpolate ala kalman TODO
         self.small_map = self.EMPTY_MAP # doesn't update every frame
@@ -185,7 +215,7 @@ class Autopilot():
         ##############################
 
         # speed limit and turn agg
-        if (self.overall_frame_counter+1) % self.DRIVE_STYLE_CHANGE_IX: self.reset_drive_style()
+        if ((self.overall_frame_counter+1)%self.DRIVE_STYLE_CHANGE_IX)==0: self.randomize_drive_style()
 
         # Check for route done
         max_ix_will_travel_in_step = int((30/FPS) / WP_SPACING)
@@ -221,7 +251,7 @@ class Autopilot():
             self.shift_x = r * shift_x_max
             self.shift_y = r * shift_y_max
             self.dagger_shift = self.normal_shift * r # for logging 
-        if self.dagger_counter == self.dagger_duration: self.reset_dagger()
+        if self.dagger_counter == self.dagger_duration: self.randomize_dagger()
 
         ############
         # Get AP wp
@@ -240,8 +270,7 @@ class Autopilot():
         self.target_wp_pos = wp # Used for debugging, it's the red object leading ego
         self.target_wp_rot = self.wp_rotations[target_wp_ix]
 
-        fps = np.clip(random.gauss(20, 2), 17, 23)
-
+        fps = self.rando_fps[self.overall_frame_counter]
         ############
         # Move the car
         _vehicle_turn_rate = self.current_tire_angle * (self.current_speed_mps/self.wheelbase) # rad/sec # Tire angle from prev step
@@ -521,59 +550,82 @@ class Autopilot():
         episode_info_dict = self.episode_info.__dict__
         for p in EPISODE_PROPS: 
             self.aux[c, p] = episode_info_dict[p]
+        self.aux[c, "pitch"] = 0 # placeholder. Not actually true. Rationalize. Bc pitch being set not in episode anymore.
+        self.aux[c, "yaw"] = 0
         
         _i = self.overall_frame_counter // FRAME_CAPTURE_N
         np.save(f"{self.run_root}/aux/{_i}.npy", self.aux)
         np.save(f"{self.run_root}/targets/{_i}.npy", self.targets_container)
         np.save(f"{self.run_root}/maps/{_i}.npy", self.maps_container)  
         
-       
+    def set_randoms(self):
+        # To ensure reproducible wout fixing seeds. Generating all randomness up front then incrementing through
+        # dagger and drive style done here, other randos in init
+        n_randos = 50
 
-    def reset_dagger(self):
-        # Get max dagger shift
+        # drive style
+        self.rand_curve_speed_mult = [random.uniform(.7, 1.25) for _ in range(n_randos)]
+        self.rand_turn_slowdown_sec_before = [random.uniform(.25, .75) for _ in range(n_randos)]
+        self.rand_max_accel = [random.uniform(2.6, 3.5) for _ in range(n_randos)]
+        self.rand_wheelbase = [random.uniform(2., 2.66) for _ in range(n_randos)]
+        
+        # speed limits
+        self.rand_speed_limits = []
+        for _ in range(n_randos):
+            rr = random.random() 
+            if self.episode_info.is_highway:
+                speed_limit = random.uniform(16, 19) if rr<.1 else random.uniform(19, 27) if rr < .7 else random.uniform(27, 30)
+            else:
+                speed_limit = random.uniform(8, 12) if rr < .1 else random.uniform(12, 18) if rr < .2 else random.uniform(18, 28) # mps
+            self.rand_speed_limits.append(speed_limit)
+            
+        # dagger shifts and durations
+        self.rand_dagger_shifts = []
+        self.rand_dagger_durations = []
         is_neighborhood = self.episode_info.is_neighborhood
+        for _ in range(n_randos):
+            if is_neighborhood: # pull the eff away from rd edge. Trn to decouple pos and is-lined
+                normal_shift = random.uniform(NORMAL_SHIFT_MIN*2, NORMAL_SHIFT_MAX)
+                normal_shift = normal_shift if random.random()<.8 else -normal_shift
+                max_dagger_hold_s = 4
+            else:
+                normal_shift = random.uniform(NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX)
+                normal_shift = normal_shift if random.random()<.5 else -normal_shift
+                max_dagger_hold_s = 2
 
-        if is_neighborhood: # pull the eff away from rd edge. Trn to decouple pos and is-lined
-            normal_shift = random.uniform(NORMAL_SHIFT_MIN*2, NORMAL_SHIFT_MAX)
-            self.normal_shift = normal_shift if random.random()<.8 else -normal_shift
-            max_dagger_hold_s = 4
-        else:
-            normal_shift = random.uniform(NORMAL_SHIFT_MIN, NORMAL_SHIFT_MAX)
-            self.normal_shift = normal_shift if random.random()<.5 else -normal_shift
-            max_dagger_hold_s = 2
+            # How long dagger will take, ie this is what ap will follow. Based on normal shift, but with some randomness bc
+            # doesn't need to be tied, and want agent to be able to not be too distracted when off policy human driving.
+            dagger_duration = int(self._sec_to_undagger(normal_shift)*2*FPS*random.uniform(1., max_dagger_hold_s)) # frames 
+
+            self.rand_dagger_shifts.append(normal_shift)
+            self.rand_dagger_durations.append(dagger_duration)
+
+    def randomize_dagger(self):
+        ix = self.dagger_randos_ix
+        self.normal_shift = self.rand_dagger_shifts[ix]
+        self.dagger_duration = self.rand_dagger_durations[ix]
 
         # reset state
         self.is_doing_dagger = False
         self.dagger_counter = 0
         self.shift_x, self.shift_y, self.dagger_shift = 0, 0, 0
+        self.dagger_randos_ix += 1
 
-        # How long dagger will take, ie this is what ap will follow. Based on normal shift, but with some randomness bc
-        # doesn't need to be tied, and want agent to be able to not be too distracted when off policy human driving.
-        self.dagger_duration = int(self._sec_to_undagger(normal_shift)*2*FPS*random.uniform(1., max_dagger_hold_s)) # frames 
-
-
-    def reset_drive_style(self):
-        rr = random.random() 
-        if self.episode_info.is_highway:
-            self.speed_limit = random.uniform(16, 19) if rr<.1 else random.uniform(19, 27) if rr < .7 else random.uniform(27, 30)
-        else:
-            self.speed_limit = random.uniform(8, 12) if rr < .1 else random.uniform(12, 18) if rr < .2 else random.uniform(18, 28) # mps
-
+    def randomize_drive_style(self):
+        ix = self.drive_style_randos_ix; 
+        self.speed_limit = self.rand_speed_limits[ix]
         if not self.is_ego:
             self.speed_limit *= .8 # hack to make npcs go a bit slower than ego, to get more time w npcs as lead car
 
         self.lateral_kP = .95 #.85 #random.uniform(.75, .95)
         # self.long_kP = .5 #random.uniform(.02, .05)
-        self.curve_speed_mult = random.uniform(.7, 1.25)
-        self.turn_slowdown_sec_before = random.uniform(.25, .75)
-        self.max_accel = random.uniform(2.6, 3.5) #
+        self.curve_speed_mult = self.rand_curve_speed_mult[ix]
+        self.turn_slowdown_sec_before = self.rand_turn_slowdown_sec_before[ix]
+        self.max_accel = self.rand_max_accel[ix]
 
-        self.wheelbase = random.uniform(2., 2.66) # crv is 2.66, but that begins to be too slow on the turns, like a yacht
+        self.wheelbase = self.rand_wheelbase[ix] # crv is 2.66, but that begins to be too slow on the turns, like a yacht
 
-        # doing these here so they don't change mid stopsign
-        self.pause_at_stopsign_s = 0 if random.random()<.5 else random.randint(0,2)
-        OBEYS_STOPS_PROB = .1
-        self.obeys_stops = random.random()<OBEYS_STOPS_PROB
+        self.drive_style_randos_ix += 1
 
 
 

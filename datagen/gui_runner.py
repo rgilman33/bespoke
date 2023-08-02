@@ -33,9 +33,26 @@ wp_df, coarse_map_df, success = bpy_handler.get_map_data(bpy, episode_info, time
 
 run_counter = 0
 episode.randomize_appearance(timer, episode_info, run_counter)
-
+ 
 # Get route
 start_left = random.random()<.5
 ego_route = bpy_handler.get_ego_route(wp_df, episode_info, start_left) # can fail here
 
-bpy_handler.set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, save_data=False)
+# Create AP and TM  
+ap, tm = bpy_handler.create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=None)
+
+# Reset scene
+bpy_handler.reset_scene(bpy, ap, tm, save_data=False, render_filepath=None)
+
+bpy_handler.toggle_bev(bpy, False)
+bpy_handler.toggle_semseg(bpy, False)
+#bpy_handler.set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, save_data=False)
+
+if False:
+    import time
+    print("waiting to toggle bev semseg")
+    time.sleep(20)
+    bpy_handler.reset_ap_tm(bpy, ap, tm)
+    bpy_handler.reset_scene(bpy, ap, tm, save_data=False, render_filepath=None)
+    bpy_handler.toggle_bev(bpy, True)
+    bpy_handler.toggle_semseg(bpy, True)

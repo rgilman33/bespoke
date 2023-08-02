@@ -278,7 +278,7 @@ class NPC():
         self.is_done = False
 
 class TrafficManager():
-    def __init__(self, ego_ap, wp_df, episode_info):
+    def __init__(self, ego_ap, wp_df, episode_info, n_npcs=6):
         self.episode_info = episode_info
         self.ego = ego_ap # this is ego.ap actually
         # npcs only start along the route, not randomly scattered on map
@@ -302,16 +302,21 @@ class TrafficManager():
 
         # existing blender_objects for npcs
         self.existing_npc_objects = [o for o in bpy.data.objects if "npc." in o.name]
-        self.npcs = []
+
+        self.active_npcs = []
+
+        # Add npcs
+        self.n_npcs = n_npcs
+        self._add_npcs()
 
 
-    def add_npcs(self, n_npcs):
+    def _add_npcs(self):
         # use existing objects rather than create from scratch. For perf bc don't want to be deleting and remaking all the time. And
         # there was fear of buildup of things in blender behind the scenes (eg names were incrementing each time). It's simpler to clear and remake
         # but we were also getting a substantial linear slowdown in datagen which is consistent with possible buildup. Reusing now to avoid that, despite
         # the slightly more amount of complexity
         for i,npc_object in enumerate(self.existing_npc_objects):
-            if i < n_npcs:
+            if i < self.n_npcs:
                 npc_object.hide_render = False
                 nodes = npc_object.modifiers["GeometryNodes"].node_group.nodes
 
@@ -322,16 +327,26 @@ class TrafficManager():
                 update_ap_object(nodes, npc_ap)
                 dist_from_ego_start_go = 200 if self.npcs_only_oncoming else random.uniform(110, 160)
                 npc = NPC(npc_ap, nodes, npc_object, dist_from_ego_start_go)
-                self.npcs.append(npc)
+                self.active_npcs.append(npc)
             else:
                 npc_object.hide_render = True
+
+    def reset_active_npcs(self):
+        # has to be called after _add_npcs, only works on active_npcs
+        for npc in self.active_npcs:
+            npc.blender_object.hide_render = False
+            npc.is_done = False
+            npc.ap.reset()
+            update_ap_object(npc.nodes, npc.ap)
+
 
     def step(self):
 
         self.ego.set_should_yield(False)
         self.ego.lead_dist = DIST_NA_PLACEHOLDER
 
-        for npc in self.npcs:
+        active_npcs = [npc for npc in self.active_npcs if not npc.is_done] 
+        for npc in active_npcs:
             npc_dist_to_ego = dist(npc.ap.current_pos[:2], self.ego.current_pos[:2])
 
             if npc.ap.route_is_done:
@@ -381,7 +396,6 @@ class TrafficManager():
                 npc.ap.step()
                 update_ap_object(npc.nodes, npc.ap)
 
-        self.npcs = [npc for npc in self.npcs if not npc.is_done] 
 
 def check_map_has_overlapping_rds(df, episode_info):
     t0 = time.time()
@@ -439,35 +453,114 @@ def get_ego_route(wp_df, episode_info, start_left):
 
     return route
 
+def _update_wp_sphere(wp_sphere_nodes, ap):
+    get_node("pitch", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[0]
+    get_node("roll", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[1]
+    get_node("heading", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[2]
+    get_node("pos_x", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[0]
+    get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[1]
+    get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[2] + 1
 
-def set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, save_data=False, run_root=None):
+def create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=None):
     
-    bpy.app.handlers.frame_change_post.clear() # has to be before we manually set the frame below.
+    ###################
+    # Create AP and TM
+
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
-    # Create AP and TM
-    global ap, tm
     ap = Autopilot(episode_info, run_root=run_root, ap_id=-1, is_ego=True)
     timer.log("create ap")
-    ap.set_route(ego_route)
+    ap.set_route(ego_route) # this also calls ap.reset()
     timer.log("set route")
     ap.set_nav_map(coarse_map_df)
     timer.log("set nav map")
     update_ap_object(make_vehicle_nodes, ap)
     timer.log("update ap object")
 
-    tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info)
-    tm.add_npcs(random.randint(6, MAX_N_NPCS) if episode_info.has_npcs else 0)
+    n_npcs = random.randint(6, MAX_N_NPCS) if episode_info.has_npcs else 0
+    tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info, n_npcs=n_npcs)
     timer.log("prep tm")
 
-    wp_sphere_nodes = bpy.data.node_groups['wp_sphere_nodes'].nodes 
-    get_node("pitch", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[0]
-    get_node("roll", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[1]
-    get_node("heading", wp_sphere_nodes).outputs["Value"].default_value = ap.current_rotation[2]
-    get_node("pos_x", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[0]
-    get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[1]
-    get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.current_pos[2]
+    return ap, tm
 
+def reset_ap_tm(bpy, ap, tm):
+    make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
+
+    ap.reset()
+    update_ap_object(make_vehicle_nodes, ap)
+
+    tm.reset_active_npcs()
+
+def toggle_semseg(bpy, is_semseg):
+    dirt_gravel_nodes = bpy.data.materials["Dirt Gravel"].node_tree.nodes
+    main_map_nodes = bpy.data.node_groups['main_map'].nodes 
+    npc_materials = [m.node_tree.nodes for m in bpy.data.materials if "npc." in m.name]
+    if is_semseg:
+        get_node("semseg_gate", dirt_gravel_nodes).mute = False
+        get_node("distractors_gate", main_map_nodes).mute = True
+        for n in npc_materials: get_node("semseg_gate", n).mute = False
+    else:
+        get_node("semseg_gate", dirt_gravel_nodes).mute = True
+        get_node("distractors_gate", main_map_nodes).mute = False
+        for n in npc_materials: get_node("semseg_gate", n).mute = True
+
+def toggle_bev(bpy, is_bev):
+    z_adj_nodes = bpy.data.node_groups['apply_z_adjustment'].nodes 
+    meshify_lines_nodes = bpy.data.node_groups['meshify_lines'].nodes
+
+    if is_bev:
+        # Orthographic bev
+
+        bpy.data.scenes["Scene"].render.resolution_x = 180 
+        bpy.data.scenes["Scene"].render.resolution_y = 120
+
+        # bpy.data.objects["Camera"].location[0] = .27
+        bpy.data.objects["Camera"].location[1] = -30 # neg to move ego more outside frame to the right
+        bpy.data.objects["Camera"].location[2] = -50 # move in the air
+
+        bpy.data.objects["Camera"].rotation_euler[0] = np.radians(0) # facing straight down
+        bpy.data.objects["Camera"].rotation_euler[1] = np.radians(180)
+        bpy.data.objects["Camera"].rotation_euler[2] = np.radians(90) # rotating so ego faces horizontal to the right
+
+        bpy.data.objects["Camera"].data.type = 'ORTHO'
+        bpy.data.objects["Camera"].data.ortho_scale = 50 # this is what sets z dist, i think # currently at about 55m out
+
+        get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .5 # otherwise z fighting. This is high up, but bc ortho doesn't matter.
+        get_node("constant_line_hwidth_switch", meshify_lines_nodes).outputs["Value"].default_value = 1 # constant extra-wide for better bev
+
+    else:
+        # Perspective egocentric
+
+        bpy.data.scenes["Scene"].render.resolution_x = 1440 
+        bpy.data.scenes["Scene"].render.resolution_y = 360
+
+        bpy.data.objects["Camera"].location[0] = .27
+        bpy.data.objects["Camera"].location[1] = 0
+        bpy.data.objects["Camera"].location[2] = -.97
+        
+        # Camera calib
+        # NOTE a bit of dr here, would rather it consolidated in episode, but this allows for all camera control in one place 
+        # so can toggle bev / perspective
+        BASE_PITCH = 86 # angled slightly down
+        BASE_YAW = 180
+        pitch_perturbation = random.uniform(-2, 2)
+        yaw_perturbation = 0 #random.uniform(-2, 2)
+        bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation)
+        bpy.data.objects["Camera"].rotation_euler[1] = np.radians(180)
+        bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation)
+
+        bpy.data.objects["Camera"].data.type = 'PERSP'
+        bpy.data.objects["Camera"].data.angle = np.radians(71)
+
+        get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .01
+        get_node("constant_line_hwidth_switch", meshify_lines_nodes).outputs["Value"].default_value = 0
+
+
+def reset_scene(bpy, _ap, _tm, save_data=False, render_filepath=None):
+    
+    ###################
+    # Reset scene 
+    bpy.app.handlers.frame_change_post.clear() # has to be before we manually set the frame number
 
     bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
     bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
@@ -476,15 +569,25 @@ def set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_
     # in data aug w blur and other distractors
     bpy.data.scenes["Scene"].eevee.taa_render_samples = random.randint(2, 5) 
 
-    if run_root is not None: bpy.data.scenes["Scene"].render.filepath = f"{run_root}/imgs/" #f"{run_root}/imgs.avi"
+    if render_filepath is not None: bpy.data.scenes["Scene"].render.filepath = render_filepath
     frame_start = 1
     bpy.data.scenes["Scene"].frame_start = frame_start
     bpy.data.scenes["Scene"].frame_end = EPISODE_LEN
     bpy.data.scenes["Scene"].render.fps = 20 // FRAME_CAPTURE_N
-    bpy.context.scene.frame_set(frame_start) # Does this trigger frame change handler? Yes. Handler has to be cleared before this, otherwise triggers
-    # bpy.data.scenes["Scene"].render.resolution_x = 1440 # hardcoded in the blendfile
-    # bpy.data.scenes["Scene"].render.resolution_y = 360
 
+    bpy.context.scene.frame_set(frame_start) 
+    # Handler has to be cleared before this, otherwise triggers frame_change_post
+
+
+    ###################
+    # Attach handler
+    global ap, tm
+    ap, tm = _ap, _tm
+    # debugging
+    wp_sphere_nodes = bpy.data.node_groups['wp_sphere_nodes'].nodes 
+    # _update_wp_sphere(wp_sphere_nodes, ap)
+
+    make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
     def frame_change_post(scene, dg):
         # Update ego location and traj targets -> update TM (lead targets) -> save targets/aux/info data -> the frame is rendered
@@ -497,30 +600,22 @@ def set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_
             update_ap_object(make_vehicle_nodes, ap)
 
         # debugging
-        get_node("pitch", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[0]
-        get_node("roll", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[1]
-        get_node("heading", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_rot[2]
-        get_node("pos_x", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[0]
-        get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[1]
-        get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[2] + 1
+        _update_wp_sphere(wp_sphere_nodes, ap)
 
         # Move NPCs and update lead status
         for i in range(FRAME_CAPTURE_N):
             tm.step()
 
         # Save data
-        if save_data: ap.save_data() # save data after tm steps to get accurate lead status
+        if save_data: ap.save_data() # save data after tm steps to get correct lead status
 
         if scene.frame_current == scene.frame_end:
             distance_travelled = ap.current_wp_ix * WP_SPACING
             print(f"AP travelled {round(distance_travelled)} out of {round(len(ap.waypoints)*WP_SPACING)} meters in the route")
             print(f"AP route had finished: {ap.route_is_done}")
 
-
-        # print("\n")
+    assert len(bpy.app.handlers.frame_change_post)==0, "frame change post handler needs to be cleared"
     bpy.app.handlers.frame_change_post.append(frame_change_post) 
-    # seems to be called once before actual render happens? so gotta throw one out? but doesn't increment frame_current
+    # Imgs is the expected amount, eg goes from 1 - 170 whereas others go to 171. We're just throwing the last one out.
     
-    timer.log("set handler")
-
 

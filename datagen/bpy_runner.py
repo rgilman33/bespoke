@@ -97,7 +97,7 @@ if __name__ == "__main__":
             # Randomize appearance -- doesn't alter targets
             randomize_appearance(timer, episode_info, run_counter)
 
-        # Get route. CUrrently two routes for each map (one in each direction)
+        # Get route. Currently two routes for each map (one in each direction)
         ego_route = get_ego_route(wp_df, episode_info, start_left) # can fail here
         if ego_route is None:
             failed_counter += 1
@@ -114,7 +114,18 @@ if __name__ == "__main__":
 
         # We've successfully gotten map and route. May continue
         failed_counter = 0
-        set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, save_data=True, run_root=run_root)
+
+        # Create AP and TM  
+        ap, tm = create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=run_root)
+
+        # Reset scene
+        reset_scene(bpy, ap, tm, save_data=True, render_filepath=f"{run_root}/imgs/")
+        timer.log("reset scene")
+
+        # Toggle bev and semseg
+        toggle_semseg(bpy, False)
+        toggle_bev(bpy, False)
+        timer.log("toggle semseg and bev")
 
         init_time = time.time() - t0
         report_runner_metric(dataloader_root, init_time, INIT_TIME_F)
@@ -134,7 +145,17 @@ if __name__ == "__main__":
         timer.log("redirect stdout")
 
         bpy.ops.render.render(animation=True)
-        bpy.app.handlers.frame_change_post.clear()
+
+        render_bev = True
+        if render_bev:
+            reset_ap_tm(bpy, ap, tm)
+
+            reset_scene(bpy, ap, tm, save_data=False, render_filepath=f"{run_root}/imgs_bev/")
+            toggle_bev(bpy, True)
+            toggle_semseg(bpy, True)
+            bpy.ops.render.render(animation=True)
+
+        # bpy.app.handlers.frame_change_post.clear()
         timer.log("render")
 
         # disable output redirection
