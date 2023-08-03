@@ -115,7 +115,7 @@ def get_map(map_xs, map_ys, way_ids, route_xs, route_ys, route_way_ids, current_
     return small_map
 
 
-# only used by blender
+# only used in sim
 def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=15):
     for i in range(n_noise_rds):
         ix = random.randint(0, len(lats)-1)
@@ -139,6 +139,18 @@ def add_noise_rds_to_map(lats, lons, way_ids, n_noise_rds=15):
         lats = np.concatenate([lats, rd_lats])
         lons = np.concatenate([lons, rd_lons])
         way_ids = np.concatenate([way_ids, ([i+300]* len(rd_lats))]) # just making sure isn't same id as real rds HACK this whole fn is hacky. beware.
+    return lats, lons, way_ids
+
+
+def add_noise_rds_to_map_shifted(lats, lons, way_ids, n_shifted_rds=1):
+    # shifts existing rds to get more parallel noise rds
+    for i in range(1, n_shifted_rds+1):
+        lats_shifted = lats + random.uniform(20, 150)*random.choice([-1,1])
+        lons_shifted = lons + random.uniform(20, 600)*random.choice([-1,1])
+        way_ids_shifted = way_ids + 10_000*i
+        lats = np.concatenate([lats, lats_shifted])
+        lons = np.concatenate([lons, lons_shifted])
+        way_ids = np.concatenate([way_ids, way_ids_shifted])
     return lats, lons, way_ids
 
 # Distance btwn lon lines is a fn of lat. Mult rw lon values by this mult to make it approximately an xy grid eg as we get from blender

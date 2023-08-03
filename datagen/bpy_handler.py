@@ -552,15 +552,16 @@ def toggle_bev(bpy, is_bev):
         bpy.data.objects["Camera"].data.type = 'PERSP'
         bpy.data.objects["Camera"].data.angle = np.radians(71)
 
-        get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .01
+        get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .005
         get_node("constant_line_hwidth_switch", meshify_lines_nodes).outputs["Value"].default_value = 0
 
 
-def reset_scene(bpy, _ap, _tm, save_data=False, render_filepath=None):
+def reset_scene(bpy, _ap, _tm, timer=None, save_data=False, render_filepath=None):
     
     ###################
     # Reset scene 
-    bpy.app.handlers.frame_change_post.clear() # has to be before we manually set the frame number
+    bpy.app.handlers.frame_change_post.clear() # has to be before we manually set the frame number. Not true i don't think w our new method.
+    if timer is not None: timer.log("clear handler")
 
     bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
     bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
@@ -574,10 +575,13 @@ def reset_scene(bpy, _ap, _tm, save_data=False, render_filepath=None):
     bpy.data.scenes["Scene"].frame_start = frame_start
     bpy.data.scenes["Scene"].frame_end = EPISODE_LEN
     bpy.data.scenes["Scene"].render.fps = 20 // FRAME_CAPTURE_N
+    if timer is not None: timer.log("set scene params")
 
-    bpy.context.scene.frame_set(frame_start) 
-    # Handler has to be cleared before this, otherwise triggers frame_change_post
-
+    # bpy.data.scenes["Scene"].frame_set(frame_start) # Handler has to be cleared before this, otherwise triggers frame_change_post
+    bpy.data.scenes["Scene"].frame_current = frame_start 
+    # i think this one doesn't call the handlers, do other stuff. Much faster but i believe is just deferring the time cost
+    # until later, ie first call on the new map
+    if timer is not None: timer.log("set frame")
 
     ###################
     # Attach handler
@@ -588,6 +592,7 @@ def reset_scene(bpy, _ap, _tm, save_data=False, render_filepath=None):
     # _update_wp_sphere(wp_sphere_nodes, ap)
 
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
+    if timer is not None: timer.log("get wp and vehicle nodes")
 
     def frame_change_post(scene, dg):
         # Update ego location and traj targets -> update TM (lead targets) -> save targets/aux/info data -> the frame is rendered
@@ -616,6 +621,8 @@ def reset_scene(bpy, _ap, _tm, save_data=False, render_filepath=None):
 
     assert len(bpy.app.handlers.frame_change_post)==0, "frame change post handler needs to be cleared"
     bpy.app.handlers.frame_change_post.append(frame_change_post) 
+    if timer is not None: timer.log("attach handler")
+
     # Imgs is the expected amount, eg goes from 1 - 170 whereas others go to 171. We're just throwing the last one out.
     
 

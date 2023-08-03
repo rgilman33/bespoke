@@ -379,8 +379,8 @@ class Trainer():
             # Stops
             ######################
             stop_dist = aux_np[:,:,"stop_dist"]
-            stops_min_buffer = -100 if self.use_rnn else 10
-            stops_always_enforce_pos = torch.from_numpy((stops_min_buffer<stop_dist) & (stop_dist<STOP_DIST_MIN))
+            stops_min_buffer = -100 if self.use_rnn else 15
+            stops_always_enforce_pos = torch.from_numpy((stops_min_buffer<stop_dist) & (stop_dist<STOP_DIST_MIN)) & has_stop.bool().cpu()
             stops_always_enforce_neg = torch.from_numpy(stop_dist>STOP_DIST_MAX)
             stops_always_enforce = (stops_always_enforce_pos | stops_always_enforce_neg).to(device)
             m_sees_stop = (aux_targets_p[:,:,AUX_TARGET_PROPS.index("has_stop")].detach() > .3)
@@ -391,17 +391,27 @@ class Trainer():
             
             # buffer zone, don't enforce up or down
             stops_buffer_end = torch.from_numpy(((STOP_DIST_MAX-20)<stop_dist) & (stop_dist<STOP_DIST_MAX))
-            stops_buffer_beginning = torch.from_numpy(stop_dist<10) 
+            stops_buffer_beginning = torch.from_numpy(stop_dist<2) 
             stops_buffer = (stops_buffer_beginning | stops_buffer_end).to(device)
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("has_stop")][stops_buffer] = 0 # deadzone, don't trn either direction
             
-            # logging the stops that we're allowing leniency on
-            m_doesnt_see_stop = (stops_always_enforce_pos & ~m_sees_stop)[:,0]
+            # logging the stops that we're forcing model to learn, even when m doesn't see
+            m_doesnt_see_stop = (stops_always_enforce_pos.to(device) & ~m_sees_stop)[:,0]
             if m_doesnt_see_stop.sum().item()>0:
                 batch = (img[m_doesnt_see_stop], wps[m_doesnt_see_stop], wps_p[m_doesnt_see_stop], 
                          aux[m_doesnt_see_stop], aux_targets_p[m_doesnt_see_stop], obsnet_out[m_doesnt_see_stop])
                 _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
-                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/stop_e{self.current_epoch}u{update_counter}.png", _img)
+                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/stop_forced_e{self.current_epoch}u{update_counter}.png", _img)
+            # logger.log({"logistical/lenient_stop_maskout_perc":m_doesnt_see_stop.float().mean().item()})
+
+            # logging the stops that we're being lenient on but m maybe should actually see
+            stops_in_lenient_zone = torch.from_numpy((STOP_DIST_MIN<stop_dist) & (stop_dist<40)).to(device)
+            m_doesnt_see_stop_lenient = (stops_in_lenient_zone & ~m_sees_stop)[:,0]
+            if m_doesnt_see_stop_lenient.sum().item()>0:
+                batch = (img[m_doesnt_see_stop_lenient], wps[m_doesnt_see_stop_lenient], wps_p[m_doesnt_see_stop_lenient], 
+                         aux[m_doesnt_see_stop_lenient], aux_targets_p[m_doesnt_see_stop_lenient], obsnet_out[m_doesnt_see_stop_lenient])
+                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
+                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/stop_lenient_e{self.current_epoch}u{update_counter}.png", _img)
             # logger.log({"logistical/lenient_stop_maskout_perc":m_doesnt_see_stop.float().mean().item()})
 
 
@@ -654,11 +664,12 @@ def get_transform(seqlen, diff="easy"):
     spatter_cutout = spatter_mean + random.uniform(.06, .12)
     d = .3
     COMPRESSION_QUALITY_MIN = 30
-    cutout_prob = .01 if diff=="easy" else .1 # right now just used for cnn
+    cutout_prob = .005 if diff=="easy" else .1 # right now just used for cnn
     spatter_prob = .03 if diff=="easy" else .1
     pixdrop_prob = .03 if diff=="easy" else .1
-    cutout_max_n_holes = 10 if diff=="easy" else 40
+    cutout_max_n_holes = 5 if diff=="easy" else 40
 
+    cutout_color = (0,0,0) if random.random()<.8 else random_color() # this is mostly to mimic maskout in viz suite at this point
     transforms = [
         A.AdvancedBlur(p=d, blur_limit=(3, 3), sigmaX_limit=(0.1, 1.55), sigmaY_limit=(0.1, 1.51), rotate_limit=(-81, 81), beta_limit=(0.5, 8.0), noise_limit=(0.01, 22.05)),
         A.HueSaturationValue(hue_shift_limit=10,sat_shift_limit=70,val_shift_limit=0, p=d), # not doing brightness, doing it below
@@ -667,7 +678,7 @@ def get_transform(seqlen, diff="easy"):
             A.ISONoise(intensity=(.2, .5), p=d),
         ]),
         A.OneOf([ # distractors
-            A.CoarseDropout(p=cutout_prob, max_holes=cutout_max_n_holes, max_height=120, max_width=120, min_holes=3, min_height=10, min_width=10, fill_value=random_color(), mask_fill_value=None),
+            A.CoarseDropout(p=cutout_prob, max_holes=cutout_max_n_holes, max_height=120, max_width=120, min_holes=3, min_height=10, min_width=10, fill_value=cutout_color, mask_fill_value=None),
             A.Spatter(p=spatter_prob, mean=spatter_mean, std=(0.25, 0.35), gauss_sigma=(.8, 1.6), intensity=(-.3, 0.3), cutout_threshold=spatter_cutout, mode=['rain', 'mud']),
             A.PixelDropout(p=pixdrop_prob, dropout_prob=random.uniform(.01, .05), per_channel=random.choice([0,1]), drop_value=random_color(), mask_drop_value=None),
         ]),

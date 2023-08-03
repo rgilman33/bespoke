@@ -46,10 +46,8 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, b, is_done, offset,
 
     timer.log("get run_path")
 
-    # # Targets and aux start at 0, imgs start at one. This actually lines up correctly if we match ixs. ie we throw away the first 
-    # # target and aux. img1 corresponds to targets1, aux1. One is our first obs.
-    # not true anymore. We updated ap so the frame and corresponding info is saved on the same frame. It's still true that img1 is for info1,
-    # but now there is no info0 to throw away
+    # updated ap so the frame and corresponding info is saved on the same frame. It's still true that img1 is for info1,
+    # but now there is no info0 to throw away. But there is an extra aux, targets, maps at the end to throw away
 
     seqlen = img_chunk.shape[1]
     ix = random.randint(seqlen+FS_LOOKBACK, EPISODE_LEN-1) # ix will be the current obs, ie the latest obs

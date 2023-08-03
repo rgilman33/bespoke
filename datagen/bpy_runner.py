@@ -80,22 +80,27 @@ if __name__ == "__main__":
 
         print(f"Making new map: {need_map}. Starting from left: {start_left}.")
 
+        # Toggle bev and semseg
+        toggle_semseg(bpy, False) # updates dg w new materials
+        toggle_bev(bpy, False)
+        timer.log("toggle semseg and bev off")
+
         # Get map. We can do multiple routes through each map
         if need_map:
             # Make episode map
-            episode_info = make_map(timer)
+            episode_info = make_map(timer) # updates dg w new rd network
+
+            # Randomize appearance -- doesn't alter targets
+            randomize_appearance(timer, episode_info, run_counter) # updates dg w new materials
 
             # Retrieve map
-            wp_df, coarse_map_df, success = get_map_data(bpy, episode_info, timer) # can fail here
+            wp_df, coarse_map_df, success = get_map_data(bpy, episode_info, timer) # dg evaluated here to retrieve rd network wps
             if not success:
                 failed_counter += 1
                 if failed_counter == 20:
                     indicate_failed()
                     break
                 continue
-            
-            # Randomize appearance -- doesn't alter targets
-            randomize_appearance(timer, episode_info, run_counter)
 
         # Get route. Currently two routes for each map (one in each direction)
         ego_route = get_ego_route(wp_df, episode_info, start_left) # can fail here
@@ -108,7 +113,6 @@ if __name__ == "__main__":
             start_left = True
             continue
             
-
         start_left = not start_left
         need_map = not need_map
 
@@ -116,16 +120,11 @@ if __name__ == "__main__":
         failed_counter = 0
 
         # Create AP and TM  
-        ap, tm = create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=run_root)
+        ap, tm = create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=run_root) # updates dg w new ego pos
 
         # Reset scene
-        reset_scene(bpy, ap, tm, save_data=True, render_filepath=f"{run_root}/imgs/")
+        reset_scene(bpy, ap, tm, timer=timer, save_data=True, render_filepath=f"{run_root}/imgs/") # dg not evaluated here, will be eval on first frame of render prob
         timer.log("reset scene")
-
-        # Toggle bev and semseg
-        toggle_semseg(bpy, False)
-        toggle_bev(bpy, False)
-        timer.log("toggle semseg and bev")
 
         init_time = time.time() - t0
         report_runner_metric(dataloader_root, init_time, INIT_TIME_F)
@@ -145,18 +144,20 @@ if __name__ == "__main__":
         timer.log("redirect stdout")
 
         bpy.ops.render.render(animation=True)
+        timer.log("render")
 
-        render_bev = True
+        render_bev = need_map
         if render_bev:
-            reset_ap_tm(bpy, ap, tm)
-
-            reset_scene(bpy, ap, tm, save_data=False, render_filepath=f"{run_root}/imgs_bev/")
             toggle_bev(bpy, True)
-            toggle_semseg(bpy, True)
+            toggle_semseg(bpy, True) # updates dg w new materials
+            timer.log("toggle semseg and bev on")
+            reset_ap_tm(bpy, ap, tm)
+            timer.log("reset ap and tm for bev")
+            reset_scene(bpy, ap, tm, timer=timer, save_data=False, render_filepath=f"{run_root}/imgs_bev/")
             bpy.ops.render.render(animation=True)
+            timer.log("render bev")
 
         # bpy.app.handlers.frame_change_post.clear()
-        timer.log("render")
 
         # disable output redirection
         os.close(fd)

@@ -284,7 +284,7 @@ DIST_NA_PLACEHOLDER = 150
 
 # used for targets
 LEAD_DIST_MIN, LEAD_DIST_MAX = 40, 110
-STOP_DIST_MIN, STOP_DIST_MAX = 35, 90
+STOP_DIST_MIN, STOP_DIST_MAX = 20, 90
 
 class EpisodeInfo():
     def __init__(self):
