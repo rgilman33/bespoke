@@ -495,14 +495,23 @@ def toggle_semseg(bpy, is_semseg):
     dirt_gravel_nodes = bpy.data.materials["Dirt Gravel"].node_tree.nodes
     main_map_nodes = bpy.data.node_groups['main_map'].nodes 
     npc_materials = [m.node_tree.nodes for m in bpy.data.materials if "npc." in m.name]
+    place_obstacles_nodes = bpy.data.node_groups['place_obstacles'].nodes
+
     if is_semseg:
         get_node("semseg_gate", dirt_gravel_nodes).mute = False
         get_node("distractors_gate", main_map_nodes).mute = True
         for n in npc_materials: get_node("semseg_gate", n).mute = False
+        get_node("constant_rd_edge_switch", dirt_gravel_nodes).outputs["Value"].default_value = 1
+        get_node("no_rdside_npcs_switch", place_obstacles_nodes).outputs["Value"].default_value = 1 
+        # no rdside npcs for now when bev, will need diff color
+
     else:
         get_node("semseg_gate", dirt_gravel_nodes).mute = True
         get_node("distractors_gate", main_map_nodes).mute = False
         for n in npc_materials: get_node("semseg_gate", n).mute = True
+        get_node("constant_rd_edge_switch", dirt_gravel_nodes).outputs["Value"].default_value = 0
+        get_node("no_rdside_npcs_switch", place_obstacles_nodes).outputs["Value"].default_value = 0
+
 
 def toggle_bev(bpy, is_bev):
     z_adj_nodes = bpy.data.node_groups['apply_z_adjustment'].nodes 
@@ -511,11 +520,11 @@ def toggle_bev(bpy, is_bev):
     if is_bev:
         # Orthographic bev
 
-        bpy.data.scenes["Scene"].render.resolution_x = 180 
-        bpy.data.scenes["Scene"].render.resolution_y = 120
+        bpy.data.scenes["Scene"].render.resolution_x = BEV_WIDTH #180 
+        bpy.data.scenes["Scene"].render.resolution_y = BEV_HEIGHT #120
 
         # bpy.data.objects["Camera"].location[0] = .27
-        bpy.data.objects["Camera"].location[1] = -30 # neg to move ego more outside frame to the right
+        bpy.data.objects["Camera"].location[1] = -24 # neg to move ego more outside frame to the right
         bpy.data.objects["Camera"].location[2] = -50 # move in the air
 
         bpy.data.objects["Camera"].rotation_euler[0] = np.radians(0) # facing straight down
@@ -523,10 +532,12 @@ def toggle_bev(bpy, is_bev):
         bpy.data.objects["Camera"].rotation_euler[2] = np.radians(90) # rotating so ego faces horizontal to the right
 
         bpy.data.objects["Camera"].data.type = 'ORTHO'
-        bpy.data.objects["Camera"].data.ortho_scale = 50 # this is what sets z dist, i think # currently at about 55m out
+        bpy.data.objects["Camera"].data.ortho_scale = 32 # this is the amount in meters that is captured. 
 
-        get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .5 # otherwise z fighting. This is high up, but bc ortho doesn't matter.
+        get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .5 
+        # otherwise z fighting. This is high up, but bc ortho doesn't matter.
         get_node("constant_line_hwidth_switch", meshify_lines_nodes).outputs["Value"].default_value = 1 # constant extra-wide for better bev
+        # NOTE the above doesn't matter bc not using lines when low res
 
     else:
         # Perspective egocentric
@@ -554,6 +565,7 @@ def toggle_bev(bpy, is_bev):
 
         get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .005
         get_node("constant_line_hwidth_switch", meshify_lines_nodes).outputs["Value"].default_value = 0
+
 
 
 def reset_scene(bpy, _ap, _tm, timer=None, save_data=False, render_filepath=None):

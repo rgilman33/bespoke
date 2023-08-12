@@ -101,9 +101,12 @@ def make_map(timer):
             lane_width = 4.
             extra_wide_prob = .5 if is_neighborhood else .05
             left_shift = -random.uniform(.4, .7) if random.random()<extra_wide_prob else -random.uniform(.7, lane_width/2)
+            # actually prefer 8, 3 but then npcs would hit too much
         else: # narrow dirt gravel
             lane_width = 2.2 #random.uniform(2.4, 4)
             left_shift = -lane_width/2
+
+    # lane width 7 left shift -2 works as a max. I like 8 and -3 better but npcs hit too much
 
     lane_width_actual = lane_width + left_shift
 
@@ -445,7 +448,7 @@ def randomize_appearance(timer, episode_info, run_counter):
 
     # constant inner-shoulder width when only-yellow or dirtgravel, and narrower edge fade (.3 -> 1.5) rather than (.3, 3.0)
     rd_start_fade = inner_shoulder_width 
-    sharp_edge = (episode_info.is_neighborhood or episode_info.is_only_yellow_lined or not episode_info.rd_is_lined)
+    sharp_edge = True #(episode_info.is_neighborhood or episode_info.is_only_yellow_lined or not episode_info.rd_is_lined)
     rd_fade_width = random.uniform(.05, .5) if sharp_edge else .3*(10**random.uniform(0, 1.))
     outer_shoulder_start_fade = rd_start_fade + outer_shoulder_width # inner + outer shoulder widths
     outer_shoulder_fade_width = random.uniform(0.05, .5) if sharp_edge else random.uniform(0.1, 1.)

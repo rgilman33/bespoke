@@ -146,7 +146,7 @@ if __name__ == "__main__":
         bpy.ops.render.render(animation=True)
         timer.log("render")
 
-        render_bev = need_map
+        render_bev = True #need_map
         if render_bev:
             toggle_bev(bpy, True)
             toggle_semseg(bpy, True) # updates dg w new materials
