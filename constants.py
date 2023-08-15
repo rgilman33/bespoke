@@ -31,6 +31,8 @@ MAP_WIDTH = 120 #80
 assert MAP_WIDTH%2==0
 MAP_HEIGHT = 180 #120 #IMG_HEIGHT
 
+BEV_WIDTH = 64
+BEV_HEIGHT = 64
 
 ###########################
 # WPs
@@ -567,6 +569,11 @@ ROLLOUT_PROPS = list(propref_rollout.prop.values)
 
 def get_img_container(bs, seqlen, shm=None):
     arr = np.ndarray((bs, seqlen, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, N_CHANNELS_MODEL), dtype='uint8', buffer=(shm.buf if shm else None))
+    arr[:,:, :,:,:] = 0
+    return arr
+
+def get_bev_container(bs, seqlen, shm=None):
+    arr = np.ndarray((bs, seqlen, BEV_HEIGHT, BEV_WIDTH, 3), dtype='uint8', buffer=(shm.buf if shm else None))
     arr[:,:, :,:,:] = 0
     return arr
 

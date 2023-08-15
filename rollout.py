@@ -30,8 +30,8 @@ class Rollout():
         m_was_train_mode = m.training
         m.eval()
 
-        img, aux, wps = [], [], [] 
-        wps_p, obsnet_outs, aux_targets_p = [], [], []
+        img, aux, wps, bev = [], [], [], []
+        wps_p, obsnet_outs, aux_targets_p, bev_p = [], [], [], []
         c = 0
 
         with torch.no_grad():
@@ -39,7 +39,7 @@ class Rollout():
                 # get and unpack batch
                 batch = run.get_batch()
                 if not batch: break
-                _img, _aux, _wps, (to_pred_mask, is_first_in_seq) = batch
+                _img, _aux, _wps, _bev, (to_pred_mask, is_first_in_seq) = batch
                 # if is_first_in_seq: m.reset_hidden(run.bs) 
                 if is_first_in_seq: m.reset_hidden_carousel(1) 
 
@@ -49,16 +49,26 @@ class Rollout():
                 if self.trt: 
                     _wps_p, _aux_targets_p, _obsnet_out = m(_img.float(), _aux.float())
                 else:
-                    with torch.cuda.amp.autocast(): _wps_p, _aux_targets_p, _obsnet_out = m(_img, _aux)
-                if self.store_imgs: img.append(unprep_img(_img))
+                    with torch.cuda.amp.autocast(): 
+                        z, blocks_out = m.cnn_features(_img, _aux, return_blocks_out=True)
+                        _wps_p, _aux_targets_p, _obsnet_out = m.cnn_head(z)
+                        _bev_p = m.bev_head(blocks_out)
+                        _bev_p = _bev_p.sigmoid()
+                if self.store_imgs: 
+                    img.append(unprep_img(_img))
+                bev.append(unprep_bev(_bev))
+
                 aux.append(unprep_aux(_aux))
                 wps.append(unprep_wps(_wps))
                 wps_p.append(unprep_wps(_wps_p))
                 obsnet_outs.append(unprep_obsnet(_obsnet_out))
                 aux_targets_p.append(unprep_aux_targets(_aux_targets_p))
+                bev_p.append(unprep_bev(_bev_p))
 
         # Aux, inputs, targets
-        if self.store_imgs: self.img = np.concatenate(img, axis=1) #NOTE can't use the imgs from the run bc sometimes use TrnLoader, which will have updated chunks
+        if self.store_imgs: 
+            self.img = np.concatenate(img, axis=1) #NOTE can't use the imgs from the run bc sometimes use TrnLoader, which will have updated chunks
+        self.bev = np.concatenate(bev, axis=1)
         self.aux = na(np.concatenate(aux, axis=1), AUX_PROPS)
         self.wps = np.concatenate(wps, axis=1)
 
@@ -66,6 +76,7 @@ class Rollout():
         self.wps_p = np.concatenate(wps_p, axis=1)
         self.obsnet_outs = na(np.concatenate(obsnet_outs, axis=1), OBSNET_PROPS)
         self.aux_targets_p = na(np.concatenate(aux_targets_p, axis=1), AUX_TARGET_PROPS)
+        self.bev_p = np.concatenate(bev_p, axis=1)
 
         self.bs, self.seq_len, _ = self.aux.shape
 
@@ -134,13 +145,16 @@ def flatten_rollout(rollout):
     # All rollout results must be accounted for. That's one reason for keeping things in big containers until here
 
     # Inputs, targets, aux
-    if rollout.store_imgs: rollout.img = flatten_batch_seq(rollout.img)
+    if rollout.store_imgs: 
+        rollout.img = flatten_batch_seq(rollout.img)
+    rollout.bev = flatten_batch_seq(rollout.bev)
     rollout.aux = flatten_batch_seq(rollout.aux)
     rollout.wps = flatten_batch_seq(rollout.wps)
 
     # Model out
     rollout.wps_p = flatten_batch_seq(rollout.wps_p); 
     rollout.obsnet_outs = flatten_batch_seq(rollout.obsnet_outs); rollout.aux_targets_p = flatten_batch_seq(rollout.aux_targets_p)
+    rollout.bev_p = flatten_batch_seq(rollout.bev_p)
 
     # Additional props
     rollout.additional_results = flatten_batch_seq(rollout.additional_results)

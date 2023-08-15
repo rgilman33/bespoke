@@ -1,6 +1,72 @@
 from constants import *
 from imports import *
 
+import torch.nn.functional as F
+
+
+
+
+class DeconvPrep(nn.Module):
+    def __init__(self):
+        super(DeconvPrep, self).__init__()
+        self.pool = nn.AvgPool2d(kernel_size=(1, 3), stride=(1, 3))
+        self.expand = nn.Sequential(
+            nn.Conv2d(448, 1792, kernel_size=(1, 1), stride=(1, 1), bias=False), # same as the effnet conv_head
+            nn.BatchNorm2d(1792),
+            nn.ReLU(),
+        )
+    def forward(self, _in):
+        # expects (batch, 448, 12, 45)
+        assert _in.shape[1:] == torch.Size([448, 12, 45])
+
+        # slightly stretch so we can manually pool and keep it symmetric
+        _in = F.interpolate(_in, size=(16, 48), mode='bilinear', align_corners=False)
+
+        # pool horizontally to output a square. Will be symmetric op
+        _in = self.pool(_in)
+        # Now we're at size (batch, 448, 16, 16)
+
+        # expand to 1792 channels
+        _in = self.expand(_in)
+        # now we're at size (batch, 1792, 16, 16)
+
+        return _in
+
+class Deconv(nn.Module):
+    def __init__(self):
+        super(Deconv, self).__init__()
+        b_dim = 256
+        
+        self.up = nn.Sequential(
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(1792, b_dim, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(b_dim),
+            nn.ReLU(),
+            # another 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(b_dim, b_dim, kernel_size=5, stride=1, padding=2),
+            nn.BatchNorm2d(b_dim),
+            nn.ReLU(),
+        )
+        block = nn.Sequential(    
+            nn.Conv2d(b_dim, b_dim, kernel_size=5, stride=1, padding=2), # no padding by default
+            nn.BatchNorm2d(b_dim),
+            nn.ReLU()
+        )
+        self.blocks = nn.Sequential(*[block for _ in range(1)])
+        self.final = nn.Sequential( # 1x1 conv to get classes for semseg
+            nn.Conv2d(b_dim, 3, kernel_size=1, stride=1),
+        )
+        
+    def forward(self, x):
+        # expects (batch, channels, 16, 16)
+        x = self.up(x)
+        x = self.blocks(x)
+        x = self.final(x)
+
+        return x
+    
 
 # b3 is 1536 features, 14M params or so
 # b4 is 1792 features, 21M params
@@ -26,9 +92,15 @@ class EffNet(nn.Module):
         # self.backbone = timm.create_model("tf_efficientnet_b6", pretrained=True, in_chans=N_CHANNELS_MODEL).to(device)
         self.backbone.classifier = nn.Identity()
         self.backbone_out = self.backbone.num_features #b3 is 1536
-
+        
         # common cnn feature extractor
         n = self.backbone_out + len(AUX_MODEL_PROPS)
+
+        # Deconv
+
+        self.deconv_prep = DeconvPrep().to(device)
+        self._deconv = Deconv().to(device)
+
         self.inner_dim = 1024
 
         self.fcs1_rnn = nn.Sequential(nn.Linear(n, self.inner_dim), nn.ReLU())
@@ -107,7 +179,7 @@ class EffNet(nn.Module):
     def activations_hook(self, grad):
         self.gradients = grad.detach().cpu()
 
-    def cnn_features(self, x, aux):
+    def cnn_features(self, x, aux, return_blocks_out=False):
         # flatten batch and seq for CNNs
         bs, bptt, c, h, w = x.shape
         x = x.reshape(bs*bptt,c,h,w).contiguous() 
@@ -135,24 +207,19 @@ class EffNet(nn.Module):
             x = self.backbone.bn1(x)
             x = self.backbone.act1(x)
 
-            # checkpointing each block separately has same memory requirements as checkpoint_sequential (24gb)
-            # For each module 24 gb to 11gb. We could go even lower by checkpointing even finer, though I'm unable to get it, 
-            # don't understand the implementation
-            # doing each module in the list we get memory blowing up
+            backbone_out = checkpoint_sequential(self.backbone.blocks, 7, x)
 
-            x = checkpoint_sequential(self.backbone.blocks, 7, x)
-
-            # This works, brings memory down to 11gb. Keep this in back pocket for when need it
+            # # This works, brings memory down to 11gb. Keep this in back pocket for when need it
             # for block in self.backbone.blocks: # blocks is a sequential module # TODO check this, need to see we get good perf still. Burned here in the past. Also check how much slower it is.
             #     for module in block: # each block is also a sequential module
             #         x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False) # False is recommended
 
-            # for module in get_children(self.backbone.blocks): # this runs out of memory also. Why?
-            #     x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False)
+            # shape here is (bs*bptt, 448, 12, 45)
+            # branching off here for bev semseg
 
-            x = self.backbone.conv_head(x)
+            x = self.backbone.conv_head(backbone_out) # just an upsamping 1x1 conv: Conv2d(448, 1792, kernel_size=(1, 1), stride=(1, 1), bias=False)
             x = self.backbone.bn2(x)
-            x = self.backbone.act2(x)
+            x = self.backbone.act2(x) # shape coming out of here is (1792, 12, 45) w img size 360 x 1440. This is ~ 1m activations.
             x = self.backbone.global_pool(x)
             x = self.backbone.classifier(x)
         
@@ -161,6 +228,27 @@ class EffNet(nn.Module):
 
         # cat in aux model (speed, has_maps, has_route), this still has calib params in it
         x = torch.cat([x, aux[:,:,self.AUX_MODEL_IXS]], dim=-1)
+
+        if return_blocks_out:
+            # unpack blocks output here. Otherwise lose track of bs bptt dims. 
+            bs_bptt, _c, _h, _w = backbone_out.shape
+            backbone_out = backbone_out.reshape(bs, bptt, _c, _h, _w).contiguous() # (bs, bptt, 448, 12, 45)
+            return x, backbone_out
+        else:
+            return x
+    
+    def bev_head(self, x):
+        # takes in directly from backbone.blocks. 
+
+        bs, bptt, c, h, w = x.shape
+        x = x.reshape(bs*bptt, c,h,w).contiguous() # shape here is (bs*bptt, 448, 12, 45)
+
+        x = self.deconv_prep(x) # outputs (bs*bptt, 1792, 16, 16) 
+
+        x = self._deconv(x) # outputs (bs*bptt, 3, 64, 64)
+        
+        # unpack batch and seq
+        x = x.reshape(bs, bptt, 3, 64, 64).contiguous()
 
         return x
 

@@ -34,6 +34,16 @@ def prep_img(img, is_for_trt=False):
     # if not is_for_trt: img = img.half() # <1ms
     return img
 
+def prep_bev(img):
+    # bs, seqlen, h, w, c in np or single obs
+    n = len(img.shape)
+    new_shape = (0,1, 4,2,3) if n==5 else (2,0,1)
+    img = np.transpose(img, new_shape) # channels first for pytorch
+    img = torch.from_numpy(img) #img should still be uint8 at this point. <1ms
+    img = img.to('cuda') # ~40ms as uint8, more as half #TODO try the pinned memory thing here. Faster?
+    img = img / 255. # <1ms # implicitly converts to float
+    return img
+
 def unprep_img(img):
     img = (denorm_img(img.detach()) * 255).cpu().numpy().astype('uint8')
     n = len(img.shape)
@@ -41,6 +51,12 @@ def unprep_img(img):
     img = np.transpose(img, new_shape) # channels last for np
     return img
 
+def unprep_bev(img):
+    img = (img.detach() * 255).cpu().numpy().astype('uint8')
+    n = len(img.shape)
+    new_shape = (0,1, 3,4,2) if n==5 else (1,2,0)
+    img = np.transpose(img, new_shape) # channels last for np
+    return img
 
 
 ###########################

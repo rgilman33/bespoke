@@ -95,7 +95,8 @@ def add_traj_preds(img, angles_p, speed, has_route, color=(255, 10, 10)):
 
     return img
 
-def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_targets_p=None, aux_targets_p2=None, obsnet_out=None):
+def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_targets_p=None, aux_targets_p2=None, obsnet_out=None, 
+               bev=None, bev_p=None):
     # takes in img np (h, w, c), denormed. Adds trajs and info to it.
 
     img = img.copy() # have to do this bc otherwise was strange error w our new lstm loader. 
@@ -156,8 +157,21 @@ def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_target
     h,w,_ = text_box.shape
     img[:h, IMG_WIDTH-w:,:3] = text_box
 
+    bev_dim = IMG_HEIGHT//2
+    img_background = np.zeros((IMG_HEIGHT, IMG_WIDTH+bev_dim, 3), dtype=np.uint8)
+    img_background[:IMG_HEIGHT,:IMG_WIDTH,:] = img
+
+    ################
+    # BEV
+    ################
+    if bev is not None:
+        bev = cv2.resize(bev, (bev_dim, bev_dim))
+        img_background[:bev_dim, IMG_WIDTH:,:] = bev
+    bev_p = cv2.resize(bev_p, (bev_dim, bev_dim))
+    img_background[bev_dim:, IMG_WIDTH:,:] = bev_p
+
     #img = draw_guidelines(img)
-    return img
+    return img_background
 
 
 def draw_guidelines(img):
@@ -237,8 +251,9 @@ def combine_img_actgrad(img, actgrad, color=(10, 10, 255)):
     return img_actgrad
 
 def make_enriched_vid_trn(rollout):
-    # quick hack to get it to work w sim, mostly just the fn below
-    height, width, channels = IMG_HEIGHT, IMG_WIDTH, 3
+    # quick hack to get it to work w sim, mostly just the fn below. Should combine.
+    bev_dim = IMG_HEIGHT//2
+    height, width, channels = IMG_HEIGHT, IMG_WIDTH+bev_dim, 3
     fps = 20 // FRAME_CAPTURE_N
     filename = f"sim_{rollout.model_stem}"
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
@@ -251,7 +266,8 @@ def make_enriched_vid_trn(rollout):
                          wps_p=rollout.wps_p[i], wps_p2=wps_p2, 
                          aux_targets_p=rollout.aux_targets_p[i], aux_targets_p2=aux_targets_p2,
                         aux=rollout.aux[i], 
-                        obsnet_out=rollout.obsnet_outs[i])
+                        obsnet_out=rollout.obsnet_outs[i],
+                        bev=rollout.bev[i], bev_p=rollout.bev_p[i])
         video.write(img[:,:,::-1])
 
     video.release()
@@ -262,7 +278,8 @@ def make_enriched_vid(run_id, model_stem, model_stem_b=None): # rw
     if model_stem_b is not None: rollout_b = load_object(f"{BESPOKE_ROOT}/tmp/{run_id}_{model_stem_b}_rollout.pkl")
     run = load_object(f"{BESPOKE_ROOT}/tmp/runs/{run_id}.pkl")
 
-    height, width, channels = IMG_HEIGHT, IMG_WIDTH, 3
+    bev_dim = IMG_HEIGHT//2
+    height, width, channels = IMG_HEIGHT, IMG_WIDTH+bev_dim, 3
     fps = 20
     filename = f"{rollout.run_id}_{rollout.model_stem}" if model_stem_b is None else f"{rollout.run_id}_{rollout.model_stem}_VS_{rollout_b.model_stem}"
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
@@ -277,7 +294,8 @@ def make_enriched_vid(run_id, model_stem, model_stem_b=None): # rw
                          wps_p=rollout.wps_p[i], wps_p2=wps_p2, 
                          aux_targets_p=rollout.aux_targets_p[i], aux_targets_p2=aux_targets_p2,
                         aux=rollout.aux[i], 
-                        obsnet_out=rollout.obsnet_outs[i])
+                        obsnet_out=rollout.obsnet_outs[i],
+                        bev=rollout.bev[i], bev_p=rollout.bev_p[i])
         video.write(img[:,:,::-1])
 
     video.release()

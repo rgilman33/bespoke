@@ -3,7 +3,7 @@
 datagen_id=$1 
 echo "Launching blender datagen of id $datagen_id"
 
-cd /home/beans/blenders_for_dataloader/blender_3.3_$datagen_id
+cd /home/beans/blenders_for_dataloader/blender_3.6_$datagen_id
 
 new_blendfile_path=/home/beans/blenders_for_dataloader/tmp/fustbol3_$datagen_id.blend
 
