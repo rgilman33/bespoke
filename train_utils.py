@@ -3,6 +3,8 @@ from norm import *
 from imports import *
 from traj_utils import *
 from viz_utils import *
+from utils import *
+
 import wandb
 
 
@@ -49,7 +51,9 @@ class LossManager():
             "yaw":.1,
             "unc":.1,
             "te":.07,
-            "semseg":.1,
+            "semseg":10., #.1,
+            "depth":10., #.1,
+            "bev":10.,
         }
         self.loss_weights.update({   
                     "wp_angles": 1,
@@ -105,7 +109,7 @@ def get_and_enrich_img(b, b_ix, seq_ix):
     """
     Convenience wrapper for `enrich_img`. Takes in batch in pytorch, normed. Plucks at ixs, returns enriched, np single obs
     """ 
-    img, wps, wps_p, bev, bev_p, aux, aux_targets_p, obsnet_out = b
+    img, wps, wps_p, bev, bev_p, perspective, perspective_p, aux, aux_targets_p, obsnet_out = b
     
     return enrich_img(img=unprep_img(img[b_ix, seq_ix, :3,:,:]), 
                         wps=unprep_wps(wps[b_ix, seq_ix,:]), 
@@ -115,6 +119,8 @@ def get_and_enrich_img(b, b_ix, seq_ix):
                         obsnet_out=unprep_obsnet(obsnet_out[b_ix, seq_ix,:]),
                         bev=unprep_bev(bev[b_ix, seq_ix,:,:,:]),
                         bev_p=unprep_bev(bev_p[b_ix, seq_ix,:,:,:]),
+                        perspective=unprep_perspective(perspective[b_ix, seq_ix,:,:,:]),
+                        perspective_p=unprep_perspective(perspective_p[b_ix, seq_ix,:,:,:]),
                         )
 
 LOSS_SCALER = 100
@@ -189,9 +195,7 @@ class Trainer():
             batch = dataloader.get_batch()
             if not batch: break
             timer.log("get batch from dataloader")
-            img, aux, wps, bev, (to_pred_mask, is_first_in_seq) = batch
-
-            
+            img, aux, wps, bev, perspective, (to_pred_mask, is_first_in_seq) = batch
 
             if self.use_rnn:
                 if is_first_in_seq: model.reset_hidden(dataloader.bs)
@@ -200,7 +204,7 @@ class Trainer():
                 model_out = model.rnn_head(z.float()) # keeping lstm in full precision
             else:
                 with torch.cuda.amp.autocast(): 
-                    z, blocks_out = model.cnn_features(img, aux, return_blocks_out=True)
+                    z, bev_p, perspective_p = model.cnn_features(img, aux, return_blocks_out=True)
                     model_out= model.cnn_head(z)
 
             self.img_for_viewing = img # for inspection
@@ -212,7 +216,25 @@ class Trainer():
             # All losses calculated in full precision
             wps_p, aux_targets_p, obsnet_out = wps_p.float(), aux_targets_p.float(), obsnet_out.float() # full precision
 
+            aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
+
+            bev_p = bev_p.float(); bev = bev.float()
+            bev_p = bev_p.sigmoid()
+            perspective_p = perspective_p.float(); perspective = perspective.float() # all losses in full precision
+            perspective_p[:,:, :3,:,:] = perspective_p[:,:, :3,:,:].sigmoid() # sigmoid in place
+
             aux_targets = aux[:,:,AUX_TARGET_IXS] 
+
+            # helper fn to save bad imgs
+            def save_if_necessary(obswise_criterion, tag):
+                # bool of shape bs
+                if obswise_criterion.sum().item()>0:
+                    batch = (img[obswise_criterion], wps[obswise_criterion], wps_p[obswise_criterion], 
+                            bev[obswise_criterion], bev_p[obswise_criterion],
+                            perspective[obswise_criterion], perspective_p[obswise_criterion],
+                            aux[obswise_criterion], aux_targets_p[obswise_criterion], obsnet_out[obswise_criterion])
+                    _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
+                    plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/{tag}_e{self.current_epoch}u{update_counter}.png", _img)
 
             #############
             # Nan checks
@@ -246,7 +268,6 @@ class Trainer():
             #############      
             ego_in_intx = aux[:,:,AUX_PROPS.index("ego_in_intx")].bool()
 
-            aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS] = aux_targets_p[:,:,AUX_TARGET_SIGMOID_IXS].sigmoid()
             aux_targets_losses = mse_loss_no_reduce(aux_targets, aux_targets_p) 
             aux_targets_losses *= 100 #TODO can prob get rid of scaling now that all is full float            
             
@@ -256,6 +277,8 @@ class Trainer():
             # rd_is_lined_enforce = (rd_is_lined.bool() & m_sees_rd_is_lined) | ~rd_is_lined.bool()
 
             m_doesnt_see_lines = (rd_is_lined.bool() & ~m_sees_rd_is_lined & ~ego_in_intx)[:,0] # Not removing when intx, bc not enforcing anyways. bs, just taking first of bptt NOTE bptt? 
+            save_if_necessary(m_doesnt_see_lines, f"lines_")
+            logger.log({"logistical/maskout_bc_lines_perc":m_doesnt_see_lines.float().mean().item()})
 
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("rd_is_lined")][~rd_is_lined.bool()] *= 4 # upweighting the loss when we're not lined, make is-lined detector less senstive
 
@@ -293,6 +316,8 @@ class Trainer():
             angles_loss_exceeds_thresh = (angles_loss > median_emas["wp_angles"]*MASKOUT_MEDIAN_MULTIPLE)
             if angles_loss_exceeds_thresh.sum() > 0:
                 bad_img_angles_loss_med = round(angles_loss[angles_loss_exceeds_thresh][0].item() / median_emas["wp_angles"]) # store for use below
+                save_if_necessary(angles_loss_exceeds_thresh, f"angles_m{bad_img_angles_loss_med}_")
+
             # Maskout the worst, not using their loss at all, discarding the data. Using wp_angles to maskout all wp losses
             # The assumption is this is useless, harmful data, bc our procgen isn't perfect. 
 
@@ -301,9 +326,10 @@ class Trainer():
 
             # also masking out if there are lines but m doesn't see them. Lines affects traj loc, and our data is often unfair on this point.
             maskout = angles_loss_exceeds_thresh | m_doesnt_see_lines
+            maskout = maskout.detach() # for safety
 
             if maskout.sum() > 0:
-                print("masking out obs")
+                # print("masking out obs")
                 angles_loss[maskout] = 0; headings_loss[maskout] = 0; curvatures_loss[maskout] = 0; rolls_loss[maskout] = 0; zs_loss[maskout] = 0
 
             # Clamping all losses to multiple of their respective medians 
@@ -317,7 +343,6 @@ class Trainer():
             logger.log({"logistical/angles_loss_clamp_reduction":(_a - angles_loss_clamped.mean().item())/_a})
             logger.log({"logistical/angles_loss_clamp_perc_obs":(angles_loss > median_emas["wp_angles"]*CLAMP_MEDIAN_MULTIPLE).float().mean().item()})
 
-
             losses.update({
                 "wp_angles": angles_loss_clamped.mean(),
                 "wp_headings": c(headings_loss, "wp_headings").mean(),
@@ -326,7 +351,6 @@ class Trainer():
                 "wp_rolls":rolls_loss.mean(),
                 "wp_zs":c(zs_loss, "wp_zs").mean(), 
             })
-
 
             # Logging the proportion of loss that is coming from intx, rd_is_lined, as proportion of total loss
             intx_angles_loss_perc = angles_loss_clamped[ego_in_intx[:,0]].sum().item() / angles_loss_clamped.sum().item() # taking first bptt item of ego_in_intx
@@ -345,31 +369,97 @@ class Trainer():
             #     te_loss = mse_loss_no_reduce(wps_p[:, :-1, :].detach(), wps_p[:, 1:, :], weights=weights[:, 1:, :]) 
             #     te_loss *= 100
             #     losses.update({"te": te_loss.mean()})
+            
+            # #############
+            # # bev
+            # #############
+            # bev_loss = mae_loss_no_reduce(bev_p, bev)
+
+            # npc_mask = is_npc(bev).expand(-1,-1, 3,-1,-1)
+            # npc_mask_p = is_npc(bev_p).expand(-1,-1, 3,-1,-1).detach()
+
+            # rd_markings_mask = is_rd_markings(bev).expand(-1,-1, 3,-1,-1)
+            # rd_markings_mask_p = is_rd_markings(bev_p).expand(-1,-1, 3,-1,-1).detach()
+
+            # edge_mask = is_edge(bev).expand(-1,-1, 3,-1,-1)
+
+            # bev_loss[maskout] = 0
+            # q = torch.quantile(bev_loss, .85).item()
+
+            # rd_markings_false_pos_loss = bev_loss[rd_markings_mask_p & ~rd_markings_mask].mean()
+            # npc_false_pos_loss = bev_loss[npc_mask_p & ~npc_mask].mean()
+
+            # bev_loss_final = bev_loss[bev_loss>q].mean() + bev_loss[npc_mask].mean()*10 + bev_loss[rd_markings_mask].mean()*10 + bev_loss[edge_mask].mean()
+            # fp_loss = rd_markings_false_pos_loss + npc_false_pos_loss
+            # if fp_loss.item()>0: bev_loss_final += fp_loss
+            # losses.update({"bev":bev_loss_final})
 
             #############
-            # Semseg loss
+            # Perspective semseg and depth loss
             #############
-            do_semseg = True
-            if do_semseg:
-                with torch.cuda.amp.autocast(): semseg_p = model.bev_head(blocks_out) # input is (bs, bptt, n_z)
-                semseg_p = semseg_p.float(); bev = bev.float() # all losses in full precision
-                semseg_p = semseg_p.sigmoid()
-                semseg_loss = mae_loss_no_reduce(semseg_p, bev) # allowing eight (2**3) unique 'codes' for our rgb values
-                # semseg_loss *= 10 # scaling for safety, before the mean op
-                semseg_loss *= 100 # scaling for safety, before the mean op
 
-                # edge_mask = get_edge_mask(bev).expand(-1,-1, 3,-1,-1) # repeat along channels
-                # semseg_loss[edge_mask] *= 50 # overweighting edges
+            seg = perspective[:,:, :3,:,:]
+            depth = perspective[:,:, 3:,:,:]
+            seg_p = perspective_p[:,:, :3,:,:]
+            depth_p = perspective_p[:,:, 3:,:,:]
 
-                # npc_mask = ((bev[:,:, 1,:,:]>.5) & (bev[:,:, 0,:,:]<.5) & (bev[:,:, 2,:,:]<.5)).unsqueeze(2).expand(-1,-1, 3,-1,-1)
-                # semseg_loss[npc_mask] *= 200 # overweighting npcs, they're quite rare
+            faraway_maskout = (depth[:,:, 0:1,:,:]<2).expand(-1,-1, 3,-1,-1).detach() #TODO FIX this hardcoded nonsense 
 
-                semseg_loss = semseg_loss.mean((1,2,3,4)) # per obs
-                semseg_loss[maskout] = 0 # note masking out before med track, bc not using semseg in maskout determination
-                median_tracker.step({"semseg":semseg_loss})
-                _m = median_tracker.median_emas["semseg"]
-                semseg_loss = torch.clamp(semseg_loss, max=_m*4)
-                losses.update({"semseg":semseg_loss.mean()})
+            semseg_loss = mae_loss_no_reduce(seg_p, seg) 
+
+            # median, for watching only right now
+            semseg_loss_by_obs = semseg_loss.mean((-1,-2,-3,-4)) # collapse all except batch
+            median_tracker.step({"semseg":semseg_loss_by_obs}) # mean for each obs
+            semseg_loss_exceeds_thresh = semseg_loss_by_obs > median_tracker.median_emas["semseg"]*6
+            if semseg_loss_exceeds_thresh.sum().item()>0:
+                bad_semseg_loss_med = round(semseg_loss_by_obs[semseg_loss_exceeds_thresh][0].item()/median_tracker.median_emas["semseg"])
+                save_if_necessary(semseg_loss_exceeds_thresh, f"semseg_m{bad_semseg_loss_med}_")
+
+            npc_mask = is_npc(seg).expand(-1,-1, 3,-1,-1)
+            npc_mask_p = is_npc(seg_p).expand(-1,-1, 3,-1,-1).detach()
+
+            rd_markings_mask = is_rd_markings(seg).expand(-1,-1, 3,-1,-1)
+            rd_markings_mask_p = is_rd_markings(seg_p).expand(-1,-1, 3,-1,-1).detach()
+
+            stops_mask = is_stopsign(seg).expand(-1,-1, 3,-1,-1)
+            stops_mask_p = is_stopsign(seg_p).expand(-1,-1, 3,-1,-1).detach()
+
+            semseg_loss[maskout] = 0 # not fair to do these when masked out
+            semseg_loss[faraway_maskout] = 0
+            
+            q = torch.quantile(semseg_loss[:,:, :,::2,::2], .85).item() # downsampling bc quantile can't take so big
+            semseg_loss_normal = semseg_loss[semseg_loss>q].mean()
+            loss_npc = semseg_loss[npc_mask].mean()
+            npc_false_pos = semseg_loss[npc_mask_p & ~npc_mask].mean()
+            loss_rd_markings = semseg_loss[rd_markings_mask].mean()
+            rd_markings_false_pos_loss = semseg_loss[rd_markings_mask_p & ~rd_markings_mask].mean()
+            loss_stops = semseg_loss[stops_mask].mean()
+            loss_stops_fp = semseg_loss[stops_mask_p & ~stops_mask].mean()
+
+            semseg_loss = semseg_loss_normal + loss_npc*3  + loss_rd_markings*3 + loss_stops*3
+            fp_loss = npc_false_pos + rd_markings_false_pos_loss + loss_stops_fp
+            if fp_loss.item()>0: semseg_loss += fp_loss
+            losses.update({"semseg":semseg_loss})
+
+            depth_loss = mae_loss_no_reduce(depth_p, depth) 
+            _depth_loss_mask = depth_loss_mask(depth).expand(-1,-1, 3,-1,-1) 
+            depth_loss[maskout] = 0
+            depth_loss[faraway_maskout] = 0
+            depth_loss[~_depth_loss_mask] = 0
+            qd = torch.quantile(depth_loss[:,:, :,::2,::2], .75).item()
+            depth_loss_base = depth_loss[depth_loss>qd].mean()
+            depth_loss = depth_loss_base
+            losses.update({"depth":depth_loss})
+
+            if update_counter %10==0: ##obs_has_npcs.sum() > 0:
+                # print(f"semseg loss for {obs_has_npcs.sum()} obs", semseg_loss.item())
+
+                batch = (img[:], wps[:], wps_p[:], 
+                        bev[:], bev_p[:], perspective[:], perspective_p[:],
+                        aux[:], aux_targets_p[:], obsnet_out[:])
+                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
+                plt.imsave(f"{BESPOKE_ROOT}/tmp/npcs_imgs/e{self.current_epoch}u{update_counter}.png", _img)
+
 
             #######################
             # Aux losses: Stops and leads
@@ -408,25 +498,12 @@ class Trainer():
             
             # logging the stops that we're forcing model to learn even when m doesn't see them
             m_doesnt_see_stop = (stops_always_enforce_pos.to(device) & ~m_sees_stop)[:,0]
-            if m_doesnt_see_stop.sum().item()>0:
-                batch = (img[m_doesnt_see_stop], wps[m_doesnt_see_stop], wps_p[m_doesnt_see_stop], 
-                         bev[m_doesnt_see_stop], semseg_p[m_doesnt_see_stop],
-                         aux[m_doesnt_see_stop], aux_targets_p[m_doesnt_see_stop], obsnet_out[m_doesnt_see_stop])
-                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
-                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/stop_forced_e{self.current_epoch}u{update_counter}.png", _img)
-            # logger.log({"logistical/lenient_stop_maskout_perc":m_doesnt_see_stop.float().mean().item()})
+            save_if_necessary(m_doesnt_see_stop, f"stop_forced_")
 
             # logging the stops that we're being lenient on but m maybe should actually see
             stops_in_lenient_zone = torch.from_numpy((STOP_DIST_MIN<stop_dist) & (stop_dist<40)).to(device)
             m_doesnt_see_stop_lenient = (stops_in_lenient_zone & ~m_sees_stop)[:,0]
-            if m_doesnt_see_stop_lenient.sum().item()>0:
-                batch = (img[m_doesnt_see_stop_lenient], wps[m_doesnt_see_stop_lenient], wps_p[m_doesnt_see_stop_lenient], 
-                            bev[m_doesnt_see_stop_lenient], semseg_p[m_doesnt_see_stop_lenient],
-                         aux[m_doesnt_see_stop_lenient], aux_targets_p[m_doesnt_see_stop_lenient], obsnet_out[m_doesnt_see_stop_lenient])
-                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
-                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/stop_lenient_e{self.current_epoch}u{update_counter}.png", _img)
-            # logger.log({"logistical/lenient_stop_maskout_perc":m_doesnt_see_stop.float().mean().item()})
-
+            save_if_necessary(m_doesnt_see_stop_lenient, f"stop_lenient_")
 
             # Only enforce stops and lead metrics when we have stops and leads
             aux_targets_losses[:,:,AUX_TARGET_PROPS.index("stop_dist")] *= m_sees_true_stop #has_stop
@@ -462,26 +539,9 @@ class Trainer():
             logger.log({f"avg_unc": unc_p.mean().item()})
 
             loss = self.loss_manager.step(losses, logger=logger)
+
+            #loss = semseg_loss 
             timer.log("calc losses")
-
-            #############
-            # Save imgs locally
-            #############      
-            # Save bad imgs for viewing and debugging. Doing down here bc semseg needs maskout, but maskout needs wps and lines losses
-            if angles_loss_exceeds_thresh.sum().item()>0:
-                batch = (img[angles_loss_exceeds_thresh], wps[angles_loss_exceeds_thresh], wps_p[angles_loss_exceeds_thresh], 
-                         bev[angles_loss_exceeds_thresh], semseg_p[angles_loss_exceeds_thresh],
-                         aux[angles_loss_exceeds_thresh], aux_targets_p[angles_loss_exceeds_thresh], obsnet_out[angles_loss_exceeds_thresh])
-                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
-                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/e{self.current_epoch}u{update_counter}m{bad_img_angles_loss_med}.png", _img)
-
-            if m_doesnt_see_lines.sum().item()>0:
-                batch = (img[m_doesnt_see_lines], wps[m_doesnt_see_lines], wps_p[m_doesnt_see_lines], 
-                         bev[m_doesnt_see_lines], semseg_p[m_doesnt_see_lines],
-                         aux[m_doesnt_see_lines], aux_targets_p[m_doesnt_see_lines], obsnet_out[m_doesnt_see_lines])
-                _img = get_and_enrich_img(batch, b_ix=0, seq_ix=0) # just taking first, if more than one
-                plt.imsave(f"{BESPOKE_ROOT}/tmp/bad_imgs/lines_e{self.current_epoch}u{update_counter}.png", _img)
-            logger.log({"logistical/maskout_bc_lines_perc":m_doesnt_see_lines.float().mean().item()})
 
             # if is_first_in_seq:
             #     print("\n\n is first in seq")
@@ -519,7 +579,7 @@ class Trainer():
             if update_counter%CHECK_FOR_WORST_FREQ==0 and self.log_wandb and img is not None:
                 with torch.no_grad():
 
-                    b = (img, wps, wps_p, bev, semseg_p, aux, aux_targets_p, obsnet_out)
+                    b = (img, wps, wps_p, bev, bev_p, perspective, perspective_p, aux, aux_targets_p, obsnet_out)
 
                     # using the masked-out but not clamped losses for viewing wps losses. We've collapsed along bptt for wps losses above
                     angles_loss = angles_loss[:,None] # padding the bptt dim bc that's what fn expects. Collapsed bptt above w new apparatus. Can update this fn later
@@ -536,6 +596,12 @@ class Trainer():
             timer.log("get worst")
             # Periodic save and report
             if (update_counter+1)%self.log_cadence==0: 
+                # if nans, stop. Not doing this every update bc takes 50ms. This should allow to resume from prev save
+                # wout nans in state dict
+                if state_dict_has_nans(model.state_dict()):
+                    print("Nans in model state dict. Ending training")
+                    self.should_stop = True
+                    break
                 self.save_state()                
                 max_param = max([p.max() for p in model.parameters()]).item()
                 
@@ -552,7 +618,7 @@ class Trainer():
                     # random imgs to log
                     if img is not None: 
                         for k,v in self.worsts.items(): self.wandb.log({f"imgs/worst_{k}": wandb.Image(v[1])})
-                    batch = (img, wps, wps_p, bev, semseg_p, aux, aux_targets_p, obsnet_out)
+                    batch = (img, wps, wps_p, bev, bev_p, perspective, perspective_p, aux, aux_targets_p, obsnet_out)
                     if img is not None: self.wandb.log({"imgs/random":wandb.Image(get_and_enrich_img(batch, b_ix=0, seq_ix=0))})
                     self.wandb.log(stats)
                     self.wandb.log(dataloader_stats)
@@ -594,7 +660,8 @@ class Trainer():
                 break
 
         # During normal training, save each epoch. Models will be used for ensembling
-        if self.backwards: 
+        # don't save anything if should_stop flag has been thrown, might be bc nans or something
+        if self.backwards and not self.should_stop: 
             self.save_state()
             torch.save(self.model.state_dict(), f"{BESPOKE_ROOT}/models/m{self.model_stem}_e{self.current_epoch}.torch")
 
@@ -684,26 +751,7 @@ def clip_activations(model, min_val=-2**15, max_val=2**15-1):
         handle = module.register_forward_pre_hook(clip_hook)
     return model
 
-def get_edge_mask(bev):
-    mask_1 = _edge_mask(bev)
-    mask_2 = _edge_mask(mask_1)
-    #mask_3 = _edge_mask(mask_2)
-    mask = (mask_1 + mask_2)
-    mask = mask.sum(2, keepdim=True).clamp(0,1).bool()
-    return mask
 
-def _edge_mask(bev):
-    mask = torch.zeros_like(bev)
-    _bev = bev.clone()
-    _bev[_bev>.5] = 1
-    _bev[_bev<=.5] = 0
-    h = abs(_bev[:,:, :,:,1:] - _bev[:,:, :,:,:-1]) > 0
-    v = abs(_bev[:,:, :,1:,:] - _bev[:,:, :,:-1,:]) > 0
-    mask[:,:, :,:,:-1] += h
-    mask[:,:, :,:,1:] += h
-    mask[:,:, :,1:,:] += v
-    mask[:,:, :,:-1,:] += v
-    return mask
 
 ###########################################
 # lives here so don't break OP. OP env doesn't have alb, bc it breaks the cv2 version or something? could debug easily, but no need

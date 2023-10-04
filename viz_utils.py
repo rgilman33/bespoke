@@ -95,8 +95,9 @@ def add_traj_preds(img, angles_p, speed, has_route, color=(255, 10, 10)):
 
     return img
 
-def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_targets_p=None, aux_targets_p2=None, obsnet_out=None, 
-               bev=None, bev_p=None):
+def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_targets_p=None, 
+               aux_targets_p2=None, obsnet_out=None, 
+               bev=None, bev_p=None, perspective=None, perspective_p=None):
     # takes in img np (h, w, c), denormed. Adds trajs and info to it.
 
     img = img.copy() # have to do this bc otherwise was strange error w our new lstm loader. 
@@ -152,26 +153,99 @@ def enrich_img(img=None, wps=None, wps_p=None, wps_p2=None, aux=None, aux_target
         a.append(f"roll: {round(float(rolls_p[0]), 2)}, {round(float(rolls[0]), 2)}")
     else:
         a.append(f"roll: {round(float(rolls_p[0]), 2)}, {round(float(rolls_p2[0]), 2) if wps_p2 is not None else ''}")
+    
+    # Obs id for debugging
+    id_str = f"{int(aux['dataloader_id'])}_{int(aux['run_id'])}_{int(aux['ix'])}"
+    a.append(id_str)
 
     text_box = get_text_box(a)
     h,w,_ = text_box.shape
     img[:h, IMG_WIDTH-w:,:3] = text_box
 
-    bev_dim = IMG_HEIGHT//2
-    img_background = np.zeros((IMG_HEIGHT, IMG_WIDTH+bev_dim, 3), dtype=np.uint8)
+    bev_dim = 360
+
+    # bev_dim = IMG_HEIGHT//2
+    # img_background = np.zeros((IMG_HEIGHT, IMG_WIDTH+bev_dim, 3), dtype=np.uint8)
+    img_background = np.zeros((IMG_HEIGHT+SEMSEG_PERSP_H, IMG_WIDTH+bev_dim, 3), dtype=np.uint8)
     img_background[:IMG_HEIGHT,:IMG_WIDTH,:] = img
+
+    # Prep smaller img and bw img for use in viz depth and semseg
+    _img_bw = img.mean(-1).astype('uint8')
+    _img_bw = _img_bw[:,:,None]
+    _img_bw = _img_bw[::2, ::2, :]
+
+    _img = img[::2, ::2, :]
+
+    ################
+    # Perspective
+    ################
+    if perspective is not None:
+        depth_mask = perspective[::2, ::2, 3:4]>40 #TODO UNDO NOTE UNSTABLE hardcoded depth max
+        depth_mask = np.repeat(depth_mask, 3, axis=-1)
+
+        # bev = cv2.resize(bev, (bev_dim, bev_dim)) 
+        semseg = perspective[::2, ::2, :3]
+        semseg = viz_semseg(semseg, _img_bw, _img, depth_mask)
+        img_background[IMG_HEIGHT:IMG_HEIGHT+SEMSEG_PERSP_H//2, :SEMSEG_PERSP_W//2,:] = semseg
+
+        # depth
+        depth = perspective[::2, ::2, 3:]
+        depth = viz_depth(depth, _img_bw, _img, depth_mask)
+        img_background[IMG_HEIGHT+SEMSEG_PERSP_H//2:, :SEMSEG_PERSP_W//2,:] = depth
+
+    depth_mask = perspective_p[::2, ::2, 3:4]>40 #TODO UNDO NOTE UNSTABLE hardcoded depth max
+    depth_mask = np.repeat(depth_mask, 3, axis=-1)
+    
+    # bev_p = cv2.resize(bev_p, (bev_dim, bev_dim))
+    semseg = perspective_p[::2, ::2, :3]
+    semseg = viz_semseg(semseg, _img_bw, _img, depth_mask)
+    img_background[IMG_HEIGHT:IMG_HEIGHT+SEMSEG_PERSP_H//2, SEMSEG_PERSP_W//2:SEMSEG_PERSP_W,:] = semseg
+
+    # depth
+    depth = perspective_p[::2, ::2, 3:]
+    depth = viz_depth(depth, _img_bw, _img, depth_mask)
+    img_background[IMG_HEIGHT+SEMSEG_PERSP_H//2:, SEMSEG_PERSP_W//2:SEMSEG_PERSP_W,:] = depth
 
     ################
     # BEV
     ################
     if bev is not None:
-        bev = cv2.resize(bev, (bev_dim, bev_dim))
+        bev = cv2.resize(bev, (bev_dim, bev_dim)) 
         img_background[:bev_dim, IMG_WIDTH:,:] = bev
+
     bev_p = cv2.resize(bev_p, (bev_dim, bev_dim))
     img_background[bev_dim:, IMG_WIDTH:,:] = bev_p
 
     #img = draw_guidelines(img)
     return img_background
+
+
+def viz_depth(depth, img_bw, img, depth_mask):
+    # # depth h,w,3
+    # # img_bw h,w,1
+    # img_bw_fac = img_bw / 255
+    depth = copy.deepcopy(depth)
+    # depth = cv2.applyColorMap(depth*6, cv2.COLORMAP_TURBO)
+    # depth = (img_bw_fac * depth).astype('uint8')
+    depth[~depth_mask] = 0 #img[~depth_mask]
+    return depth
+
+def viz_semseg(semseg, img_bw, img, depth_mask):
+    # depth h,w,3
+    # img_bw h,w,1
+    # img h,w,3
+    semseg = copy.deepcopy(semseg)
+    # Add semseg overlay to bw img
+    r = .7
+    result = ((img_bw*r) + semseg*(1-r)).astype('uint8')
+    
+    # Color in where have no semseg masks
+    background = (semseg.sum(-1, keepdims=True)==0).astype(int)
+    background = np.repeat(background, 3, axis=-1)
+    result[background==1] = img[background==1]
+    result[~depth_mask] = img[~depth_mask]
+    
+    return result
 
 
 def draw_guidelines(img):
@@ -252,8 +326,10 @@ def combine_img_actgrad(img, actgrad, color=(10, 10, 255)):
 
 def make_enriched_vid_trn(rollout):
     # quick hack to get it to work w sim, mostly just the fn below. Should combine.
-    bev_dim = IMG_HEIGHT//2
-    height, width, channels = IMG_HEIGHT, IMG_WIDTH+bev_dim, 3
+    # bev_dim = IMG_HEIGHT//2
+    # height, width, channels = IMG_HEIGHT, IMG_WIDTH+bev_dim, 3
+    height, width, channels = IMG_HEIGHT+SEMSEG_PERSP_H, IMG_WIDTH+360, 3
+
     fps = 20 // FRAME_CAPTURE_N
     filename = f"sim_{rollout.model_stem}"
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
@@ -267,7 +343,9 @@ def make_enriched_vid_trn(rollout):
                          aux_targets_p=rollout.aux_targets_p[i], aux_targets_p2=aux_targets_p2,
                         aux=rollout.aux[i], 
                         obsnet_out=rollout.obsnet_outs[i],
-                        bev=rollout.bev[i], bev_p=rollout.bev_p[i])
+                        perspective=rollout.perspective[i], perspective_p=rollout.perspective_p[i],
+                        bev=rollout.bev[i], bev_p=rollout.bev_p[i],
+                        )
         video.write(img[:,:,::-1])
 
     video.release()
@@ -279,7 +357,9 @@ def make_enriched_vid(run_id, model_stem, model_stem_b=None): # rw
     run = load_object(f"{BESPOKE_ROOT}/tmp/runs/{run_id}.pkl")
 
     bev_dim = IMG_HEIGHT//2
-    height, width, channels = IMG_HEIGHT, IMG_WIDTH+bev_dim, 3
+    # height, width, channels = IMG_HEIGHT, IMG_WIDTH+bev_dim, 3
+    height, width, channels = IMG_HEIGHT+SEMSEG_PERSP_H, IMG_WIDTH+360, 3
+
     fps = 20
     filename = f"{rollout.run_id}_{rollout.model_stem}" if model_stem_b is None else f"{rollout.run_id}_{rollout.model_stem}_VS_{rollout_b.model_stem}"
     video = cv2.VideoWriter(f'/home/beans/bespoke_vids/{filename}.avi', cv2.VideoWriter_fourcc(*"MJPG"), fps, (width,height))
@@ -295,7 +375,9 @@ def make_enriched_vid(run_id, model_stem, model_stem_b=None): # rw
                          aux_targets_p=rollout.aux_targets_p[i], aux_targets_p2=aux_targets_p2,
                         aux=rollout.aux[i], 
                         obsnet_out=rollout.obsnet_outs[i],
-                        bev=rollout.bev[i], bev_p=rollout.bev_p[i])
+                        #bev=rollout.bev[i], 
+                        bev_p=rollout.bev_p[i], 
+                        perspective_p=rollout.perspective_p[i])
         video.write(img[:,:,::-1])
 
     video.release()

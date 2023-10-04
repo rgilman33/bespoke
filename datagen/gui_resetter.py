@@ -21,4 +21,5 @@ importlib.reload(autopilot)
 importlib.reload(bpy_handler)
 
  
-bpy_handler.reset_scene(bpy, run_root=None, is_bev=False)
+bpy_handler.toggle_bev(bpy, True)
+bpy_handler.toggle_semseg(bpy, True)

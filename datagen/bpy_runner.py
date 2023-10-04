@@ -70,6 +70,8 @@ if __name__ == "__main__":
     need_map = True
     start_left = True
 
+    # bpy.context.window.scene = bpy.data.scenes['Scene'] #TODO remove prob
+
     while True:
 
         # Initial setup
@@ -79,11 +81,7 @@ if __name__ == "__main__":
         for s in ["aux", "targets", "maps"]: os.makedirs(f"{run_root}/{s}", exist_ok=True)
 
         print(f"Making new map: {need_map}. Starting from left: {start_left}.")
-
-        # Toggle bev and semseg
-        toggle_semseg(bpy, False) # updates dg w new materials
-        toggle_bev(bpy, False)
-        timer.log("toggle semseg and bev off")
+        print(f"Dataloader {dataloader_id}, run {run_counter}")
 
         # Get map. We can do multiple routes through each map
         if need_map:
@@ -116,11 +114,24 @@ if __name__ == "__main__":
         start_left = not start_left
         need_map = not need_map
 
+        # Toggle bev and semseg
+        save_depth(bpy, True)
+        toggle_semseg(bpy, False) # updates dg w new materials
+        toggle_bev(bpy, False, pitch_perturbation=episode_info.pitch)
+        # toggle_semseg(bpy, True) # updates dg w new materials
+        # toggle_bev(bpy, True)
+        # bpy.data.scenes["Scene"].node_tree.nodes["Switch"].check = False # rgb, not depth
+
+        get_node("semseg_out", bpy.data.scenes["Scene"].node_tree.nodes).base_path = f"{run_root}/imgs_semseg/"
+        get_node("depth_out", bpy.data.scenes["Scene"].node_tree.nodes).base_path = f"{run_root}/imgs_depth/"
+        # get_node("normals_out", bpy.data.scenes["Scene"].node_tree.nodes).base_path = f"{run_root}/imgs_normals/"
+
         # We've successfully gotten map and route. May continue
         failed_counter = 0
 
         # Create AP and TM  
-        ap, tm = create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=run_root) # updates dg w new ego pos
+        ap, tm = create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=run_root,
+                              dataloader_id=dataloader_id, run_id=run_counter) # updates dg w new ego pos
 
         # Reset scene
         reset_scene(bpy, ap, tm, timer=timer, save_data=True, render_filepath=f"{run_root}/imgs/") # dg not evaluated here, will be eval on first frame of render prob
@@ -134,7 +145,7 @@ if __name__ == "__main__":
 
         # redirect output to log file. From https://blender.stackexchange.com/questions/44560/how-to-supress-bpy-render-messages-in-terminal-output
         # Render too verbose, makes it impossible to debug anything in the terminal
-        logfile = f'{dataloader_root}/blender_render.log'
+        logfile = f'{run_root}/render.log'
         if os.path.exists(logfile): os.remove(logfile)
         open(logfile, 'a').close()
         old = os.dup(sys.stdout.fileno())
@@ -146,16 +157,41 @@ if __name__ == "__main__":
         bpy.ops.render.render(animation=True)
         timer.log("render")
 
-        render_bev = True #need_map
-        if render_bev:
-            toggle_bev(bpy, True)
+        # render_bev = True
+        # if render_bev:
+        #     save_depth(bpy, False)
+        #     toggle_bev(bpy, True, pitch_perturbation=episode_info.pitch)
+        #     toggle_semseg(bpy, True) # updates dg w new materials
+        #     reset_ap_tm(bpy, ap, tm)
+        #     reset_scene(bpy, ap, tm, timer=timer, save_data=False, render_filepath=f"{run_root}/imgs_bev/")
+        #     bpy.ops.render.render(animation=True)
+        #     timer.log("render bev")
+
+        render_persp_semseg = True
+        if render_persp_semseg:
+            save_depth(bpy, False)
+            toggle_bev(bpy, False, pitch_perturbation=episode_info.pitch)
             toggle_semseg(bpy, True) # updates dg w new materials
-            timer.log("toggle semseg and bev on")
+            #toggle_frame_sz(bpy, "SMALL")
             reset_ap_tm(bpy, ap, tm)
-            timer.log("reset ap and tm for bev")
-            reset_scene(bpy, ap, tm, timer=timer, save_data=False, render_filepath=f"{run_root}/imgs_bev/")
+            reset_scene(bpy, ap, tm, timer=timer, save_data=False, render_filepath=f"{run_root}/imgs_semseg/")
             bpy.ops.render.render(animation=True)
-            timer.log("render bev")
+            timer.log("render perspective semseg")
+
+        
+
+        # render_depth = True
+        # if render_depth:
+        #     toggle_bev(bpy, False)
+        #     toggle_semseg(bpy, True) # updates dg w new materials
+        #     toggle_frame_sz(bpy, "SMALL") #TODO consolidate these toggles, refactor a bit. The whole bit might be better saved manually each time
+        #     bpy.data.scenes["Scene"].node_tree.nodes["Switch"].check = True # True for depth, False for normal rgb
+        #     reset_ap_tm(bpy, ap, tm)
+        #     reset_scene(bpy, ap, tm, timer=timer, save_data=False, render_filepath=f"{run_root}/imgs_depth/")
+        #     bpy.ops.render.render(animation=True)
+        #     bpy.data.scenes["Scene"].node_tree.nodes["Switch"].check = False
+        #     timer.log("render depth")
+
 
         # bpy.app.handlers.frame_change_post.clear()
 

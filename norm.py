@@ -42,6 +42,26 @@ def prep_bev(img):
     img = torch.from_numpy(img) #img should still be uint8 at this point. <1ms
     img = img.to('cuda') # ~40ms as uint8, more as half #TODO try the pinned memory thing here. Faster?
     img = img / 255. # <1ms # implicitly converts to float
+
+    return img
+
+DEPTH_IX = 4
+DEPTH_NORM_CONSTANT = 12
+
+def prep_perspective(img):
+    # bs, seqlen, h, w, c in np or single obs
+    n = len(img.shape)
+    new_shape = (0,1, 4,2,3) if n==5 else (2,0,1)
+    img = np.transpose(img, new_shape) # channels first for pytorch
+    img = torch.from_numpy(img) #img should still be uint8 at this point. <1ms
+    img = img.to('cuda') # ~40ms as uint8, more as half #TODO try the pinned memory thing here. Faster?
+    img = img / 255. # <1ms # implicitly converts to float
+
+    # Norm depth
+    # depth is 0 to 1
+    img[:,:,3:,:,:] *= DEPTH_NORM_CONSTANT # 0 to 4
+    #img[:,:,3:,:,:] -= 2 # -2 to 2
+
     return img
 
 def unprep_img(img):
@@ -52,12 +72,27 @@ def unprep_img(img):
     return img
 
 def unprep_bev(img):
-    img = (img.detach() * 255).cpu().numpy().astype('uint8')
     n = len(img.shape)
+    img = img.clone().detach() 
+    img = (img* 255).cpu().numpy().astype('uint8')
     new_shape = (0,1, 3,4,2) if n==5 else (1,2,0)
     img = np.transpose(img, new_shape) # channels last for np
     return img
 
+def unprep_perspective(img):
+    n = len(img.shape)
+
+    img = img.clone().detach() 
+    # denorm depth
+    if n==5:
+        img[:,:,3:,:,:] /= DEPTH_NORM_CONSTANT # 0 to 1
+    else:
+        img[3:,:,:] /= DEPTH_NORM_CONSTANT # 0 to 1
+
+    img = (img* 255).cpu().numpy().astype('uint8')
+    new_shape = (0,1, 3,4,2) if n==5 else (1,2,0)
+    img = np.transpose(img, new_shape) # channels last for np
+    return img
 
 ###########################
 # WPS

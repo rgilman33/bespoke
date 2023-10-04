@@ -46,13 +46,3 @@ bpy_handler.reset_scene(bpy, ap, tm, save_data=False, render_filepath=None)
 
 bpy_handler.toggle_bev(bpy, False)
 bpy_handler.toggle_semseg(bpy, False)
-#bpy_handler.set_frame_change_post_handler(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, save_data=False)
-
-if False:
-    import time
-    print("waiting to toggle bev semseg")
-    time.sleep(20)
-    bpy_handler.reset_ap_tm(bpy, ap, tm)
-    bpy_handler.reset_scene(bpy, ap, tm, save_data=False, render_filepath=None)
-    bpy_handler.toggle_bev(bpy, True)
-    bpy_handler.toggle_semseg(bpy, True)

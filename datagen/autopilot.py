@@ -7,7 +7,10 @@ from traj_utils import *
 from map_utils import *
 
 class Autopilot():
-    def __init__(self, episode_info, run_root=None, ap_id=None, is_ego=False):
+    def __init__(self, episode_info, run_root=None, ap_id=None, is_ego=False,
+                 run_id=None, dataloader_id=None): # latter two just used so can record it for debugging
+        
+        self.run_id = run_id; self.dataloader_id = dataloader_id
         self.episode_info, self.run_root, self.ap_id, self.is_ego = episode_info, run_root, ap_id, is_ego
 
         self.set_randoms()
@@ -241,6 +244,7 @@ class Autopilot():
         cam_normal = self.wp_normals[self.current_wp_ix]
         shift_x_max = cam_normal[0]*self.normal_shift
         shift_y_max = cam_normal[1]*self.normal_shift
+        self.cam_normal = cam_normal 
 
         if ((self.overall_frame_counter+self.dagger_freq_offset) % self.DAGGER_FREQ == 0) and not self.is_doing_dagger: # don't want overlap
             self.is_doing_dagger = True
@@ -404,18 +408,6 @@ class Autopilot():
         else:
             self.stop_dist = DIST_NA_PLACEHOLDER
 
-        VERBOSE = False
-        if VERBOSE:
-            if self.is_ego:
-                if self.lead_dist < DIST_NA_PLACEHOLDER:
-                    print(f"Lead dist {round(self.lead_dist, 2)} speed {round(self.lead_relative_speed, 2)}")
-                if self.stop_dist < DIST_NA_PLACEHOLDER:
-                    print("stopsign", self.stopsign_state, round(self.stop_dist, 2))
-                if self.is_rando_yielding:
-                    print("Rando yielding", self.rando_yield_counter)
-                if abs(self.dagger_shift) > .0:
-                    print("Dagger shift", round(self.dagger_shift, 3), self.dagger_counter)
-
         if self.obeys_stops:
             target_speed = min([curvature_constrained_speed, self.speed_limit, stop_sign_constrained_speed]) 
         else:
@@ -436,6 +428,18 @@ class Autopilot():
         delta = np.clip(delta, -max_accel_frame, max_accel_frame)
         self.current_speed_mps += delta #(delta)*self.long_kP
         self.current_speed_mps = np.clip(self.current_speed_mps, 0, np.inf)
+
+        VERBOSE = False
+        if VERBOSE and self.overall_frame_counter%FRAME_CAPTURE_N==0 and self.is_ego:
+            print(f"{self.overall_frame_counter} target speed {target_speed}, current speed {self.current_speed_mps}, should yield {self.should_yield}")
+            if self.lead_dist < DIST_NA_PLACEHOLDER:
+                print(f"Lead dist {round(self.lead_dist, 2)} speed {round(self.lead_relative_speed, 2)}")
+            if self.stop_dist < DIST_NA_PLACEHOLDER:
+                print("stopsign", self.stopsign_state, round(self.stop_dist, 2))
+            if self.is_rando_yielding:
+                print("Is rando yielding", self.rando_yield_counter)
+            if abs(self.dagger_shift) > .0:
+                print("Dagger shift", round(self.dagger_shift, 3), self.dagger_counter)
 
         if self.route_is_done:
             self.current_speed_mps = 0 # Just emergency stop at end of route
@@ -554,6 +558,11 @@ class Autopilot():
         self.aux[c, "yaw"] = 0
         
         _i = self.overall_frame_counter // FRAME_CAPTURE_N
+
+        self.aux[c, "ix"] = _i
+        self.aux[c, "run_id"] = self.run_id
+        self.aux[c, "dataloader_id"] = self.dataloader_id
+
         np.save(f"{self.run_root}/aux/{_i}.npy", self.aux)
         np.save(f"{self.run_root}/targets/{_i}.npy", self.targets_container)
         np.save(f"{self.run_root}/maps/{_i}.npy", self.maps_container)  
@@ -615,7 +624,7 @@ class Autopilot():
         ix = self.drive_style_randos_ix; 
         self.speed_limit = self.rand_speed_limits[ix]
         if not self.is_ego:
-            self.speed_limit *= .8 # hack to make npcs go a bit slower than ego, to get more time w npcs as lead car
+            self.speed_limit *= .6 #TODO UNDO .8 # hack to make npcs go a bit slower than ego, to get more time w npcs as lead car
 
         self.lateral_kP = .95 #.85 #random.uniform(.75, .95)
         # self.long_kP = .5 #random.uniform(.02, .05)

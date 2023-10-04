@@ -31,8 +31,10 @@ MAP_WIDTH = 120 #80
 assert MAP_WIDTH%2==0
 MAP_HEIGHT = 180 #120 #IMG_HEIGHT
 
-BEV_WIDTH = 64
-BEV_HEIGHT = 64
+SEMSEG_PERSP_H, SEMSEG_PERSP_W = IMG_HEIGHT, IMG_WIDTH
+
+BEV_WIDTH = 256
+BEV_HEIGHT = 256
 
 ###########################
 # WPs
@@ -123,7 +125,7 @@ EPISODE_LEN = 1700 // FRAME_CAPTURE_N # measured in frames
 RUNS_TO_STORE_PER_PROCESS = 400 if FRAMESKIP else 64
 N_RUNNERS = 8 #12
 
-DATA_CONSUMPTION_RATIO_LIMIT = 1.0 #1.5
+DATA_CONSUMPTION_RATIO_LIMIT = 3 #1. TODO UNDO
 
 ANGLES_MASKOUT_THRESH = .5
 
@@ -279,8 +281,8 @@ WP_SPACING = .1
 TRAJ_WP_IXS = np.round(np.array(TRAJ_WP_DISTS) / WP_SPACING).astype('int')
 TRAJ_WP_DISTS_NP = np.array(TRAJ_WP_DISTS, dtype='float32')
 
-MAX_N_NPCS = 12
-N_NPC_ARCHETYPES = 3
+MAX_N_NPCS = 36 #12 TODO UNDO
+N_NPC_ARCHETYPES = 6 #3
 N_RDSIGN_ARCHETYPES = 5
 DIST_NA_PLACEHOLDER = 150
 
@@ -533,6 +535,10 @@ TRT_MODEL_PATH = f"{SSD_ROOT}/models_deploy/backbone_trt.jit.pt"
 
 SIM_RUN_ID = "sim"
 
+
+BASE_PITCH = 86 # angled slightly down
+BASE_YAW = 180
+
 ###########################
 # Property reference
 ###########################
@@ -569,6 +575,11 @@ ROLLOUT_PROPS = list(propref_rollout.prop.values)
 
 def get_img_container(bs, seqlen, shm=None):
     arr = np.ndarray((bs, seqlen, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, N_CHANNELS_MODEL), dtype='uint8', buffer=(shm.buf if shm else None))
+    arr[:,:, :,:,:] = 0
+    return arr
+
+def get_perspective_container(bs, seqlen, shm=None):
+    arr = np.ndarray((bs, seqlen, IMG_HEIGHT_MODEL, IMG_WIDTH_MODEL, 6), dtype='uint8', buffer=(shm.buf if shm else None))
     arr[:,:, :,:,:] = 0
     return arr
 

@@ -4,70 +4,205 @@ from imports import *
 import torch.nn.functional as F
 
 
+class TransformerBlock(nn.Module):
+    def __init__(self, d_model, nhead):
+        super(TransformerBlock, self).__init__()
+        self.attention = nn.MultiheadAttention(d_model, nhead, batch_first=True)
+        self.norm1 = nn.LayerNorm(d_model)
+        ff_mult = 4
+        self.feedforward = nn.Sequential(
+            nn.Linear(d_model, d_model*ff_mult),
+            nn.ReLU(),
+            nn.Linear(d_model*ff_mult, d_model)
+        )
+        self.norm2 = nn.LayerNorm(d_model)
 
+    def forward(self, x):
+        attn_output, _ = self.attention(x, x, x, need_weights=False) #, TODO is_causal=True)  # Self-Attention
+        x = x + attn_output  # Add
+        x = self.norm1(x)  # Normalize
+        ff_output = self.feedforward(x)  # Feedforward
+        x = x + ff_output  # Add
+        x = self.norm2(x)  # Normalize
+        return x
 
-class DeconvPrep(nn.Module):
+class PosEmb(nn.Module):
+    def __init__(self, n_tokens, d_model):
+        super(PosEmb, self).__init__()
+        self.position_embeddings = nn.Parameter(torch.zeros(1, d_model, n_tokens))
+    
+    def forward(self, x):
+        # bs,d_model,n_tokens
+        batch_size, _, _ = x.size()
+        positional_embeddings = self.position_embeddings.expand(batch_size, -1, -1)
+        return x + positional_embeddings
+
+class Transformer(nn.Module):
     def __init__(self):
-        super(DeconvPrep, self).__init__()
-        self.pool = nn.AvgPool2d(kernel_size=(1, 3), stride=(1, 3))
-        self.expand = nn.Sequential(
-            nn.Conv2d(448, 1792, kernel_size=(1, 1), stride=(1, 1), bias=False), # same as the effnet conv_head
-            nn.BatchNorm2d(1792),
+        super(Transformer, self).__init__()
+
+        d_model = 128
+        nhead = 4
+        n_blocks = 8
+        input_len = 540
+        transf_in_len = 1024
+        n_pad_tokens = transf_in_len - input_len
+        self.down_conv = nn.Sequential(
+            nn.Conv2d(448, d_model, kernel_size=(1, 1), stride=(1, 1), bias=False),
+            nn.BatchNorm2d(d_model),
             nn.ReLU(),
         )
-    def forward(self, _in):
-        # expects (batch, 448, 12, 45)
-        assert _in.shape[1:] == torch.Size([448, 12, 45])
+        self.pad_tokens = nn.Parameter(torch.zeros(1, d_model, n_pad_tokens))
+        self.pos_emb = PosEmb(transf_in_len, d_model)
+        self.transformer_blocks = nn.ModuleList([
+            TransformerBlock(d_model, nhead) for _ in range(n_blocks)
+        ])
+        self.bev_head = BevHead()
 
-        # slightly stretch so we can manually pool and keep it symmetric
-        _in = F.interpolate(_in, size=(16, 48), mode='bilinear', align_corners=False)
+    def forward(self, x):
+        # bs,448,12,45
+        x = self.down_conv(x)
+        # print("down conv", x.shape)
+        # bs,128,12,45
+        bs,c,h,w = x.shape
+        x = x.reshape(bs,c,h*w) #.contiguous() 
+        # print("reshape", x.shape)
+        # bs,128,540
+        x = torch.cat([x, self.pad_tokens.expand(bs,-1,-1)], dim=-1)
+        # print("pad tokens", x.shape)
+        x = self.pos_emb(x)
+        # print("pos emb", x.shape)
+        x = x.permute(0,2,1) # swap channels and 'seq'
+        # print("permute", x.shape)
+        for transformer_block in self.transformer_blocks:
+            #x = transformer_block(x)
+            x = torch.utils.checkpoint.checkpoint(transformer_block, x, use_reentrant=False)
+            # print("t block", x.shape)
+        x = x.reshape(bs, 32,32, c).permute(0,3,1,2)
+        # bs,d_model,32,32 # back to channels first for bev upsample
+        x = self.bev_head(x)
 
-        # pool horizontally to output a square. Will be symmetric op
-        _in = self.pool(_in)
-        # Now we're at size (batch, 448, 16, 16)
+        return x
 
-        # expand to 1792 channels
-        _in = self.expand(_in)
-        # now we're at size (batch, 1792, 16, 16)
 
-        return _in
-
-class Deconv(nn.Module):
+class BevHead(nn.Module):
     def __init__(self):
-        super(Deconv, self).__init__()
-        b_dim = 256
-        
+        super(BevHead, self).__init__()
         self.up = nn.Sequential(
             # 2x
             nn.Upsample(scale_factor=2),
-            nn.Conv2d(1792, b_dim, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(b_dim),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(),
-            # another 2x
+            # 2x
             nn.Upsample(scale_factor=2),
-            nn.Conv2d(b_dim, b_dim, kernel_size=5, stride=1, padding=2),
-            nn.BatchNorm2d(b_dim),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(128, 128, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.Conv2d(128, 3, kernel_size=1),
+        )
+    def forward(self, x):
+        # print("bev up", x.shape)
+        x = self.up(x)
+        return x
+
+
+class SemsegPerspective(nn.Module):
+    def __init__(self):
+        super(SemsegPerspective, self).__init__()
+
+        self.up1 = nn.Sequential(
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(448, 96, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(96),
+            nn.ReLU(),
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(96, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
         )
-        block = nn.Sequential(    
-            nn.Conv2d(b_dim, b_dim, kernel_size=5, stride=1, padding=2), # no padding by default
-            nn.BatchNorm2d(b_dim),
-            nn.ReLU()
+        self.resmix1 = nn.Sequential(
+            nn.Conv2d(64+56, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
         )
-        self.blocks = nn.Sequential(*[block for _ in range(1)])
-        self.final = nn.Sequential( # 1x1 conv to get classes for semseg
-            nn.Conv2d(b_dim, 3, kernel_size=1, stride=1),
+        self.up3 = nn.Sequential(
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
         )
-        
-    def forward(self, x):
-        # expects (batch, channels, 16, 16)
-        x = self.up(x)
-        x = self.blocks(x)
-        x = self.final(x)
+        self.resmix2 = nn.Sequential(
+            nn.Conv2d(32+32, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+        )
+        self.up4 = nn.Sequential(
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+        )
+        self.resmix3 = nn.Sequential(
+            nn.Conv2d(32+24, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+        )
+        self.up5 = nn.Sequential(
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.Conv2d(32, 6, kernel_size=1, stride=1),
+        )
+
+    def forward(self, b0_out, b1_out, b2_out, x):
+        # expects x sz (batch, 448, 12, 45)
+        # b0 # 24, 180, 720
+        # b1 # 32, 90, 360
+        # b2 # 56, 45, 180
+        assert x.shape[1:] == torch.Size([448, 12, 45])
+
+        x = self.up1(x)# 64, 48, 180
+        x = F.interpolate(x, size=(45, 180), mode='bilinear', align_corners=False) # squeeze down slightly to match input for resmix
+        # 64, 45, 180
+
+        x = torch.cat([b2_out, x], dim=1) # cat channelwise
+        x = self.resmix1(x) # 64, 45, 180
+
+        x = self.up3(x) # 32, 90, 360
+
+        x = torch.cat([b1_out, x], dim=1) # cat channelwise
+        x = self.resmix2(x) # 32, 90, 360
+
+        x = self.up4(x) #  32, 180, 720 
+
+        x = torch.cat([b0_out, x], dim=1) # cat channelwise
+        x = self.resmix3(x) # 32, 180, 720
+
+        x = self.up5(x) # 3, 360, 720
 
         return x
     
-
 # b3 is 1536 features, 14M params or so
 # b4 is 1792 features, 21M params
 # b5 is 2048 features, 32M params, don't seem to be any weights for models this size and above, actually there are, under the 'tf' prefix
@@ -96,10 +231,8 @@ class EffNet(nn.Module):
         # common cnn feature extractor
         n = self.backbone_out + len(AUX_MODEL_PROPS)
 
-        # Deconv
-
-        self.deconv_prep = DeconvPrep().to(device)
-        self._deconv = Deconv().to(device)
+        self.semseg_perspective_head = SemsegPerspective().to(device)
+        self.bev_head = Transformer().to(device)
 
         self.inner_dim = 1024
 
@@ -207,12 +340,25 @@ class EffNet(nn.Module):
             x = self.backbone.bn1(x)
             x = self.backbone.act1(x)
 
-            backbone_out = checkpoint_sequential(self.backbone.blocks, 7, x)
+            # backbone_out = checkpoint_sequential(self.backbone.blocks, 7, x)
 
-            # # This works, brings memory down to 11gb. Keep this in back pocket for when need it
-            # for block in self.backbone.blocks: # blocks is a sequential module # TODO check this, need to see we get good perf still. Burned here in the past. Also check how much slower it is.
-            #     for module in block: # each block is also a sequential module
-            #         x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False) # False is recommended
+            # # This works, brings memory down to 11gb. Keep this in back pocket for when need it. Check this again.
+            c = 0
+            b0_out, b1_out, b2_out = None,None,None
+            # print("\n\n\n")
+            for block in self.backbone.blocks:
+                for module in block: # each block is also a sequential module
+                    x = torch.utils.checkpoint.checkpoint(module, x, use_reentrant=False) # False is recommended
+
+                    name = type(module).__name__
+                    # print(name, x.shape)
+                # print("block end", c, x.shape, "\n")
+                if c==0: b0_out = x # 24, 180, 720
+                if c==1: b1_out = x # 32, 90, 360
+                if c==2: b2_out = x # 56, 45, 180
+                c+=1
+            backbone_out = x
+            # print("\n\n\n\n")
 
             # shape here is (bs*bptt, 448, 12, 45)
             # branching off here for bev semseg
@@ -230,27 +376,24 @@ class EffNet(nn.Module):
         x = torch.cat([x, aux[:,:,self.AUX_MODEL_IXS]], dim=-1)
 
         if return_blocks_out:
-            # unpack blocks output here. Otherwise lose track of bs bptt dims. 
-            bs_bptt, _c, _h, _w = backbone_out.shape
-            backbone_out = backbone_out.reshape(bs, bptt, _c, _h, _w).contiguous() # (bs, bptt, 448, 12, 45)
-            return x, backbone_out
+            # semseg_perspective_p = self.semseg_perspective_head(b0_out, b1_out, b2_out, backbone_out)
+            semseg_perspective_p = torch.utils.checkpoint.checkpoint(self.semseg_perspective_head, 
+                                                                     b0_out, b1_out, b2_out, backbone_out, use_reentrant=False)
+            SEMSEG_CHANNELS = 6
+            semseg_perspective_p = semseg_perspective_p.reshape(bs, bptt, SEMSEG_CHANNELS, SEMSEG_PERSP_H, SEMSEG_PERSP_W)
+
+            bev = self.bev_head(backbone_out)
+            bev = bev.reshape(bs,bptt,3,BEV_HEIGHT,BEV_WIDTH)
+            return x, bev, semseg_perspective_p
+        
+        # if return_blocks_out:
+        #     semseg_p = self._deconv_prep(backbone_out) # outputs (bs*bptt, 1792, 16, 16) 
+        #     semseg_p = self._deconv(semseg_p) # outputs (bs*bptt, 3, 64, 64)
+        #     semseg_p = semseg_p.reshape(bs, bptt, 3, BEV_HEIGHT, BEV_WIDTH)
+        #     return x, semseg_p
         else:
             return x
     
-    def bev_head(self, x):
-        # takes in directly from backbone.blocks. 
-
-        bs, bptt, c, h, w = x.shape
-        x = x.reshape(bs*bptt, c,h,w).contiguous() # shape here is (bs*bptt, 448, 12, 45)
-
-        x = self.deconv_prep(x) # outputs (bs*bptt, 1792, 16, 16) 
-
-        x = self._deconv(x) # outputs (bs*bptt, 3, 64, 64)
-        
-        # unpack batch and seq
-        x = x.reshape(bs, bptt, 3, 64, 64).contiguous()
-
-        return x
 
     def rnn_head(self, z):
         z = self.fcs1_rnn(z)

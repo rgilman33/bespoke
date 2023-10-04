@@ -65,3 +65,68 @@ class Deconv(nn.Module):
         x = self.final(x)
 
         return x
+
+
+
+# third one, decent but xroads not really and never npcs
+
+class DeconvPrep(nn.Module):
+    def __init__(self):
+        super(DeconvPrep, self).__init__()
+        self.pool = nn.AvgPool2d(kernel_size=(1, 3), stride=(1, 3))
+        self.expand = nn.Sequential(
+            nn.Conv2d(448, 1792, kernel_size=(1, 1), stride=(1, 1), bias=False), # same as the effnet conv_head
+            nn.BatchNorm2d(1792),
+            nn.ReLU(),
+        )
+    def forward(self, _in):
+        # expects (batch, 448, 12, 45)
+        assert _in.shape[1:] == torch.Size([448, 12, 45])
+
+        # slightly stretch so we can manually pool and keep it symmetric
+        _in = F.interpolate(_in, size=(16, 48), mode='bilinear', align_corners=False)
+
+        # pool horizontally to output a square. Will be symmetric op
+        _in = self.pool(_in)
+        # Now we're at size (batch, 448, 16, 16)
+
+        # expand to 1792 channels
+        _in = self.expand(_in)
+        # now we're at size (batch, 1792, 16, 16)
+
+        return _in
+
+class Deconv(nn.Module):
+    def __init__(self):
+        super(Deconv, self).__init__()
+        b_dim = 256
+        
+        self.up = nn.Sequential(
+            # 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(1792, b_dim, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(b_dim),
+            nn.ReLU(),
+            # another 2x
+            nn.Upsample(scale_factor=2),
+            nn.Conv2d(b_dim, b_dim, kernel_size=3, stride=1, padding=1),
+            nn.BatchNorm2d(b_dim),
+            nn.ReLU(),
+        )
+        block = nn.Sequential(    
+            nn.Conv2d(b_dim, b_dim, kernel_size=3, stride=1, padding=1), # no padding by default
+            nn.BatchNorm2d(b_dim),
+            nn.ReLU()
+        )
+        self.blocks = nn.Sequential(*[block for _ in range(1)])
+        self.final = nn.Sequential( # 1x1 conv to get classes for semseg
+            nn.Conv2d(b_dim, 3, kernel_size=1, stride=1),
+        )
+        
+    def forward(self, x):
+        # expects (batch, channels, 16, 16)
+        x = self.up(x)
+        x = self.blocks(x)
+        x = self.final(x)
+
+        return x

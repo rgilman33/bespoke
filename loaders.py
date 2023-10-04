@@ -4,6 +4,7 @@ import threading
 from constants import *
 from imports import *
 from traj_utils import *
+from utils import *
 
 format_ix = lambda ix: ("0000"+str(ix))[-4:]
 
@@ -28,7 +29,38 @@ def update_seq_inplace(*inputs):
         time.sleep(1)
         update_seq_inplace(*inputs)
 
-def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, b, is_done, offset, constant_seq_aug, aug_difficulty, timings_container):
+import numpy as np
+
+def world_to_camera_space(normals_world, camera_normals):
+    """
+    Converts normals from world space to camera space.
+    
+    Parameters:
+    - normals_world: numpy array of shape (sequence, height, width, 3)
+    - camera_normals: numpy array of shape (sequence, 3)
+
+    Returns:
+    - normals_camera: numpy array of shape (sequence, height, width, 3)
+    """
+    
+    # # Normalize the input normals
+    # normals_world = normals_world / np.linalg.norm(normals_world, axis=-1, keepdims=True)
+    # camera_normals = camera_normals / np.linalg.norm(camera_normals, axis=-1, keepdims=True)
+
+    # Compute the transformation matrix using outer product
+    transformation_matrix = np.einsum('si,sj->sij', camera_normals, camera_normals)
+    I = np.eye(3)
+    transformation_matrix = I - 2 * transformation_matrix
+    # seq, 3, 3
+
+    # Apply the transformation
+    normals_camera = np.einsum('skc,shwc->shwc', transformation_matrix, normals_world)
+
+    return normals_camera
+
+
+def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, perspective_chunk, \
+                        b, is_done, offset, constant_seq_aug, aug_difficulty, timings_container):
 
     timer = Timer("update_seq_inplace")
 
@@ -79,7 +111,7 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, b, is_do
 
         # Check img for too dark. Weird blender bug.
         _mean = img[-100:, 200:1000, :].mean()
-        if _mean<10:
+        if _mean<5:
             _run_path = run_path.split("/")
             dl_id = _run_path[-3]
             run_id = _run_path[-2]
@@ -88,13 +120,25 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, b, is_do
     #imgs = np.stack([cv2.imread(img_path) for img_path in img_paths])[:, :,:,::-1] # bgr to rgb
     timer.log("load imgs")
 
-    # bev
-    bev_paths = [f"{run_path}/imgs_bev/{format_ix(i)}.jpg" for i in range(ix+1-seqlen-FS_LOOKBACK, ix+1)]
-    bevs = np.empty((len(img_paths), BEV_HEIGHT, BEV_WIDTH, 3), dtype=np.uint8)
-    for i,img_path in enumerate(bev_paths):
-        bev = cv2.imread(img_path)[:,:,::-1]
-        bev_chunk[b, i,:,:,:] = bev
-    timer.log("load bev")
+    # ############
+    # # bev
+    # bev_paths = [f"{run_path}/imgs_bev/{format_ix(i)}.jpg" for i in range(ix+1-seqlen-FS_LOOKBACK, ix+1)]
+    # for i,bev_path in enumerate(bev_paths):
+    #     bev = cv2.imread(bev_path)[:,:,::-1]
+    #     bev_chunk[b, i, :,:,:] = bev
+
+    ############
+    # Perspective
+    # semseg_paths = [f"{run_path}/imgs_semseg/Image{format_ix(i)}.jpg" for i in range(ix+1-seqlen-FS_LOOKBACK, ix+1)]
+    semseg_paths = [f"{run_path}/imgs_semseg/{format_ix(i)}.jpg" for i in range(ix+1-seqlen-FS_LOOKBACK, ix+1)]
+    depth_paths = [f"{run_path}/imgs_depth/Image{format_ix(i)}.jpg" for i in range(ix+1-seqlen-FS_LOOKBACK, ix+1)]
+    for i,(semseg_path,depth_path) in enumerate(zip(semseg_paths, depth_paths)):
+        semseg = cv2.imread(semseg_path)[:,:,::-1]
+        depth = cv2.imread(depth_path)[:,:,::-1]
+        perspective_chunk[b, i,:,:,:3] = semseg
+        perspective_chunk[b, i,:,:,3:] = depth
+
+    timer.log("load perspective semseg and depth")
 
     constant_seq_aug = 0 #TODO remove this
     imgs = aug_imgs(imgs, constant_seq_aug, diff=aug_difficulty)
@@ -110,7 +154,7 @@ def _update_seq_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, b, is_do
 
 from multiprocessing import Queue, Process, shared_memory
 
-def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, constant_seq_aug, aug_difficulty):
+def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, perspective_chunk, constant_seq_aug, aug_difficulty):
     # sets them in place. Takes about 2 sec per seq of len 116. Threading important for perf, as most of the time is io reading in imgs
     bs, seqlen, _,_,_ = img_chunk.shape
     is_done = np.zeros(bs)
@@ -118,12 +162,14 @@ def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, constant_
     timings_container = []
     offset = random.randint(0,1_000)
     for b in range(bs):
-        t = threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, bev_chunk, b, is_done, offset, constant_seq_aug, aug_difficulty, timings_container))
+        t = threading.Thread(target=update_seq_inplace, args=(img_chunk, aux_chunk, targets_chunk, bev_chunk, perspective_chunk, \
+                                                              b, is_done, offset, constant_seq_aug, aug_difficulty, timings_container))
         threads.append(t)
         t.start()
+    for t in threads: t.join()
 
-    for t in threads:
-        t.join()
+        # update_seq_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, perspective_chunk, \
+        #                                                       b, is_done, offset, constant_seq_aug, aug_difficulty, timings_container)
 
     logger = Logger() # using logger just for averaging
     for timings in timings_container: logger.log(timings)
@@ -132,10 +178,10 @@ def fill_chunk_inplace(img_chunk, aux_chunk, targets_chunk, bev_chunk, constant_
     assert is_done.sum() == bs
     return timings
 
-def keep_chunk_filled(shm_img, shm_aux, shm_targets, shm_bev, shm_is_ready, constant_seq_aug, aug_difficulty, timings_queue):
+def keep_chunk_filled(shm_img, shm_aux, shm_targets, shm_bev, shm_perspective, shm_is_ready, constant_seq_aug, aug_difficulty, timings_queue):
     while True:
         if not shm_is_ready[0]:
-            timings = fill_chunk_inplace(shm_img, shm_aux, shm_targets, shm_bev, constant_seq_aug, aug_difficulty)
+            timings = fill_chunk_inplace(shm_img, shm_aux, shm_targets, shm_bev, shm_perspective, constant_seq_aug, aug_difficulty)
             timings_queue.put(timings)
             shm_is_ready[0] = 1
         else:
@@ -155,34 +201,39 @@ class TrnLoader():
         self.aux_chunk = get_aux_container(bs, seqlen)
         self.targets_chunk = get_targets_container(bs, seqlen)
         self.bev_chunk = get_bev_container(bs, seqlen)
+        self.perspective_chunk = get_perspective_container(bs, seqlen)
         
         self.queue = []; queue_size = n_workers # was 10 NOTE pay attn for slowdown
         self.shms = []
         self.timings_queue = Queue(queue_size) # just used for storing timings
         for i in range(queue_size):
             img_name = f"shm_img_{i}"; aux_name = f"shm_aux_{i}"; targets_name = f"shm_targets_{i}"; bev_name = f"shm_bev_{i}"
+            perspective_name = f"shm_perspective_{i}"
             is_ready_name = f"shm_is_ready_{i}"
-            for n in [img_name, aux_name, targets_name, bev_name, is_ready_name]:
+            for n in [img_name, aux_name, targets_name, bev_name, perspective_name, is_ready_name]:
                 if os.path.exists(f"/dev/shm/{n}"): os.remove(f"/dev/shm/{n}")
 
             shm_img = shared_memory.SharedMemory(create=True, size=self.img_chunk.nbytes, name=img_name)
             shm_aux = shared_memory.SharedMemory(create=True, size=self.aux_chunk.nbytes, name=aux_name)
             shm_targets = shared_memory.SharedMemory(create=True, size=self.targets_chunk.nbytes, name=targets_name)
             shm_bev = shared_memory.SharedMemory(create=True, size=self.bev_chunk.nbytes, name=bev_name)
+            shm_perspective = shared_memory.SharedMemory(create=True, size=self.perspective_chunk.nbytes, name=perspective_name)
             shm_is_ready = shared_memory.SharedMemory(create=True, size=1, name=is_ready_name)
 
-            self.shms += [shm_img, shm_aux, shm_targets, shm_bev, shm_is_ready]
+            self.shms += [shm_img, shm_aux, shm_targets, shm_bev, shm_perspective, shm_is_ready]
 
             shm_img = get_img_container(bs, seqlen, shm_img)
             shm_aux = get_aux_container(bs, seqlen, shm_aux)
             shm_targets = get_targets_container(bs, seqlen, shm_targets)
             shm_bev = get_bev_container(bs, seqlen, shm_bev)
+            shm_perspective = get_perspective_container(bs, seqlen, shm_perspective)
 
             shm_is_ready = np.ndarray((1,), dtype=np.int8, buffer=shm_is_ready.buf)
             shm_is_ready[0] = 0
-            Process(target=keep_chunk_filled, args=(shm_img, shm_aux, shm_targets, shm_bev, shm_is_ready, constant_seq_aug, aug_difficulty, self.timings_queue)).start()
+            Process(target=keep_chunk_filled, args=(shm_img, shm_aux, shm_targets, shm_bev, shm_perspective, \
+                                                    shm_is_ready, constant_seq_aug, aug_difficulty, self.timings_queue)).start()
             # TODO consolidate aug info into a single dict
-            self.queue.append((shm_img, shm_aux, shm_targets, shm_bev, shm_is_ready))
+            self.queue.append((shm_img, shm_aux, shm_targets, shm_bev, shm_perspective, shm_is_ready))
 
         self.refresh_chunk()
 
@@ -202,13 +253,14 @@ class TrnLoader():
         timer = Timer("refresh_chunk"); got_chunk = False; i = 0
         while not got_chunk:
             for chunk in self.queue:
-                shm_img, shm_aux, shm_targets, shm_bev, shm_is_ready = chunk
+                shm_img, shm_aux, shm_targets, shm_bev, shm_perspective, shm_is_ready = chunk
                 if shm_is_ready[0]:
                     timer.log("got chunk")
                     self.img_chunk[:,:, :,:,:] = shm_img[:,:, :,:,:]
                     self.aux_chunk[:,:, :] = shm_aux[:,:, :]
                     self.targets_chunk[:,:, :] = shm_targets[:,:, :]
                     self.bev_chunk[:,:, :,:,:] = shm_bev[:,:, :,:,:]
+                    self.perspective_chunk[:,:, :,:,:] = shm_perspective[:,:, :,:,:]
 
                     self.seq_ix = 0; shm_is_ready[0] = 0; got_chunk = True
                     timer.log("transfered chunk")
@@ -228,7 +280,8 @@ class TrnLoader():
         timer = Timer("queue_batch")
         bptt = self.bptt
         _, seq_len, _, _, _ = self.img_chunk.shape
-        batch = get_batch_at_ix(self.img_chunk, self.aux_chunk, self.targets_chunk, self.bev_chunk, self.seq_ix, bptt, timer=timer)
+        batch = get_batch_at_ix(self.img_chunk, self.aux_chunk, self.targets_chunk, self.bev_chunk, self.perspective_chunk, \
+                                self.seq_ix, bptt, timer=timer)
         self.seq_ix += bptt
         timer.log("get_batch_at_ix")
         if (self.seq_ix > seq_len-bptt): # Trn, not taking any w len shorter than bptt
@@ -345,7 +398,8 @@ class RunLoader():
             self.maps = np.stack([np.load(f) for f in sorted(glob.glob(f"{run_path}/navmap/*"))[s:e]])
 
         self.targets_chunk = np.zeros((self.img_chunk.shape[0], N_WPS*4)) # For convenience. at some point we could actually fill these in using kalman filter
-        self.bev_chunk = np.zeros((self.img_chunk.shape[0], BEV_HEIGHT, BEV_WIDTH, 3), dtype=np.uint8) 
+        self.bev_chunk = None # np.zeros((self.img_chunk.shape[0], BEV_HEIGHT, BEV_WIDTH, 3), dtype=np.uint8) 
+        self.perspective_chunk = None #np.zeros((self.img_chunk.shape[0], IMG_HEIGHT, IMG_WIDTH, 6), dtype=np.uint8) 
 
     def _load_sim(self, run_path):
 
@@ -353,7 +407,12 @@ class RunLoader():
         self.targets_chunk = np.concatenate([np.load(f'{run_path}/targets/{i}.npy') for i in range(1,EPISODE_LEN+1)], axis=0)
         self.maps = np.concatenate([np.load(f'{run_path}/maps/{i}.npy') for i in range(1,EPISODE_LEN+1)], axis=0)
         self.img_chunk = np.stack([cv2.imread(i)[:,:,::-1].astype(np.uint8) for i in sorted(glob.glob(f"{run_path}/imgs/*"))]) 
-        self.bev_chunk = np.stack([cv2.imread(i)[:,:,::-1].astype(np.uint8) for i in sorted(glob.glob(f"{run_path}/imgs_bev/*"))]) 
+         
+        self.bev_chunk = np.stack([cv2.imread(i)[:,:,::-1].astype(np.uint8) for i in sorted(glob.glob(f"{run_path}/imgs_bev/*"))])  
+
+        perspective_semseg = np.stack([cv2.imread(i)[:,:,::-1].astype(np.uint8) for i in sorted(glob.glob(f"{run_path}/imgs_semseg/*"))])  
+        perspective_depth = np.stack([cv2.imread(i)[:,:,::-1].astype(np.uint8) for i in sorted(glob.glob(f"{run_path}/imgs_depth/*"))])  
+        self.perspective_chunk = np.concatenate([perspective_semseg, perspective_depth], axis=-1)
 
         print(self.img_chunk.shape, self.bev_chunk.shape, self.maps.shape, self.aux_chunk.shape, self.targets_chunk.shape)
 
@@ -366,7 +425,8 @@ class RunLoader():
 
         # Pad batch dimension to keep common dims of (batch,seq,n) across all loaders
         self.img_chunk = self.img_chunk[None,:, :,:,:]
-        self.bev_chunk = self.bev_chunk[None,:, :,:,:] # TODO also have to shorten this as below?
+        if self.bev_chunk is not None: self.bev_chunk = self.bev_chunk[None,:, :,:,:] # TODO also have to shorten this as below?
+        if self.perspective_chunk is not None: self.perspective_chunk = self.perspective_chunk[None,:, :,:,:] # TODO also have to shorten this as below?
         self.aux_chunk = self.aux_chunk[None,L:,:] # shorten to match img_chunk
         self.targets_chunk = self.targets_chunk[None,L:,:]
 
@@ -379,7 +439,8 @@ class RunLoader():
         if (ix >= self.seq_len): 
             self.is_done = True
             return
-        batch = get_batch_at_ix(self.img_chunk, self.aux_chunk, self.targets_chunk, self.bev_chunk, ix, self.bptt, timer=timer)
+        batch = get_batch_at_ix(self.img_chunk, self.aux_chunk, self.targets_chunk, self.bev_chunk, self.perspective_chunk, \
+                                ix, self.bptt, timer=timer)
         self.seq_ix += self.bptt
         self.queued_batches.append(batch)
 
@@ -424,7 +485,7 @@ def _iter_batch(loader):
 
 from norm import *
 
-def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, bev_chunk, ix, bptt, timer=None):
+def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, bev_chunk, perspective_chunk, ix, bptt, timer=None):
 
     is_first_in_seq = (ix==0)
 
@@ -480,10 +541,19 @@ def get_batch_at_ix(img_chunk, aux_chunk, targets_chunk, bev_chunk, ix, bptt, ti
         wps = prep_wps(wps)
         timer.log("prep wps")
 
-        bev = bev_chunk[:, ix:ix+bptt, :,:,:]
-        bev = prep_bev(bev)
+        # bev
+        bev = None
+        if bev_chunk is not None:
+            bev = bev_chunk[:, ix:ix+bptt, :,:,:]
+            bev = prep_bev(bev)
+            bev = clean_up_bev(bev)
 
-    return img, aux, wps, bev, (to_pred_mask, is_first_in_seq)
+        # perspective
+        perspective = None
+        if perspective_chunk is not None:
+            perspective = perspective_chunk[:, ix:ix+bptt, :,:,:]
+            perspective = prep_perspective(perspective)
+            perspective[:,:, :3,:,:] = clean_up_bev(perspective[:,:, :3,:,:])
 
-
+    return img, aux, wps, bev, perspective, (to_pred_mask, is_first_in_seq)
 

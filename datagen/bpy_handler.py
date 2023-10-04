@@ -325,7 +325,8 @@ class TrafficManager():
                 npc_ap.set_route(route)
 
                 update_ap_object(nodes, npc_ap)
-                dist_from_ego_start_go = 200 if self.npcs_only_oncoming else random.uniform(110, 160)
+                # dist_from_ego_start_go = 200 if self.npcs_only_oncoming else random.uniform(110, 160)
+                dist_from_ego_start_go = 130 if self.npcs_only_oncoming else random.uniform(50, 90) #TODO UNDO back to original above
                 npc = NPC(npc_ap, nodes, npc_object, dist_from_ego_start_go)
                 self.active_npcs.append(npc)
             else:
@@ -338,7 +339,6 @@ class TrafficManager():
             npc.is_done = False
             npc.ap.reset()
             update_ap_object(npc.nodes, npc.ap)
-
 
     def step(self):
 
@@ -357,20 +357,21 @@ class TrafficManager():
             npc.ap.set_should_yield(False)
 
             if npc_dist_to_ego < TRAJ_WP_DISTS[-1]: # Only check detailed trajs if within distance TODO this dist should be dynamic based on the speeds of both parties
-                # Checking for collisions, setting yield states
-                ego_traj = self.ego.negotiation_traj[:, :2]
-                npc_traj = npc.ap.negotiation_traj[:, :2]
-                # Result is traj_len x traj_len matrix w dist btwn every point in A to every pt in B
-                result = (ego_traj[:, None, :] - npc_traj[None, :, :])**2
-                result = np.sqrt(result[:,:,0] + result[:,:,1])
-                if result.min() < CRV_WIDTH * 1.2: 
-                    argmin_ix_a, argmin_ix_b = np.unravel_index(result.argmin(), result.shape) # np magic to find argmin in 2d array. Don't fully understand.
-                    ego_dist_to_collision = argmin_ix_a * self.ego.m_per_wp
-                    npc_dist_to_collision = argmin_ix_b * npc.ap.m_per_wp
-                    if (ego_dist_to_collision > npc_dist_to_collision) or self.ego.is_in_yield_zone:
-                        self.ego.set_should_yield(True)                        
-                    else:
-                        npc.ap.set_should_yield(True)
+                # # Checking for collisions, setting yield states
+                # ego_traj = self.ego.negotiation_traj[:, :2]
+                # npc_traj = npc.ap.negotiation_traj[:, :2]
+                # # Result is traj_len x traj_len matrix w dist btwn every point in A to every pt in B
+                # result = (ego_traj[:, None, :] - npc_traj[None, :, :])**2
+                # result = np.sqrt(result[:,:,0] + result[:,:,1])
+                # if result.min() < CRV_WIDTH * 1.2: 
+                #     argmin_ix_a, argmin_ix_b = np.unravel_index(result.argmin(), result.shape) # np magic to find argmin in 2d array. Don't fully understand.
+                #     ego_dist_to_collision = argmin_ix_a * self.ego.m_per_wp
+                #     npc_dist_to_collision = argmin_ix_b * npc.ap.m_per_wp
+                #     if (ego_dist_to_collision > npc_dist_to_collision) or self.ego.is_in_yield_zone:
+                #         self.ego.set_should_yield(True)                        
+                #     else:
+                #         npc.ap.set_should_yield(True) TODO UNDO candidate for semseg repro bug. Yes i believe this was it
+                # when let back in, perhaps round. Also find out why was overflow. These need to be deterministic. 
 
                 # lead car status
                 # overlap_ixs = np.where(self.ego.traj_wp_uids==npc.ap.current_wp_uid)[0] # Doesn't work bc wps overlaps, left right straight. 
@@ -461,14 +462,14 @@ def _update_wp_sphere(wp_sphere_nodes, ap):
     get_node("pos_y", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[1]
     get_node("pos_z", wp_sphere_nodes).outputs["Value"].default_value = ap.target_wp_pos[2] + 1
 
-def create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=None):
+def create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_root=None, dataloader_id=None, run_id=None):
     
     ###################
     # Create AP and TM
 
     make_vehicle_nodes = bpy.data.node_groups['MakeVehicle'].nodes 
 
-    ap = Autopilot(episode_info, run_root=run_root, ap_id=-1, is_ego=True)
+    ap = Autopilot(episode_info, run_root=run_root, ap_id=-1, is_ego=True, dataloader_id=dataloader_id, run_id=run_id)
     timer.log("create ap")
     ap.set_route(ego_route) # this also calls ap.reset()
     timer.log("set route")
@@ -477,7 +478,7 @@ def create_ap_tm(bpy, wp_df, coarse_map_df, ego_route, episode_info, timer, run_
     update_ap_object(make_vehicle_nodes, ap)
     timer.log("update ap object")
 
-    n_npcs = random.randint(6, MAX_N_NPCS) if episode_info.has_npcs else 0
+    n_npcs = random.randint(MAX_N_NPCS//4, MAX_N_NPCS) if episode_info.has_npcs else 0
     tm = TrafficManager(wp_df=wp_df, ego_ap=ap, episode_info=episode_info, n_npcs=n_npcs)
     timer.log("prep tm")
 
@@ -495,33 +496,76 @@ def toggle_semseg(bpy, is_semseg):
     dirt_gravel_nodes = bpy.data.materials["Dirt Gravel"].node_tree.nodes
     main_map_nodes = bpy.data.node_groups['main_map'].nodes 
     npc_materials = [m.node_tree.nodes for m in bpy.data.materials if "npc." in m.name]
-    place_obstacles_nodes = bpy.data.node_groups['place_obstacles'].nodes
+    # place_obstacles_nodes = bpy.data.node_groups['place_obstacles'].nodes
+    background_hdri_nodes = bpy.data.scenes["Scene"].world.node_tree.nodes
+    road_marking_material_nodes = bpy.data.materials["Road Markings"].node_tree.nodes
+
+    rd_base_nodes = bpy.data.node_groups['get_rd_base'].nodes
+
+    npc_archetypes_nodes = [o.modifiers["GeometryNodes"].node_group.nodes for o in bpy.data.objects if "_npc_body." in o.name]
+    stopsign_nodes = bpy.data.node_groups['stopsign_nodes'].nodes
+    stopsign_material = bpy.data.materials["stopsign"].node_tree.nodes      
 
     if is_semseg:
-        get_node("semseg_gate", dirt_gravel_nodes).mute = False
-        get_node("distractors_gate", main_map_nodes).mute = True
-        for n in npc_materials: get_node("semseg_gate", n).mute = False
-        get_node("constant_rd_edge_switch", dirt_gravel_nodes).outputs["Value"].default_value = 1
-        get_node("no_rdside_npcs_switch", place_obstacles_nodes).outputs["Value"].default_value = 1 
+        get_node("semseg_gate", road_marking_material_nodes).mute = False
+        get_node("semseg_gate", rd_base_nodes).mute = False
+        get_node("semseg_gate", stopsign_material).mute = False
+
+
+        get_node("voronoi_noise_gate", dirt_gravel_nodes).mute = True
+        get_node("shadows_gate", dirt_gravel_nodes).mute = True
+
+        get_node("set_distractors_semseg_mat", main_map_nodes).mute = False
+        get_node("semseg_hide_billboards", main_map_nodes).outputs["Value"].default_value = 1
+
+        # get_node("constant_rd_edge_switch", dirt_gravel_nodes).outputs["Value"].default_value = 0 #1 no longer constraining rd, bc letting lines in
+        # get_node("no_rdside_npcs_switch", place_obstacles_nodes).outputs["Value"].default_value = 0 #1 now allowing rdside npcs
+        get_node("hdri_strength", background_hdri_nodes).outputs["Value"].default_value = 0
+
         # no rdside npcs for now when bev, will need diff color
+        get_node("semseg_gate", road_marking_material_nodes).mute = False
 
-    else:
-        get_node("semseg_gate", dirt_gravel_nodes).mute = True
-        get_node("distractors_gate", main_map_nodes).mute = False
-        for n in npc_materials: get_node("semseg_gate", n).mute = True
-        get_node("constant_rd_edge_switch", dirt_gravel_nodes).outputs["Value"].default_value = 0
-        get_node("no_rdside_npcs_switch", place_obstacles_nodes).outputs["Value"].default_value = 0
+        for n in npc_archetypes_nodes: get_node("assign_semseg_mat", n).mute = False
+        get_node("assign_semseg_npc_mat", main_map_nodes).mute = False
+
+    else: # not semseg
+        get_node("semseg_gate", road_marking_material_nodes).mute = True
+        get_node("semseg_gate", rd_base_nodes).mute = True
+        get_node("semseg_gate", stopsign_material).mute = True
+
+        get_node("voronoi_noise_gate", dirt_gravel_nodes).mute = False
+        get_node("shadows_gate", dirt_gravel_nodes).mute = False
+
+        get_node("set_distractors_semseg_mat", main_map_nodes).mute = True
+        get_node("semseg_hide_billboards", main_map_nodes).outputs["Value"].default_value = 0
+
+        # get_node("constant_rd_edge_switch", dirt_gravel_nodes).outputs["Value"].default_value = 0
+        # get_node("no_rdside_npcs_switch", place_obstacles_nodes).outputs["Value"].default_value = 0
+        get_node("hdri_strength", background_hdri_nodes).outputs["Value"].default_value = 1
+
+        for n in npc_archetypes_nodes: get_node("assign_semseg_mat", n).mute = True
+        get_node("assign_semseg_npc_mat", main_map_nodes).mute = True
 
 
-def toggle_bev(bpy, is_bev):
+def save_depth(bpy, should_save):
+    get_node("depth_out", bpy.data.scenes["Scene"].node_tree.nodes).mute = not should_save
+    # get_node("normals_out", bpy.data.scenes["Scene"].node_tree.nodes).mute = not should_save
+
+
+def toggle_bev(bpy, is_bev, pitch_perturbation=0):
     z_adj_nodes = bpy.data.node_groups['apply_z_adjustment'].nodes 
     meshify_lines_nodes = bpy.data.node_groups['meshify_lines'].nodes
+    # npc_body_nodes = bpy.data.node_groups['npc_body_nodes'].nodes
+    npc_archetypes_nodes = [o.modifiers["GeometryNodes"].node_group.nodes for o in bpy.data.objects if "_npc_body." in o.name]
+    npc_materials = [m for m in bpy.data.materials if "npc." in m.name]
 
     if is_bev:
         # Orthographic bev
 
-        bpy.data.scenes["Scene"].render.resolution_x = BEV_WIDTH #180 
-        bpy.data.scenes["Scene"].render.resolution_y = BEV_HEIGHT #120
+        # get_node("semseg_out", bpy.data.scenes["Scene"].node_tree.nodes).mute = True
+
+        bpy.data.scenes["Scene"].render.resolution_x = 256 #BEV_WIDTH #180 
+        bpy.data.scenes["Scene"].render.resolution_y = 256 #BEV_HEIGHT #120
 
         # bpy.data.objects["Camera"].location[0] = .27
         bpy.data.objects["Camera"].location[1] = -24 # neg to move ego more outside frame to the right
@@ -539,11 +583,16 @@ def toggle_bev(bpy, is_bev):
         get_node("constant_line_hwidth_switch", meshify_lines_nodes).outputs["Value"].default_value = 1 # constant extra-wide for better bev
         # NOTE the above doesn't matter bc not using lines when low res
 
+        for n in npc_archetypes_nodes: get_node("npcs_to_bb", n).outputs["Value"].default_value = 1
+        for n in npc_materials: n.blend_method = "BLEND"
     else:
         # Perspective egocentric
 
+        # get_node("semseg_out", bpy.data.scenes["Scene"].node_tree.nodes).mute = False
+
         bpy.data.scenes["Scene"].render.resolution_x = 1440 
         bpy.data.scenes["Scene"].render.resolution_y = 360
+        # bpy.data.objects["Camera"].data.clip_end = 1000 
 
         bpy.data.objects["Camera"].location[0] = .27
         bpy.data.objects["Camera"].location[1] = 0
@@ -552,19 +601,18 @@ def toggle_bev(bpy, is_bev):
         # Camera calib
         # NOTE a bit of dr here, would rather it consolidated in episode, but this allows for all camera control in one place 
         # so can toggle bev / perspective
-        BASE_PITCH = 86 # angled slightly down
-        BASE_YAW = 180
-        pitch_perturbation = random.uniform(-2, 2)
-        yaw_perturbation = 0 #random.uniform(-2, 2)
         bpy.data.objects["Camera"].rotation_euler[0] = np.radians(BASE_PITCH + pitch_perturbation)
         bpy.data.objects["Camera"].rotation_euler[1] = np.radians(180)
-        bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW + yaw_perturbation)
+        bpy.data.objects["Camera"].rotation_euler[2] = np.radians(BASE_YAW)
 
         bpy.data.objects["Camera"].data.type = 'PERSP'
         bpy.data.objects["Camera"].data.angle = np.radians(71)
 
         get_node("markings_z_adj", z_adj_nodes).outputs["Value"].default_value = .005
         get_node("constant_line_hwidth_switch", meshify_lines_nodes).outputs["Value"].default_value = 0
+
+        for n in npc_archetypes_nodes: get_node("npcs_to_bb", n).outputs["Value"].default_value = 0
+        for n in npc_materials: n.blend_method = "OPAQUE"
 
 
 
@@ -577,6 +625,13 @@ def reset_scene(bpy, _ap, _tm, timer=None, save_data=False, render_filepath=None
 
     bpy.data.scenes["Scene"].render.image_settings.file_format = 'JPEG' #"AVI_JPEG"
     bpy.data.scenes["Scene"].render.image_settings.quality = 100 #random.randint(50, 100) # zero to 100. Default 50. Going to 30 didn't speed up anything, but we're prob io bound now so test again later when using ramdisk
+
+    # bpy.data.scenes["Scene"].render.image_settings.file_format = 'PNG'
+    # bpy.data.scenes["Scene"].render.image_settings.color_mode = 'RGBA'
+    # bpy.data.scenes["Scene"].render.image_settings.compression = 0
+
+    # set_bev_cam(bpy)
+
     # Render samples slows datagen down linearly.
     # Too low and get aliasing around edges, harsh looking. More is softer. We're keeping low samples, trying to make up for it 
     # in data aug w blur and other distractors
